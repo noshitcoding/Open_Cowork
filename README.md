@@ -9,6 +9,7 @@ Open_Cowork ist eine Windows-Desktop-Anwendung (Tauri + React + Rust) fuer agent
 - **Plan/Freigabe-Flow** fuer risikobehaftete Prompts mit Approval-UI
 - **Task-Management** mit Status-Lifecycle (created → planned → waiting_approval → running → completed/failed/cancelled)
 - **MCP-Server-Integration** mit Probing (tools/list) und Tool-Ausfuehrung (tools/call) via stdio JSON-RPC
+- **Plugin-/Skill-System** mit anpassbaren Slash-Commands und Prompt-Templates
 - **Persistente Datenhaltung** in SQLite (Threads, Messages, Tasks, Steps, Audit-Events)
 - **4-View-Layout** mit Sidebar-Navigation (Chat, Tasks, MCP, Einstellungen)
 - **CI-Pipeline** mit TypeScript-Check, Vitest, Cargo-Tests, Clippy, Security-Scans
@@ -65,6 +66,16 @@ cargo test
 - `docs/ARCHITECTURE.md`
 - `docs/OLLAMA_CONFIGURATION.md`
 - `docs/DEVELOPMENT_AND_OPERATIONS.md`
+
+## Plugin-Skill Beispiele (in der App enthalten)
+
+In `Einstellungen -> Cowork Features -> Plugins & Skills` koennen mit einem Klick drei Beispiele installiert werden:
+
+- `Marketing Briefing Toolkit` mit `/briefing`
+- `Sales Follow-up Assistant` mit `/discovery-plan`
+- `Finance KPI Analyzer` mit `/kpi-summary`
+
+Alle Skills sind anpassbar (Beschreibung, Slash-Befehl, Prompt-Template, Run-Mode `plan|execute`) und im Chat direkt nutzbar.
 
 ## Hinweis zum Scope
 

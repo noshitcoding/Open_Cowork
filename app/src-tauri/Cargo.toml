@@ -21,7 +21,7 @@ tauri-build = { version = "2.5.6", features = [] }
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
-tauri = { version = "2.10.3", features = [] }
+tauri = { version = "2.10.3", features = ["tray-icon"] }
 tauri-plugin-log = "2"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 thiserror = "2"
@@ -29,3 +29,10 @@ url = "2"
 rusqlite = { version = "0.31", features = ["bundled"] }
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-notification = "2"
+notify = "6"
+image = { version = "0.25", default-features = true }
+zip = "2"
+pdf-extract = "0.7"
+csv = "1.3"

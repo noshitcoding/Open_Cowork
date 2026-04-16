@@ -1,0 +1,401 @@
+use serde::Serialize;
+use serde_json::{json, Value};
+use std::fs;
+use std::io::Read;
+use std::path::Path;
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArtifactParseResponse {
+    pub path: String,
+    pub format: String,
+    pub size_bytes: u64,
+    pub summary: String,
+    pub preview: String,
+    pub metadata: Value,
+}
+
+pub fn parse_artifact(path: &Path) -> Result<ArtifactParseResponse, String> {
+    let metadata = fs::metadata(path).map_err(|err| err.to_string())?;
+    let size_bytes = metadata.len();
+    let ext = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    match ext.as_str() {
+        "txt" | "md" | "log" | "rs" | "ts" | "tsx" | "js" | "jsx" | "py" => {
+            parse_text_like(path, "text/plain", size_bytes)
+        }
+        "csv" => parse_csv(path, size_bytes),
+        "json" => parse_json(path, size_bytes),
+        "ipynb" => parse_ipynb(path, size_bytes),
+        "xml" => parse_xml(path, size_bytes),
+        "html" | "htm" => parse_html(path, size_bytes),
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" => parse_image(path, size_bytes),
+        "svg" => parse_svg(path, size_bytes),
+        "pdf" => parse_pdf(path, size_bytes),
+        "docx" => parse_docx(path, size_bytes),
+        "xlsx" => parse_xlsx(path, size_bytes),
+        "pptx" => parse_pptx(path, size_bytes),
+        _ => parse_binary(path, size_bytes),
+    }
+}
+
+pub fn extract_text_for_llm(path: &Path) -> Result<String, String> {
+    let ext = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    match ext.as_str() {
+        "txt" | "md" | "log" | "rs" | "ts" | "tsx" | "js" | "jsx" | "py" | "csv" | "json" | "xml" | "html" | "htm" => {
+            fs::read_to_string(path).map_err(|err| err.to_string())
+        }
+        "ipynb" => {
+            let raw = fs::read_to_string(path).map_err(|err| err.to_string())?;
+            let parsed: serde_json::Value = serde_json::from_str(&raw).map_err(|err| err.to_string())?;
+            let mut out = String::new();
+            if let Some(cells) = parsed.get("cells").and_then(|value| value.as_array()) {
+                for cell in cells {
+                    let source = cell
+                        .get("source")
+                        .and_then(|value| value.as_array())
+                        .map(|lines| {
+                            lines
+                                .iter()
+                                .filter_map(|line| line.as_str())
+                                .collect::<Vec<_>>()
+                                .join("")
+                        })
+                        .unwrap_or_default();
+                    out.push_str(&source);
+                    out.push_str("\n\n");
+                }
+            }
+            Ok(out)
+        }
+        "svg" => fs::read_to_string(path).map_err(|err| err.to_string()),
+        "docx" => {
+            let xml = read_zip_entry_text(path, "word/document.xml")?;
+            Ok(strip_tags(&xml))
+        }
+        "xlsx" => {
+            let shared = read_zip_entry_text(path, "xl/sharedStrings.xml")
+                .or_else(|_| read_zip_entry_text(path, "xl/worksheets/sheet1.xml"))?;
+            Ok(strip_tags(&shared))
+        }
+        "pptx" => {
+            let file = fs::File::open(path).map_err(|err| err.to_string())?;
+            let mut archive = zip::ZipArchive::new(file).map_err(|err| err.to_string())?;
+            let mut combined = String::new();
+            for index in 0..archive.len() {
+                let mut entry = archive.by_index(index).map_err(|err| err.to_string())?;
+                let name = entry.name().to_string();
+                if !name.starts_with("ppt/slides/slide") || !name.ends_with(".xml") {
+                    continue;
+                }
+                let mut xml = String::new();
+                entry.read_to_string(&mut xml).map_err(|err| err.to_string())?;
+                combined.push_str(&strip_tags(&xml));
+                combined.push_str("\n\n");
+            }
+            Ok(combined)
+        }
+        "pdf" => {
+            let text = pdf_extract::extract_text(path).map_err(|err| err.to_string())?;
+            Ok(text)
+        }
+        _ => Err("format does not provide text extraction".to_string()),
+    }
+}
+
+fn read_text_limited(path: &Path, max_chars: usize) -> Result<String, String> {
+    let content = fs::read_to_string(path).map_err(|err| err.to_string())?;
+    Ok(content.chars().take(max_chars).collect())
+}
+
+fn strip_tags(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut inside = false;
+
+    for ch in input.chars() {
+        match ch {
+            '<' => inside = true,
+            '>' => inside = false,
+            _ if !inside => out.push(ch),
+            _ => {}
+        }
+    }
+
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn parse_text_like(path: &Path, format: &str, size_bytes: u64) -> Result<ArtifactParseResponse, String> {
+    let preview = read_text_limited(path, 2000)?;
+    let line_count = preview.lines().count();
+
+    Ok(ArtifactParseResponse {
+        path: path.display().to_string(),
+        format: format.to_string(),
+        size_bytes,
+        summary: format!("Textdatei mit Vorschau, {} Zeilen gelesen", line_count),
+        preview,
+        metadata: json!({
+            "lineCount": line_count,
+        }),
+    })
+}
+
+fn parse_csv(path: &Path, size_bytes: u64) -> Result<ArtifactParseResponse, String> {
+    let preview = read_text_limited(path, 3000)?;
+    let lines: Vec<&str> = preview.lines().collect();
+    let line_count = lines.len();
+    let first = lines.first().copied().unwrap_or("");
+    let separators = [',', ';', '\t'];
+
+    let mut best_count = 0usize;
+    for sep in separators {
+        let count = first.split(sep).count();
+        if count > best_count {
+            best_count = count;
+        }
+    }
+
+    Ok(ArtifactParseResponse {
+        path: path.display().to_string(),
+        format: "text/csv".to_string(),
+        size_bytes,
+        summary: format!("CSV-Vorschau, erkannte Spalten im Header: {}", best_count),
+        preview,
+        metadata: json!({
+            "lineCount": line_count,
+            "headerColumns": best_count,
+        }),
+    })
+}
+
+fn parse_json(path: &Path, size_bytes: u64) -> Result<ArtifactParseResponse, String> {
+    let raw = fs::read_to_string(path).map_err(|err| err.to_string())?;
+    let parsed: serde_json::Value = serde_json::from_str(&raw).map_err(|err| err.to_string())?;
+    let pretty = serde_json::to_string_pretty(&parsed).map_err(|err| err.to_string())?;
+    let preview: String = pretty.chars().take(3000).collect();
+
+    Ok(ArtifactParseResponse {
+        path: path.display().to_string(),
+        format: "application/json".to_string(),
+        size_bytes,
+        summary: "JSON erfolgreich geparst".to_string(),
+        preview,
+        metadata: json!({
+            "rootType": if parsed.is_object() { "object" } else if parsed.is_array() { "array" } else { "primitive" }
+        }),
+    })
+}
+
+fn parse_ipynb(path: &Path, size_bytes: u64) -> Result<ArtifactParseResponse, String> {
+    let raw = fs::read_to_string(path).map_err(|err| err.to_string())?;
+    let parsed: serde_json::Value = serde_json::from_str(&raw).map_err(|err| err.to_string())?;
+
+    let mut preview = String::new();
+    let mut cells_count = 0usize;
+    let mut markdown_count = 0usize;
+    let mut code_count = 0usize;
+
+    if let Some(cells) = parsed.get("cells").and_then(|value| value.as_array()) {
+        cells_count = cells.len();
+
+        for (index, cell) in cells.iter().take(6).enumerate() {
+            let cell_type = cell
+                .get("cell_type")
+                .and_then(|value| value.as_str())
+                .unwrap_or("unknown");
+            if cell_type == "markdown" {
+                markdown_count += 1;
+            }
+            if cell_type == "code" {
+                code_count += 1;
+            }
+
+            let source = cell
+                .get("source")
+                .and_then(|value| value.as_array())
+                .map(|lines| {
+                    lines
+                        .iter()
+                        .filter_map(|line| line.as_str())
+                        .collect::<Vec<_>>()
+                        .join("")
+                })
+                .unwrap_or_default();
+
+            preview.push_str(&format!("[{}] {}\n{}\n\n", index + 1, cell_type, source));
+        }
+    }
+
+    Ok(ArtifactParseResponse {
+        path: path.display().to_string(),
+        format: "application/x-ipynb+json".to_string(),
+        size_bytes,
+        summary: format!(
+            "Notebook mit {} Zellen ({} markdown, {} code)",
+            cells_count, markdown_count, code_count
+        ),
+        preview: preview.chars().take(3500).collect(),
+        metadata: json!({
+            "cells": cells_count,
+            "markdownCells": markdown_count,
+            "codeCells": code_count,
+        }),
+    })
+}
+
+fn parse_xml(path: &Path, size_bytes: u64) -> Result<ArtifactParseResponse, String> {
+    let raw = read_text_limited(path, 5000)?;
+    let clean = strip_tags(&raw);
+
+    Ok(ArtifactParseResponse {
+        path: path.display().to_string(),
+        format: "application/xml".to_string(),
+        size_bytes,
+        summary: "XML als Textvorschau extrahiert".to_string(),
+        preview: clean.chars().take(3000).collect(),
+        metadata: json!({
+            "rawPreviewChars": raw.len(),
+        }),
+    })
+}
+
+fn parse_html(path: &Path, size_bytes: u64) -> Result<ArtifactParseResponse, String> {
+    let raw = read_text_limited(path, 6000)?;
+    let clean = strip_tags(&raw);
+
+    Ok(ArtifactParseResponse {
+        path: path.display().to_string(),
+        format: "text/html".to_string(),
+        size_bytes,
+        summary: "HTML in lesbare Textvorschau transformiert".to_string(),
+        preview: clean.chars().take(3000).collect(),
+        metadata: json!({
+            "rawPreviewChars": raw.len(),
+        }),
+    })
+}
+
+fn parse_image(path: &Path, size_bytes: u64) -> Result<ArtifactParseResponse, String> {
+    let (width, height) = image::image_dimensions(path).map_err(|err| err.to_string())?;
+
+    Ok(ArtifactParseResponse {
+        path: path.display().to_string(),
+        format: "image/raster".to_string(),
+        size_bytes,
+        summary: format!("Bild erkannt: {}x{}", width, height),
+        preview: String::new(),
+        metadata: json!({
+            "width": width,
+            "height": height,
+        }),
+    })
+}
+
+fn parse_svg(path: &Path, size_bytes: u64) -> Result<ArtifactParseResponse, String> {
+    let raw = read_text_limited(path, 4000)?;
+
+    Ok(ArtifactParseResponse {
+        path: path.display().to_string(),
+        format: "image/svg+xml".to_string(),
+        size_bytes,
+        summary: "SVG-Textvorschau extrahiert".to_string(),
+        preview: raw,
+        metadata: json!({}),
+    })
+}
+
+fn parse_pdf(path: &Path, size_bytes: u64) -> Result<ArtifactParseResponse, String> {
+    let extracted_text = pdf_extract::extract_text(path).ok();
+    let preview = extracted_text
+        .as_deref()
+        .map(|text| text.chars().take(3000).collect::<String>())
+        .unwrap_or_else(|| "PDF-Binaerformat: Textvorschau nicht verfuegbar".to_string());
+    let preview_chars = preview.chars().count();
+
+    Ok(ArtifactParseResponse {
+        path: path.display().to_string(),
+        format: "application/pdf".to_string(),
+        size_bytes,
+        summary: if extracted_text.is_some() {
+            format!("PDF-Text extrahiert, Vorschauzeichen: {}", preview_chars)
+        } else {
+            "PDF erkannt, Text konnte nicht extrahiert werden".to_string()
+        },
+        preview,
+        metadata: json!({
+            "textExtracted": extracted_text.is_some(),
+        }),
+    })
+}
+
+fn read_zip_entry_text(path: &Path, entry_name: &str) -> Result<String, String> {
+    let file = fs::File::open(path).map_err(|err| err.to_string())?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|err| err.to_string())?;
+    let mut entry = archive.by_name(entry_name).map_err(|err| err.to_string())?;
+    let mut out = String::new();
+    entry.read_to_string(&mut out).map_err(|err| err.to_string())?;
+    Ok(out)
+}
+
+fn parse_docx(path: &Path, size_bytes: u64) -> Result<ArtifactParseResponse, String> {
+    let xml = read_zip_entry_text(path, "word/document.xml")?;
+    let preview = strip_tags(&xml);
+
+    Ok(ArtifactParseResponse {
+        path: path.display().to_string(),
+        format: "application/vnd.openxmlformats-officedocument.wordprocessingml.document".to_string(),
+        size_bytes,
+        summary: "DOCX-Inhalt aus document.xml extrahiert".to_string(),
+        preview: preview.chars().take(3000).collect(),
+        metadata: json!({}),
+    })
+}
+
+fn parse_xlsx(path: &Path, size_bytes: u64) -> Result<ArtifactParseResponse, String> {
+    let shared = read_zip_entry_text(path, "xl/sharedStrings.xml")
+        .or_else(|_| read_zip_entry_text(path, "xl/worksheets/sheet1.xml"))?;
+    let preview = strip_tags(&shared);
+
+    Ok(ArtifactParseResponse {
+        path: path.display().to_string(),
+        format: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet".to_string(),
+        size_bytes,
+        summary: "XLSX-Vorschau aus OpenXML-Eintraegen extrahiert".to_string(),
+        preview: preview.chars().take(3000).collect(),
+        metadata: json!({}),
+    })
+}
+
+fn parse_pptx(path: &Path, size_bytes: u64) -> Result<ArtifactParseResponse, String> {
+    let slide = read_zip_entry_text(path, "ppt/slides/slide1.xml")?;
+    let preview = strip_tags(&slide);
+
+    Ok(ArtifactParseResponse {
+        path: path.display().to_string(),
+        format: "application/vnd.openxmlformats-officedocument.presentationml.presentation".to_string(),
+        size_bytes,
+        summary: "PPTX-Vorschau aus erster Folie extrahiert".to_string(),
+        preview: preview.chars().take(3000).collect(),
+        metadata: json!({}),
+    })
+}
+
+fn parse_binary(path: &Path, size_bytes: u64) -> Result<ArtifactParseResponse, String> {
+    Ok(ArtifactParseResponse {
+        path: path.display().to_string(),
+        format: "application/octet-stream".to_string(),
+        size_bytes,
+        summary: "Unbekanntes Binaerformat, nur Metadaten verfuegbar".to_string(),
+        preview: String::new(),
+        metadata: json!({}),
+    })
+}

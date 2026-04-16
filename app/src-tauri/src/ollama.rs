@@ -6,7 +6,7 @@ use url::Url;
 
 const DEFAULT_OLLAMA_BASE_URL: &str = "http://192.168.178.82:11434";
 const DEFAULT_MODEL: &str = "llama3.1:8b";
-const DEFAULT_TIMEOUT_MS: u64 = 20_000;
+const DEFAULT_TIMEOUT_MS: u64 = 200_000;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -101,6 +101,31 @@ pub enum OllamaError {
     ParseFailed(String),
 }
 
+fn request_error(context: &str, config: &OllamaConfig, error: reqwest::Error) -> OllamaError {
+    let kind = if error.is_timeout() {
+        "timeout"
+    } else if error.is_connect() {
+        "connect"
+    } else if error.is_decode() {
+        "decode"
+    } else if error.is_request() {
+        "request"
+    } else {
+        "network"
+    };
+    OllamaError::RequestFailed(format!(
+        "{context} failed ({kind}) for endpoint={} model={} timeoutMs={}: {}",
+        config.base_url, config.model, config.timeout_ms, error
+    ))
+}
+
+fn empty_response_error(context: &str, config: &OllamaConfig) -> OllamaError {
+    OllamaError::RequestFailed(format!(
+        "{context} returned an empty response for endpoint={} model={}. Try another model tag or increase the timeout.",
+        config.base_url, config.model
+    ))
+}
+
 fn normalize_config(config: Option<OllamaConfig>) -> Result<OllamaConfig, OllamaError> {
     let merged = config.unwrap_or_default();
 
@@ -147,7 +172,7 @@ pub async fn check_health(config: Option<OllamaConfig>) -> Result<OllamaHealthRe
         .get(&tags_url)
         .send()
         .await
-        .map_err(|error| OllamaError::RequestFailed(error.to_string()))?;
+        .map_err(|error| request_error("/api/tags", &config, error))?;
 
     if !tags_response.status().is_success() {
         return Ok(OllamaHealthResponse {
@@ -204,17 +229,32 @@ pub async fn generate_plan(config: Option<OllamaConfig>, prompt: String) -> Resu
         }
     });
 
+    let started = Instant::now();
+    log::info!(
+        "ollama generate_plan start endpoint={} model={} timeoutMs={}",
+        config.base_url,
+        config.model,
+        config.timeout_ms
+    );
+
     let response = client
         .post(&generate_url)
         .json(&payload)
         .send()
         .await
-        .map_err(|error| OllamaError::RequestFailed(error.to_string()))?;
+        .map_err(|error| request_error("/api/generate", &config, error))?;
 
     if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
         return Err(OllamaError::RequestFailed(format!(
-            "Ollama returned status {} for /api/generate",
-            response.status()
+            "Ollama returned status {} for /api/generate{}",
+            status,
+            if body.trim().is_empty() {
+                String::new()
+            } else {
+                format!(": {}", body.trim())
+            }
         )));
     }
 
@@ -222,6 +262,24 @@ pub async fn generate_plan(config: Option<OllamaConfig>, prompt: String) -> Resu
         .json()
         .await
         .map_err(|error| OllamaError::ParseFailed(error.to_string()))?;
+
+    if generate_payload.response.trim().is_empty() {
+        log::warn!(
+            "ollama generate_plan empty endpoint={} model={} elapsedMs={}",
+            config.base_url,
+            config.model,
+            started.elapsed().as_millis()
+        );
+        return Err(empty_response_error("/api/generate", &config));
+    }
+
+    log::info!(
+        "ollama generate_plan success endpoint={} model={} elapsedMs={} chars={}",
+        config.base_url,
+        config.model,
+        started.elapsed().as_millis(),
+        generate_payload.response.len()
+    );
 
     let steps = parse_steps(&generate_payload.response);
 
@@ -250,8 +308,13 @@ pub async fn chat_turn(
 
     let chat_prompt = format!(
         "Du bist Open_Cowork, ein lokaler Assistenz-Agent. Antworte knapp, klar und auf Deutsch.\n\
-Wenn die Aufgabe riskante oder destruktive Aktionen enthalten koennte, schlage einen Plan vor und kennzeichne das als approval-beduerftig.\n\n\
-Kontextverlauf:\n{}\nNutzer: {}\n\nAntwort:",
+    Wenn die Aufgabe riskante oder destruktive Aktionen enthalten koennte, schlage einen Plan vor und kennzeichne das als approval-beduerftig.\n\
+    WICHTIGE REGELN:\n\
+    - Gib niemals Platzhalter- oder Warte-Antworten wie 'ich analysiere', 'bitte warten', 'kommt gleich' oder aehnliches aus.\n\
+    - Gib immer direkt eine finale, inhaltliche Antwort in genau dieser Nachricht.\n\
+    - Erfinde niemals Dokumentinhalte.\n\
+    - Wenn nur ein Dateipfad vorhanden ist, aber kein extrahierter Dokumenttext im Prompt steht, sage klar, dass der Inhalt nicht vorliegt und bitte um dokumentierten Textauszug oder aktivierte Dateianalyse.\n\n\
+    Kontextverlauf:\n{}\nNutzer: {}\n\nAntwort:",
         history_text,
         prompt
     );
@@ -265,17 +328,34 @@ Kontextverlauf:\n{}\nNutzer: {}\n\nAntwort:",
         }
     });
 
+    let started = Instant::now();
+    log::info!(
+        "ollama chat_turn start endpoint={} model={} timeoutMs={} historyItems={} promptChars={}",
+        config.base_url,
+        config.model,
+        config.timeout_ms,
+        history.len(),
+        prompt.len()
+    );
+
     let response = client
         .post(&generate_url)
         .json(&payload)
         .send()
         .await
-        .map_err(|error| OllamaError::RequestFailed(error.to_string()))?;
+        .map_err(|error| request_error("/api/generate", &config, error))?;
 
     if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
         return Err(OllamaError::RequestFailed(format!(
-            "Ollama returned status {} for /api/generate",
-            response.status()
+            "Ollama returned status {} for /api/generate{}",
+            status,
+            if body.trim().is_empty() {
+                String::new()
+            } else {
+                format!(": {}", body.trim())
+            }
         )));
     }
 
@@ -283,6 +363,24 @@ Kontextverlauf:\n{}\nNutzer: {}\n\nAntwort:",
         .json()
         .await
         .map_err(|error| OllamaError::ParseFailed(error.to_string()))?;
+
+    if generate_payload.response.trim().is_empty() {
+        log::warn!(
+            "ollama chat_turn empty endpoint={} model={} elapsedMs={}",
+            config.base_url,
+            config.model,
+            started.elapsed().as_millis()
+        );
+        return Err(empty_response_error("/api/generate", &config));
+    }
+
+    log::info!(
+        "ollama chat_turn success endpoint={} model={} elapsedMs={} chars={}",
+        config.base_url,
+        config.model,
+        started.elapsed().as_millis(),
+        generate_payload.response.len()
+    );
 
     let risk_terms = [
         "delete",

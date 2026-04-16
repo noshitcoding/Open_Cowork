@@ -2,16 +2,15 @@ import { render, screen } from '@testing-library/react'
 import App from './App'
 
 describe('App', () => {
-  it('renders the sidebar brand', () => {
+  it('renders the welcome headline', () => {
     render(<App />)
-    expect(screen.getByText('Open_Cowork')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Was sollen wir heute erledigen?' })).toBeInTheDocument()
   })
 
-  it('shows navigation links', () => {
+  it('shows top navigation links', () => {
     render(<App />)
-    expect(screen.getByText('Chat')).toBeInTheDocument()
-    expect(screen.getByText('Tasks')).toBeInTheDocument()
-    expect(screen.getByText('MCP')).toBeInTheDocument()
-    expect(screen.getByText('Einstellungen')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Cowork' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Code' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Settings' })).toBeInTheDocument()
   })
 })

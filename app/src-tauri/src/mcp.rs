@@ -12,6 +12,8 @@ pub struct McpServerRequest {
     pub name: String,
     pub command: String,
     pub args: Vec<String>,
+    #[serde(default)]
+    pub env: HashMap<String, String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -20,6 +22,8 @@ pub struct McpCallRequest {
     pub name: String,
     pub command: String,
     pub args: Vec<String>,
+    #[serde(default)]
+    pub env: HashMap<String, String>,
     pub tool_name: String,
     pub tool_args: HashMap<String, serde_json::Value>,
 }
@@ -67,11 +71,15 @@ pub fn probe_server(req: McpServerRequest) -> Result<McpProbeResponse, McpError>
         return Err(McpError::InvalidCommand);
     }
 
-    let mut child = Command::new(req.command.trim())
+    let mut command = Command::new(req.command.trim());
+    command
         .args(req.args.iter().map(String::as_str))
+        .envs(req.env.iter().map(|(key, value)| (key.as_str(), value.as_str())))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::null());
+
+    let mut child = command
         .spawn()
         .map_err(|e| McpError::SpawnFailed(e.to_string()))?;
 
@@ -214,11 +222,15 @@ pub fn call_tool(req: McpCallRequest) -> Result<McpCallResponse, McpError> {
         return Err(McpError::InvalidCommand);
     }
 
-    let mut child = Command::new(req.command.trim())
+    let mut command = Command::new(req.command.trim());
+    command
         .args(req.args.iter().map(String::as_str))
+        .envs(req.env.iter().map(|(key, value)| (key.as_str(), value.as_str())))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::null());
+
+    let mut child = command
         .spawn()
         .map_err(|e| McpError::SpawnFailed(e.to_string()))?;
 

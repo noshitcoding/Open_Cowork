@@ -1,5 +1,6 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useTaskStore } from '../stores/taskStore'
+import { useConfigStore } from '../stores/configStore'
 import type { Task, TaskStatus } from '../stores/taskStore'
 
 const STATUS_LABELS: Record<TaskStatus, string> = {
@@ -98,12 +99,42 @@ function TaskCard({ task }: { task: Task }) {
 export default function TaskView() {
   const tasks = useTaskStore((s) => s.tasks)
   const loadFromDb = useTaskStore((s) => s.loadFromDb)
+  const updateTaskStatus = useTaskStore((s) => s.updateTaskStatus)
+  const multiSelectEnabled = useConfigStore((s) => s.preferences.taskBatchMultiSelectEnabled)
+  const [selectedIds, setSelectedIds] = useState<string[]>([])
 
   useEffect(() => { loadFromDb() }, [loadFromDb])
+
+  const toggleSelected = (id: string) => {
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((entry) => entry !== id) : [...prev, id]
+    )
+  }
+
+  const applyBatchStatus = (status: TaskStatus) => {
+    selectedIds.forEach((id) => updateTaskStatus(id, status))
+    setSelectedIds([])
+  }
 
   return (
     <div className="task-view">
       <h1>Tasks</h1>
+      {multiSelectEnabled && tasks.length > 0 && (
+        <div className="actions" style={{ marginBottom: '12px' }}>
+          <button type="button" className="btn-secondary" onClick={() => setSelectedIds(tasks.map((task) => task.id))}>
+            Alle auswaehlen
+          </button>
+          <button type="button" className="btn-secondary" onClick={() => setSelectedIds([])}>
+            Auswahl aufheben
+          </button>
+          <button type="button" onClick={() => applyBatchStatus('completed')} disabled={selectedIds.length === 0}>
+            Auswahl abschliessen
+          </button>
+          <button type="button" className="btn-secondary" onClick={() => applyBatchStatus('cancelled')} disabled={selectedIds.length === 0}>
+            Auswahl abbrechen
+          </button>
+        </div>
+      )}
       {tasks.length === 0 ? (
         <div className="empty-state">
           <p>Noch keine Tasks vorhanden. Tasks werden automatisch aus dem Chat erstellt, wenn ein Plan Freigabe erfordert.</p>
@@ -111,7 +142,19 @@ export default function TaskView() {
       ) : (
         <div className="task-list">
           {tasks.map((task) => (
-            <TaskCard key={task.id} task={task} />
+            <div key={task.id} className="task-select-wrapper">
+              {multiSelectEnabled && (
+                <label className="task-select-toggle">
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.includes(task.id)}
+                    onChange={() => toggleSelected(task.id)}
+                  />
+                  markieren
+                </label>
+              )}
+              <TaskCard task={task} />
+            </div>
           ))}
         </div>
       )}
