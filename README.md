@@ -6,6 +6,9 @@ Der aktuelle Stand liefert einen echten vertikalen Slice:
 - Native Tauri-App als Host
 - React UI fuer Konfiguration und Bedienung
 - Rust-Core mit echter Ollama-Integration
+- Cowork-Chat mit verlaufsbasierter Antwortgenerierung
+- Plan/Freigabe-Flow fuer risikobehaftete Prompts
+- MCP-Server-Probing (stdio JSON-RPC `initialize` + `tools/list`)
 - Health-Check (`/api/tags`, `/api/version`)
 - Plan-Generierung (`/api/generate`)
 - Unit-Tests fuer Parsinglogik
@@ -63,4 +66,4 @@ cargo test
 
 ## Hinweis zum Scope
 
-Dieses Repository ist auf iterative Umsetzung ausgelegt. Der aktuelle Stand deckt den ersten lauffaehigen Kern ab (Desktop-Host, Modellintegration, Basistests, CI-Grundlagen). Weitere Anforderungen aus der Matrix werden in den naechsten Iterationen umgesetzt.
+Dieses Repository ist auf iterative Umsetzung ausgelegt. Der aktuelle Stand deckt den ersten lauffaehigen Kern ab (Desktop-Host, Chat + Planung, Modellintegration, MCP-Basis, Basistests, CI- und Security-Gates). Weitere Anforderungen aus der Matrix werden in den naechsten Iterationen umgesetzt.

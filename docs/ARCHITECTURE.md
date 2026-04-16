@@ -11,6 +11,8 @@ Open_Cowork verwendet eine lokale Desktop-Architektur mit klarer Trennung zwisch
 [Rust Core / Commands]
     |
     +--> [Ollama Client]
+  +--> [Cowork Chat Turn Logic]
+  +--> [MCP Probe Client]
     +--> [Task Orchestrator (initial)]
     +--> [Logging]
 ```
@@ -21,6 +23,9 @@ Open_Cowork verwendet eine lokale Desktop-Architektur mit klarer Trennung zwisch
 
 - Bedienoberflaeche fuer Modellkonfiguration
 - Trigger fuer Health-Check und Plan-Generierung
+- Chat-Thread mit Verlauf und Agent-Antworten
+- Freigabebox fuer risikobehaftete Aktionsplaene
+- MCP-Server-Konfiguration und Toolauflistung
 - Persistenz der Konfiguration in `localStorage`
 - Fehleranzeige und Ergebnisdarstellung
 
@@ -29,6 +34,8 @@ Open_Cowork verwendet eine lokale Desktop-Architektur mit klarer Trennung zwisch
 - Registry fuer Commands:
   - `ollama_health_check`
   - `generate_plan`
+  - `chat_turn`
+  - `mcp_probe`
 - Fehler-Mapping in nutzerlesbare Strings
 - Initiales Logging-Plugin in Debug-Builds
 
@@ -38,6 +45,14 @@ Open_Cowork verwendet eine lokale Desktop-Architektur mit klarer Trennung zwisch
 - Endpoint-Validierung via URL-Parser
 - HTTP-Aufrufe via `reqwest` mit Timeout
 - Parse-Logik fuer nummerierte Schritte
+- Chat-Turn-Logik mit Verlaufseinbettung
+- Risikoheuristik fuer Freigabeanforderungen
+
+## 4. MCP Probe Client (`app/src-tauri/src/mcp.rs`)
+
+- Startet MCP-Server-Prozesse via stdio
+- Sendet JSON-RPC `initialize` und `tools/list`
+- Liest Antworten mit Timeout und gibt Tool-Metadaten an UI weiter
 
 ## Sicherheits- und Robustheitsprinzipien (aktueller Stand)
 

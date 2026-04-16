@@ -74,6 +74,23 @@ pub struct PlanResponse {
     pub steps: Vec<String>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatMessage {
+    pub role: String,
+    pub content: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatTurnResponse {
+    pub endpoint: String,
+    pub model: String,
+    pub assistant_message: String,
+    pub requires_approval: bool,
+    pub proposed_plan: Vec<String>,
+}
+
 #[derive(Debug, Error)]
 pub enum OllamaError {
     #[error("invalid endpoint: {0}")]
@@ -213,6 +230,95 @@ pub async fn generate_plan(config: Option<OllamaConfig>, prompt: String) -> Resu
         model: config.model,
         raw_response: generate_payload.response,
         steps,
+    })
+}
+
+pub async fn chat_turn(
+    config: Option<OllamaConfig>,
+    prompt: String,
+    history: Vec<ChatMessage>,
+) -> Result<ChatTurnResponse, OllamaError> {
+    let config = normalize_config(config)?;
+    let client = build_http_client(config.timeout_ms)?;
+
+    let generate_url = format!("{}/api/generate", config.base_url);
+
+    let mut history_text = String::new();
+    for msg in history.iter().rev().take(8).rev() {
+        history_text.push_str(&format!("{}: {}\n", msg.role, msg.content));
+    }
+
+    let chat_prompt = format!(
+        "Du bist Open_Cowork, ein lokaler Assistenz-Agent. Antworte knapp, klar und auf Deutsch.\n\
+Wenn die Aufgabe riskante oder destruktive Aktionen enthalten koennte, schlage einen Plan vor und kennzeichne das als approval-beduerftig.\n\n\
+Kontextverlauf:\n{}\nNutzer: {}\n\nAntwort:",
+        history_text,
+        prompt
+    );
+
+    let payload = serde_json::json!({
+        "model": config.model,
+        "prompt": chat_prompt,
+        "stream": false,
+        "options": {
+            "temperature": 0.25
+        }
+    });
+
+    let response = client
+        .post(&generate_url)
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|error| OllamaError::RequestFailed(error.to_string()))?;
+
+    if !response.status().is_success() {
+        return Err(OllamaError::RequestFailed(format!(
+            "Ollama returned status {} for /api/generate",
+            response.status()
+        )));
+    }
+
+    let generate_payload: GenerateResponse = response
+        .json()
+        .await
+        .map_err(|error| OllamaError::ParseFailed(error.to_string()))?;
+
+    let risk_terms = [
+        "delete",
+        "remove",
+        "drop",
+        "format",
+        "shutdown",
+        "kill",
+        "rm -rf",
+        "powershell",
+        "registry",
+        "firewall",
+    ];
+
+    let normalized_prompt = prompt.to_lowercase();
+    let requires_approval = risk_terms.iter().any(|term| normalized_prompt.contains(term));
+
+    let proposed_plan = if requires_approval {
+        vec![
+            "Risikoanalyse fuer die angefragte Aktion erstellen".to_string(),
+            "Explizite Nutzerfreigabe vor Ausfuehrung einholen".to_string(),
+            "Aktion in begrenztem Scope ausfuehren und Ergebnis pruefen".to_string(),
+        ]
+    } else {
+        parse_steps(&generate_payload.response)
+            .into_iter()
+            .take(6)
+            .collect::<Vec<String>>()
+    };
+
+    Ok(ChatTurnResponse {
+        endpoint: config.base_url,
+        model: config.model,
+        assistant_message: generate_payload.response,
+        requires_approval,
+        proposed_plan,
     })
 }
 

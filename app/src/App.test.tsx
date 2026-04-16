@@ -2,11 +2,11 @@ import { render, screen } from '@testing-library/react'
 import App from './App'
 
 describe('App', () => {
-  it('renders the vertical slice headline', () => {
+  it('renders the cowork chat headline', () => {
     render(<App />)
 
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(
-      'Lokale Ollama-Anbindung mit Tauri Core'
+      'Lokaler Chat mit Plan-Freigabe und MCP-Server-Anbindung'
     )
   })
 

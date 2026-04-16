@@ -39,6 +39,28 @@ cargo test
 - Frontend Unit-Tests muessen erfolgreich sein
 - Rust Unit-Tests muessen erfolgreich sein
 - Rust Compile-Check muss erfolgreich sein
+- Semgrep Security Scan muss erfolgreich sein
+- Trivy Filesystem Scan muss erfolgreich sein
+
+## Funktionstest: Cowork Chat
+
+1. App starten (`npm run tauri dev`)
+2. Health-Check gegen Ollama ausfuehren
+3. Im Bereich "Cowork Chat" eine Aufgabe senden
+4. Antwort und ggf. Freigabehinweis pruefen
+5. Bei Freigabehinweis "Plan freigeben" ausloesen
+
+## Funktionstest: MCP Probe
+
+Beispielkonfiguration:
+- Name: `filesystem`
+- Command: `npx`
+- Args: `-y @modelcontextprotocol/server-filesystem .`
+
+Schritte:
+1. Konfiguration im MCP-Bereich eintragen
+2. "MCP Server pruefen" ausfuehren
+3. Rueckgabe von Protocol-Version und Toolliste pruefen
 
 ## Runbook: Startprobleme
 
