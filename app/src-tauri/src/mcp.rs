@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
@@ -11,6 +12,16 @@ pub struct McpServerRequest {
     pub name: String,
     pub command: String,
     pub args: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpCallRequest {
+    pub name: String,
+    pub command: String,
+    pub args: Vec<String>,
+    pub tool_name: String,
+    pub tool_args: HashMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Serialize)]
@@ -29,9 +40,19 @@ pub struct McpProbeResponse {
     pub tools: Vec<McpTool>,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpCallResponse {
+    pub server_name: String,
+    pub tool_name: String,
+    pub success: bool,
+    pub result: String,
+    pub error: Option<String>,
+}
+
 #[derive(Debug, Error)]
 pub enum McpError {
-    #[error("invalid command")] 
+    #[error("invalid command")]
     InvalidCommand,
     #[error("failed to spawn process: {0}")]
     SpawnFailed(String),
@@ -184,5 +205,131 @@ pub fn probe_server(req: McpServerRequest) -> Result<McpProbeResponse, McpError>
         protocol_version,
         server_info,
         tools,
+    })
+}
+
+/// Spawn an MCP server, initialize, call a tool, and return the result.
+pub fn call_tool(req: McpCallRequest) -> Result<McpCallResponse, McpError> {
+    if req.command.trim().is_empty() {
+        return Err(McpError::InvalidCommand);
+    }
+
+    let mut child = Command::new(req.command.trim())
+        .args(req.args.iter().map(String::as_str))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| McpError::SpawnFailed(e.to_string()))?;
+
+    let mut stdin = child.stdin.take()
+        .ok_or_else(|| McpError::IoFailed("missing stdin".to_string()))?;
+    let stdout = child.stdout.take()
+        .ok_or_else(|| McpError::IoFailed("missing stdout".to_string()))?;
+
+    // 1) initialize
+    let init = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2024-11-05",
+            "clientInfo": { "name": "Open_Cowork", "version": "0.1.0" },
+            "capabilities": {}
+        }
+    });
+
+    // 2) tools/call
+    let tool_call = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/call",
+        "params": {
+            "name": req.tool_name,
+            "arguments": req.tool_args
+        }
+    });
+
+    writeln!(stdin, "{}", init).map_err(|e| McpError::IoFailed(e.to_string()))?;
+    writeln!(stdin, "{}", tool_call).map_err(|e| McpError::IoFailed(e.to_string()))?;
+    stdin.flush().map_err(|e| McpError::IoFailed(e.to_string()))?;
+
+    let (tx, rx) = mpsc::channel::<String>();
+    std::thread::spawn(move || {
+        let reader = BufReader::new(stdout);
+        for line in reader.lines().map_while(Result::ok) {
+            if tx.send(line).is_err() {
+                break;
+            }
+        }
+    });
+
+    let start = Instant::now();
+    let timeout = Duration::from_secs(15);
+    let mut have_init = false;
+    let mut result_text = String::new();
+    let mut have_result = false;
+    let mut error_text: Option<String> = None;
+
+    while start.elapsed() < timeout {
+        let remaining = timeout.saturating_sub(start.elapsed());
+        let wait_for = remaining.min(Duration::from_millis(400));
+
+        match rx.recv_timeout(wait_for) {
+            Ok(line) => {
+                let value: serde_json::Value = match serde_json::from_str(&line) {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+
+                if value.get("id").and_then(|id| id.as_i64()) == Some(1) {
+                    have_init = true;
+                }
+
+                if value.get("id").and_then(|id| id.as_i64()) == Some(2) {
+                    have_result = true;
+                    if let Some(err) = value.get("error") {
+                        error_text = Some(
+                            err.get("message")
+                                .and_then(|m| m.as_str())
+                                .unwrap_or("unknown error")
+                                .to_string(),
+                        );
+                    } else if let Some(result) = value.get("result") {
+                        // MCP tools/call result has "content" array
+                        if let Some(content) = result.get("content").and_then(|c| c.as_array()) {
+                            let texts: Vec<&str> = content
+                                .iter()
+                                .filter_map(|entry| entry.get("text").and_then(|t| t.as_str()))
+                                .collect();
+                            result_text = texts.join("\n");
+                        } else {
+                            result_text = serde_json::to_string_pretty(result).unwrap_or_default();
+                        }
+                    }
+                }
+
+                if have_init && have_result {
+                    break;
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(_) => break,
+        }
+    }
+
+    let _ = child.kill();
+    let _ = child.wait();
+
+    if !have_init {
+        return Err(McpError::Timeout);
+    }
+
+    Ok(McpCallResponse {
+        server_name: req.name,
+        tool_name: req.tool_name,
+        success: error_text.is_none() && have_result,
+        result: result_text,
+        error: error_text,
     })
 }

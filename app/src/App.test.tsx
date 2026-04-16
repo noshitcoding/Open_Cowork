@@ -2,17 +2,16 @@ import { render, screen } from '@testing-library/react'
 import App from './App'
 
 describe('App', () => {
-  it('renders the cowork chat headline', () => {
+  it('renders the sidebar brand', () => {
     render(<App />)
-
-    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(
-      'Lokaler Chat mit Plan-Freigabe und MCP-Server-Anbindung'
-    )
+    expect(screen.getByText('Open_Cowork')).toBeInTheDocument()
   })
 
-  it('shows default ollama endpoint', () => {
+  it('shows navigation links', () => {
     render(<App />)
-
-    expect(screen.getByDisplayValue('http://192.168.178.82:11434')).toBeInTheDocument()
+    expect(screen.getByText('Chat')).toBeInTheDocument()
+    expect(screen.getByText('Tasks')).toBeInTheDocument()
+    expect(screen.getByText('MCP')).toBeInTheDocument()
+    expect(screen.getByText('Einstellungen')).toBeInTheDocument()
   })
 })

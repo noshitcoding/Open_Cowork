@@ -1,77 +1,121 @@
-.layout {
+/* === App Shell === */
+.app-shell {
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.sidebar {
+  width: 220px;
+  min-width: 220px;
+  background: #161f2b;
+  color: #f6f7f9;
   display: flex;
   flex-direction: column;
-  gap: 1.25rem;
+  padding: 1rem 0;
 }
 
-.hero {
-  padding: 1.4rem;
-  border-radius: 18px;
-  background:
-    radial-gradient(circle at 0% 0%, rgba(255, 146, 75, 0.2), transparent 40%),
-    radial-gradient(circle at 100% 100%, rgba(0, 153, 255, 0.17), transparent 35%),
-    #161f2b;
-  color: #f6f7f9;
+.sidebar-brand {
+  font-size: 1.1rem;
+  font-weight: 700;
+  padding: 0 1rem 1rem;
+  border-bottom: 1px solid rgba(255,255,255,0.1);
+  margin-bottom: 0.5rem;
 }
 
-.eyebrow {
-  font-size: 0.78rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  opacity: 0.8;
+.sidebar-nav {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  flex: 1;
 }
 
-.subtitle {
-  margin-top: 0.6rem;
-  max-width: 70ch;
-  opacity: 0.9;
+.sidebar-link {
+  display: block;
+  padding: 0.6rem 1rem;
+  color: #b0bec5;
+  text-decoration: none;
+  font-size: 0.92rem;
+  border-left: 3px solid transparent;
+  transition: all 0.15s;
 }
 
+.sidebar-link:hover {
+  background: rgba(255,255,255,0.06);
+  color: #fff;
+}
+
+.sidebar-link.active {
+  color: #ff7b36;
+  border-left-color: #ff7b36;
+  background: rgba(255,123,54,0.08);
+}
+
+.sidebar-footer {
+  padding: 0.6rem 1rem 0;
+  font-size: 0.75rem;
+  opacity: 0.5;
+  border-top: 1px solid rgba(255,255,255,0.1);
+}
+
+.main-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1.5rem;
+  background: #f0f2f5;
+}
+
+/* === Panels & Cards === */
 .panel {
   padding: 1.1rem;
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.86);
+  background: rgba(255, 255, 255, 0.92);
   border: 1px solid rgba(15, 23, 42, 0.12);
-  backdrop-filter: blur(3px);
+  margin-bottom: 1rem;
 }
 
 .panel h2 {
   margin-top: 0;
+  font-size: 1.05rem;
+}
+
+.card {
+  padding: 0.9rem;
+  border-radius: 10px;
+  background: #f8fafc;
+  border: 1px solid #dbe3ea;
+  margin-top: 0.6rem;
 }
 
 .grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: 0.8rem;
 }
 
+/* === Forms === */
 label {
   display: flex;
   flex-direction: column;
-  gap: 0.4rem;
-  font-size: 0.9rem;
+  gap: 0.3rem;
+  font-size: 0.88rem;
   color: #2f3c4c;
 }
 
-input,
-textarea,
-button {
-  font: inherit;
-}
+input, textarea, select, button { font: inherit; }
 
-input,
-textarea {
+input, textarea, select {
   border: 1px solid #b3beca;
-  border-radius: 10px;
-  padding: 0.55rem 0.65rem;
+  border-radius: 8px;
+  padding: 0.5rem 0.6rem;
   background: #f8fafc;
   color: #0f172a;
 }
 
 button {
   border: none;
-  border-radius: 10px;
-  padding: 0.64rem 0.95rem;
+  border-radius: 8px;
+  padding: 0.55rem 0.9rem;
   background: linear-gradient(135deg, #ff7b36, #ff4f58);
   color: white;
   cursor: pointer;
@@ -79,89 +123,268 @@ button {
 }
 
 button:disabled {
-  opacity: 0.62;
+  opacity: 0.55;
   cursor: not-allowed;
+}
+
+button.btn-secondary {
+  background: #e5e7eb;
+  color: #374151;
 }
 
 form {
   display: flex;
   flex-direction: column;
-  gap: 0.8rem;
+  gap: 0.7rem;
 }
 
-.actions {
-  margin-top: 0.8rem;
+.actions { margin-top: 0.7rem; }
+
+/* === Chat View === */
+.chat-view {
+  display: flex;
+  gap: 1rem;
+  height: calc(100vh - 3rem);
 }
 
-.output .card {
-  margin-top: 0.8rem;
-  padding: 0.9rem;
-  border-radius: 10px;
-  background: #f8fafc;
+.thread-list {
+  width: 200px;
+  min-width: 200px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.btn-new-thread {
+  width: 100%;
+  margin-bottom: 0.5rem;
+  font-size: 0.88rem;
+}
+
+.thread-item {
+  display: flex;
+  align-items: center;
+  border-radius: 8px;
+  overflow: hidden;
   border: 1px solid #dbe3ea;
 }
 
-.output ol {
-  margin: 0.5rem 0 0;
-  padding-left: 1.15rem;
+.thread-item.active {
+  border-color: #ff7b36;
+  background: #fff8f2;
+}
+
+.thread-select {
+  flex: 1;
+  text-align: left;
+  background: none;
+  color: #374151;
+  font-weight: 400;
+  padding: 0.45rem 0.6rem;
+  font-size: 0.82rem;
+  border-radius: 0;
+}
+
+.thread-delete {
+  background: none;
+  color: #9ca3af;
+  padding: 0.45rem 0.5rem;
+  font-size: 1rem;
+  border-radius: 0;
+}
+
+.thread-delete:hover { color: #ef4444; }
+
+.chat-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  color: #6b7280;
 }
 
 .chat-log {
+  flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 0.6rem;
-  max-height: 320px;
-  overflow: auto;
+  gap: 0.5rem;
+  overflow-y: auto;
   margin-bottom: 0.8rem;
+  padding: 0.5rem;
+  background: #fff;
+  border-radius: 10px;
+  border: 1px solid #dbe3ea;
 }
 
 .chat-msg {
-  padding: 0.7rem 0.8rem;
-  border-radius: 10px;
+  padding: 0.55rem 0.7rem;
+  border-radius: 8px;
   border: 1px solid #d5dfe8;
   background: #ffffff;
 }
 
 .chat-msg p {
-  margin-top: 0.3rem;
+  margin: 0.2rem 0 0;
   white-space: pre-wrap;
+  font-size: 0.9rem;
 }
 
-.chat-msg.user {
-  border-color: #f2b58a;
-  background: #fff2ea;
+.chat-msg.user { border-color: #f2b58a; background: #fff2ea; }
+.chat-msg.assistant { border-color: #bad4ff; background: #edf4ff; }
+.chat-msg.system { border-color: #cde3cb; background: #f2fff2; font-size: 0.85rem; }
+
+.chat-input-form {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-end;
 }
 
-.chat-msg.assistant {
-  border-color: #bad4ff;
-  background: #edf4ff;
+.chat-input-form textarea {
+  flex: 1;
+  resize: vertical;
 }
 
-.chat-msg.system {
-  border-color: #cde3cb;
-  background: #f2fff2;
-}
-
+/* === Approval Box === */
 .approval-box {
-  margin: 0.5rem 0 0.9rem;
-  padding: 0.75rem;
+  margin: 0.5rem 0;
+  padding: 0.7rem;
   border-radius: 10px;
   border: 1px solid #ffb67f;
   background: #fff8f2;
 }
 
-.card ul {
-  margin: 0.5rem 0 0;
-  padding-left: 1.15rem;
+.approval-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
 }
 
+/* === Task View === */
+.task-view h1, .mcp-view h1, .settings-view h1 {
+  margin-top: 0;
+  font-size: 1.3rem;
+  color: #1e293b;
+}
+
+.task-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+
+.task-card .task-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.task-card h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.task-status-badge {
+  font-size: 0.72rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: 12px;
+  color: white;
+  font-weight: 600;
+}
+
+.task-prompt {
+  font-size: 0.85rem;
+  color: #6b7280;
+  margin: 0 0 0.5rem;
+}
+
+.task-steps ol { padding-left: 1.2rem; }
+
+.task-steps h4 { margin: 0.5rem 0 0.3rem; font-size: 0.9rem; }
+
+.step-completed { color: #10b981; }
+.step-failed { color: #ef4444; }
+.step-running { color: #8b5cf6; font-weight: 600; }
+
+.step-output {
+  background: #1e293b;
+  color: #e2e8f0;
+  padding: 0.5rem;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  overflow-x: auto;
+  margin-top: 0.3rem;
+}
+
+.risk-badge {
+  font-size: 0.68rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: 8px;
+  margin-left: 0.4rem;
+}
+
+.risk-medium { background: #fef3c7; color: #92400e; }
+.risk-high { background: #fee2e2; color: #991b1b; }
+
+.task-actions { display: flex; gap: 0.5rem; margin-top: 0.5rem; }
+
+.task-meta {
+  font-size: 0.75rem;
+  color: #9ca3af;
+  margin-top: 0.5rem;
+}
+
+/* === MCP View === */
+.tool-list {
+  list-style: none;
+  padding: 0;
+}
+
+.tool-item {
+  padding: 0.4rem 0;
+  border-bottom: 1px solid #f1f5f9;
+  font-size: 0.88rem;
+}
+
+.tool-result {
+  background: #1e293b;
+  color: #e2e8f0;
+  padding: 0.6rem;
+  border-radius: 6px;
+  font-size: 0.82rem;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.tool-execute { margin-top: 1rem; }
+
+/* === Empty State === */
+.empty-state {
+  text-align: center;
+  color: #9ca3af;
+  padding: 3rem 1rem;
+}
+
+/* === Error === */
 .error {
   color: #a01616;
   font-weight: 600;
 }
 
-@media (max-width: 1024px) {
-  .grid {
-    grid-template-columns: 1fr;
-  }
+@media (max-width: 768px) {
+  .sidebar { width: 60px; min-width: 60px; }
+  .sidebar-brand, .sidebar-footer { display: none; }
+  .sidebar-link { padding: 0.6rem 0.3rem; font-size: 0.7rem; text-align: center; }
+  .thread-list { width: 150px; min-width: 150px; }
+  .grid { grid-template-columns: 1fr; }
 }

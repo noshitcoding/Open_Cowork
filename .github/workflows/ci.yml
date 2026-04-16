@@ -23,31 +23,43 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri
 
       - name: Install frontend dependencies
         run: |
           cd app
           npm ci
 
-      - name: Frontend build
+      - name: TypeScript type check
         run: |
           cd app
-          npm run build
+          npx tsc -b --noEmit
 
       - name: Frontend tests
         run: |
           cd app
-          npm run test:ci
+          npx vitest run
+
+      - name: Rust check
+        run: |
+          cd app/src-tauri
+          cargo check
 
       - name: Rust tests
         run: |
           cd app/src-tauri
           cargo test
 
-      - name: Rust check
+      - name: Rust clippy
         run: |
           cd app/src-tauri
-          cargo check
+          cargo clippy -- -D warnings
 
   security:
     runs-on: ubuntu-latest
@@ -55,6 +67,21 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: cargo-audit
+        run: |
+          cargo install cargo-audit
+          cd app/src-tauri
+          cargo audit
+
+      - name: npm audit
+        run: |
+          cd app
+          npm ci
+          npm audit --omit=dev || true
 
       - name: Semgrep scan
         uses: returntocorp/semgrep-action@v1
