@@ -149,14 +149,14 @@ pub async fn check_health(config: Option<OllamaConfig>) -> Result<OllamaHealthRe
         .await
         .map_err(|error| OllamaError::ParseFailed(error.to_string()))?;
 
-    let version_payload = client
-        .get(&version_url)
-        .send()
-        .await
-        .ok()
-        .and_then(|resp| resp.json::<VersionResponse>().now_or_never())
-        .and_then(|result| result.ok())
-        .map(|value| value.version);
+    let version_payload = match client.get(&version_url).send().await {
+        Ok(response) if response.status().is_success() => response
+            .json::<VersionResponse>()
+            .await
+            .ok()
+            .map(|value| value.version),
+        _ => None,
+    };
 
     Ok(OllamaHealthResponse {
         ok: true,
@@ -238,12 +238,30 @@ fn parse_steps(raw: &str) -> Vec<String> {
     }
 }
 
-trait FutureNowOrNeverExt<T> {
-    fn now_or_never(self) -> Option<T>;
-}
+#[cfg(test)]
+mod tests {
+    use super::parse_steps;
 
-impl<T> FutureNowOrNeverExt<T> for impl std::future::Future<Output = T> {
-    fn now_or_never(self) -> Option<T> {
-        futures::executor::block_on(async { Some(self.await) })
+    #[test]
+    fn parse_steps_extracts_numbered_lines() {
+        let raw = "1. Projekt initialisieren\n2) Ollama konfigurieren\n- Tests ausfuehren";
+        let parsed = parse_steps(raw);
+
+        assert_eq!(
+            parsed,
+            vec![
+                "Projekt initialisieren".to_string(),
+                "Ollama konfigurieren".to_string(),
+                "Tests ausfuehren".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_steps_falls_back_to_raw_text() {
+        let raw = "Freitext ohne Zeilenumbrueche";
+        let parsed = parse_steps(raw);
+
+        assert_eq!(parsed, vec!["Freitext ohne Zeilenumbrueche".to_string()]);
     }
 }

@@ -1,0 +1,15 @@
+# Node
+app/node_modules/
+app/dist/
+app/coverage/
+app/.vite/
+
+# Rust
+app/src-tauri/target/
+
+# Logs and temp
+*.log
+*.tmp
+*.swp
+.DS_Store
+Thumbs.db

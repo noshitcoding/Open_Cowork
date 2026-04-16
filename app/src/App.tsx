@@ -1,4 +1,5 @@
-import { FormEvent, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import type { FormEvent } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import './App.css'
 
@@ -26,10 +27,28 @@ type PlanResponse = {
 }
 
 function App() {
-  const [config, setConfig] = useState<OllamaConfig>({
-    baseUrl: 'http://192.168.178.82:11434',
-    model: 'llama3.1:8b',
-    timeoutMs: 20000,
+  const [config, setConfig] = useState<OllamaConfig>(() => {
+    const fallback = {
+      baseUrl: 'http://192.168.178.82:11434',
+      model: 'llama3.1:8b',
+      timeoutMs: 20000,
+    }
+
+    const persisted = localStorage.getItem('open-cowork.ollama-config')
+    if (!persisted) {
+      return fallback
+    }
+
+    try {
+      const parsed = JSON.parse(persisted) as Partial<OllamaConfig>
+      return {
+        baseUrl: parsed.baseUrl ?? fallback.baseUrl,
+        model: parsed.model ?? fallback.model,
+        timeoutMs: parsed.timeoutMs ?? fallback.timeoutMs,
+      }
+    } catch {
+      return fallback
+    }
   })
   const [prompt, setPrompt] = useState(
     'Erstelle einen knappen Arbeitsplan für die Implementierung eines sicheren Datei-Backups.'
@@ -41,6 +60,10 @@ function App() {
 
   const canRun = useMemo(() => {
     return config.baseUrl.trim().length > 0 && config.model.trim().length > 0
+  }, [config])
+
+  useEffect(() => {
+    localStorage.setItem('open-cowork.ollama-config', JSON.stringify(config))
   }, [config])
 
   const runHealthCheck = async () => {
