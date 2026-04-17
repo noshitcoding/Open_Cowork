@@ -72,7 +72,7 @@ export default function SettingsView() {
   }
 
   return (
-    <div className="settings-view code-mode">
+    <div className="settings-view">
       <h1>Einstellungen</h1>
       <p className="hint-text">Konfiguration und Präferenzen verwalten</p>
 

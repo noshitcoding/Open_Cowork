@@ -851,10 +851,10 @@ export default function CoworkView() {
   }
 
   return (
-    <div className={`flex w-full h-full overflow-hidden cowork-view ${compactMode ? 'compact-mode' : ''}`}>
+    <div className={`cowork-view ${compactMode ? 'compact-mode' : ''}`}>
       {/* Chat Pane */}
-      <div className="flex-1 flex flex-col h-full">
-        <div className="cowork-messages flex-1 overflow-y-auto" ref={logRef}>
+      <div className="cowork-pane">
+        <div className="cowork-messages" ref={logRef}>
           {activeThread.messages
             .filter((m) => m.role !== 'system')
             .map((msg, index) => (
@@ -895,7 +895,7 @@ export default function CoworkView() {
         </div>
 
         {showScrollToBottom && (
-          <button type="button" className="btn-scroll-bottom absolute bottom-24 right-8" onClick={scrollMessagesToBottom}>
+          <button type="button" className="btn-scroll-bottom" onClick={scrollMessagesToBottom}>
             Neue Nachrichten ▾
           </button>
         )}
@@ -924,7 +924,7 @@ export default function CoworkView() {
 
         {error && <p className="error cowork-error">{error}</p>}
 
-        <div className="quick-prompts px-4">
+        <div className="quick-prompts">
           {quickPrompts.map((prompt) => (
             <button key={prompt} type="button" className="quick-prompt-btn" onClick={() => applyPromptToInput(prompt)}>
               {prompt}
@@ -932,7 +932,7 @@ export default function CoworkView() {
           ))}
         </div>
 
-        <form className="cowork-input border-t p-4" onSubmit={handleSend}>
+        <form className="cowork-input" onSubmit={handleSend}>
           <div className="chat-input-toolbar">
             <label>
               Modell
@@ -975,7 +975,7 @@ export default function CoworkView() {
                     </span>
                     <button
                       type="button"
-                      className="attachment-remove text-destructive hover:text-destructive/80"
+                      className="attachment-remove"
                       onClick={() => handleRemoveAttachment(item)}
                       aria-label={`Anhang entfernen: ${item.path}`}
                       disabled={busy}
@@ -992,7 +992,7 @@ export default function CoworkView() {
               rows={2}
               placeholder="Nächste Anweisung..."
               disabled={busy}
-              className={`w-full resize-none p-2 border rounded-md focus:ring focus:ring-primary/20 ${dragOverInput ? 'ring ring-primary' : ''}`}
+              className={dragOverInput ? 'input-drop-active' : ''}
               onDragOver={handleInputDragOver}
               onDragLeave={handleInputDragLeave}
               onDrop={handleInputDrop}
@@ -1024,7 +1024,7 @@ export default function CoworkView() {
               }}
             />
           </div>
-          <button type="submit" disabled={busy} className="btn-send absolute bottom-6 right-6 px-4 py-2 bg-primary text-primary-foreground rounded-md shadow hover:bg-primary/90 disabled:opacity-50">
+          <button type="submit" disabled={busy} className="btn-send">
             {busy ? '⟳' : 'Senden →'}
           </button>
         </form>

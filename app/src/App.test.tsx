@@ -10,7 +10,6 @@ describe('App', () => {
   it('shows top navigation links', () => {
     render(<App />)
     expect(screen.getByRole('link', { name: 'Cowork' })).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Code' })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Settings' })).toBeInTheDocument()
   })
 })

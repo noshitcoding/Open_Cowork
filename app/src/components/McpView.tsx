@@ -205,7 +205,7 @@ export default function McpView() {
   }
 
   return (
-    <div className="mcp-view code-mode">
+    <div className="mcp-view">
       <h1>MCP Server</h1>
       <p className="hint-text">Model Context Protocol Server verwalten und testen</p>
 

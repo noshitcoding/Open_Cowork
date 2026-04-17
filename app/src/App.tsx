@@ -5,7 +5,6 @@ import WelcomeScreen from './components/WelcomeScreen'
 import CoworkView from './components/CoworkView'
 import McpView from './components/McpView'
 import SettingsView from './components/SettingsView'
-import ArtifactsView from './components/ArtifactsView'
 import { useUiStore } from './stores/uiStore'
 import { useChatStore } from './stores/chatStore'
 import { useTaskStore } from './stores/taskStore'
@@ -21,7 +20,6 @@ function AppRoutes() {
     <Routes>
       <Route path="/" element={<Layout />}>
         <Route index element={activeThreadId ? <CoworkView /> : <WelcomeScreen />} />
-        <Route path="artifacts" element={<ArtifactsView />} />
         <Route path="settings" element={
           <div className="code-mode" style={{ overflow: 'auto', height: '100%' }}>
             <SettingsView />

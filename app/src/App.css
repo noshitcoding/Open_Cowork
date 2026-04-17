@@ -710,6 +710,14 @@ body {
   position: relative;
 }
 
+.cowork-pane {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
 .cowork-messages, .chat-log {
   flex: 1;
   overflow-y: auto;
@@ -1098,8 +1106,9 @@ body {
   display: flex;
   flex-direction: column;
   gap: 24px;
-  max-width: min(960px, calc(100vw - 48px));
+  max-width: min(1200px, calc(100vw - 48px));
   margin: 0 auto;
+  width: 100%;
 }
 
 /* === Panels & Cards (MCP / Settings) === */
