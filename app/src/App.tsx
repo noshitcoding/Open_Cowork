@@ -3,7 +3,6 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import Layout from './components/Layout'
 import WelcomeScreen from './components/WelcomeScreen'
 import CoworkView from './components/CoworkView'
-import McpView from './components/McpView'
 import SettingsView from './components/SettingsView'
 import { useUiStore } from './stores/uiStore'
 import { useChatStore } from './stores/chatStore'
@@ -23,7 +22,6 @@ function AppRoutes() {
         <Route path="settings" element={
           <div className="code-mode" style={{ overflow: 'auto', height: '100%' }}>
             <SettingsView />
-            <McpView />
           </div>
         } />
         <Route path="*" element={<Navigate to="/" replace />} />
