@@ -22,19 +22,35 @@ Open_Cowork verwendet eine lokale Desktop-Architektur mit klarer Trennung zwisch
 ## 1. Frontend (`app/src`)
 
 ### Routing & Layout
-- React Router mit 4 Routen: Chat (`/`), Tasks (`/tasks`), MCP (`/mcp`), Einstellungen (`/settings`)
-- Persistenter Sidebar-Layout mit Navigation
+- React Router mit 2 Routen: Cowork (`/`), Einstellungen (`/settings`)
+- Top-Bar mit Cowork/Settings Tabs und Shortcuts (Ctrl+1/2)
+- Optionaler linker Sidebar fuer Thread-Liste, Command-Palette (Ctrl+K)
 
 ### Zustand Stores
-- **configStore**: Ollama-Konfiguration (baseUrl, model, timeout) und MCP-Server-Konfiguration, localStorage-Persistenz
+- **configStore**: Ollama-Konfiguration (baseUrl, model, timeout), MCP-Server, App-Preferences, localStorage-Persistenz
 - **chatStore**: Chat-Threads, Messages, Approval-State, DB-Sync via Tauri-Commands
 - **taskStore**: Task-Lifecycle, Steps mit Status, DB-Sync via Tauri-Commands
+- **memoryStore**: Agent-Memory-Eintraege, Profil, Provider, Hints
+- **skillStore**: Erlernbare Skills, Lernverlauf, Auto-Generierung
+- **sessionStore**: Sessions (Start/End/Freeze), Suchfunktion
+- **insightsStore**: Nutzungsstatistiken, Events, Summary
+- **personalityStore**: Persoenlichkeitsprofile mit Model-Override
+- **pipelineStore**: Artifact-Pipelines und Tool-Gateway
+- **processStore**: Verwaltete Hintergrundprozesse
+- **terminalStore**: Terminal-Backends, Befehlsausfuehrung
 
 ### Views
-- **ChatView**: Thread-Management, Nachrichtenverlauf, Approval-Box, Ollama-Integration
-- **TaskView**: Task-Liste mit Statusbadges, Schritt-Anzeige, Freigabe/Abbruch
-- **McpView**: Server-Konfiguration, Probe, Tool-Ausfuehrung mit JSON-Argumenten
-- **SettingsView**: Ollama-Konfiguration und Health-Check
+- **CoworkView / WelcomeScreen**: Thread-Management, Nachrichtenverlauf, Approval-Box, Ollama-Integration
+- **SettingsView**: Unified-Settings mit 9-Kategorie-Sidebar:
+  - 🤖 KI & Modell — Ollama-Konfiguration, Health-Check, ModelSwitcher, PersonalitySelector
+  - ⚡ Agent & Skills — Agent-Verhalten-Toggles, SkillPanel, PipelinePanel
+  - 🧠 Gedaechtnis — MemoryPanel (Eintraege, Profil, Provider, Hints)
+  - 📂 Sessions & Insights — SessionSearchPanel, InsightsPanel
+  - 💻 Terminal & Prozesse — TerminalPanel, ProcessPanel
+  - 🔌 MCP Server — MCP-Einstellungen + vollstaendige McpView
+  - 🎨 Oberflaeche — UI-Toggles, Benachrichtigungen, Sound
+  - 🔒 Sicherheit & Daten — Dateisicherheit, Datenhaltung
+  - 📁 System & Info — Workspace, Autostart, Ueber
 
 ## 2. Tauri Shell (`app/src-tauri/src/lib.rs`)
 

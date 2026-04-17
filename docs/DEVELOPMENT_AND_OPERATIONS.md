@@ -58,9 +58,33 @@ Beispielkonfiguration:
 - Args: `-y @modelcontextprotocol/server-filesystem .`
 
 Schritte:
-1. Konfiguration im MCP-Bereich eintragen
-2. "MCP Server pruefen" ausfuehren
-3. Rueckgabe von Protocol-Version und Toolliste pruefen
+1. In den Einstellungen zur Kategorie "🔌 MCP Server" navigieren
+2. Konfiguration im MCP-Bereich eintragen
+3. "MCP Server pruefen" ausfuehren
+4. Rueckgabe von Protocol-Version und Toolliste pruefen
+
+## Funktionstest: Einstellungen (Settings)
+
+Die Einstellungen sind in 9 Kategorien organisiert, erreichbar ueber die linke Sidebar:
+
+| Kategorie | Inhalt |
+|---|---|
+| KI & Modell | Ollama-Endpunkt, Modellwahl, Health-Check, Persoenlichkeiten |
+| Agent & Skills | Agent-Verhalten, Skills, Pipelines |
+| Gedaechtnis | Memory-Eintraege, Profil, Provider, Hints |
+| Sessions & Insights | Session-Suche, Nutzungsstatistiken |
+| Terminal & Prozesse | Terminal-Backends, verwaltete Prozesse |
+| MCP Server | MCP-Einstellungen, Server-Import, Probe, Tool-Ausfuehrung |
+| Oberflaeche | UI-Darstellung, Benachrichtigungen, Sound |
+| Sicherheit & Daten | Dateisicherheit, Datenhaltung |
+| System & Info | Workspace, Autostart, App-Version |
+
+Testschritte:
+1. App starten, auf den "Settings"-Tab klicken
+2. Alle 9 Kategorien in der Sidebar durchklicken
+3. Pruefen dass jede Kategorie den korrekten Inhalt zeigt
+4. In "KI & Modell" den Health-Check ausfuehren
+5. In "Oberflaeche" den Kompaktmodus aktivieren/deaktivieren
 
 ## Runbook: Startprobleme
 
