@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { invoke } from '@tauri-apps/api/core'
+import { safeInvoke } from '../utils/safeInvoke'
 
 export type TerminalBackend = {
   id: string
@@ -32,6 +32,17 @@ type TerminalState = {
   ensureLocalBackend: () => Promise<TerminalBackend>
 }
 
+const LOCAL_DEFAULT_BACKEND: TerminalBackend = {
+  id: 'local',
+  name: 'Local',
+  backend_type: 'local',
+  config_json: '{}',
+  status: 'connected',
+  last_connected_at: new Date().toISOString(),
+  created_at: new Date().toISOString(),
+  updated_at: new Date().toISOString(),
+}
+
 export const useTerminalStore = create<TerminalState>()((set) => ({
   backends: [],
   loading: false,
@@ -40,7 +51,7 @@ export const useTerminalStore = create<TerminalState>()((set) => ({
   loadBackends: async () => {
     set({ loading: true, error: null })
     try {
-      const backends = await invoke<TerminalBackend[]>('backend_list')
+      const backends = await safeInvoke<TerminalBackend[]>('backend_list', undefined, [])
       set({ backends, loading: false })
     } catch (e) {
       set({ error: String(e), loading: false })
@@ -49,12 +60,12 @@ export const useTerminalStore = create<TerminalState>()((set) => ({
 
   upsertBackend: async (b) => {
     try {
-      await invoke('backend_upsert', {
+      await safeInvoke('backend_upsert', {
         id: b.id,
         name: b.name,
         backendType: b.backendType,
         configJson: b.configJson,
-      })
+      }, undefined)
     } catch (e) {
       set({ error: String(e) })
     }
@@ -62,7 +73,7 @@ export const useTerminalStore = create<TerminalState>()((set) => ({
 
   deleteBackend: async (id) => {
     try {
-      await invoke('backend_delete', { id })
+      await safeInvoke('backend_delete', { id }, undefined)
       set((s) => ({ backends: s.backends.filter((b) => b.id !== id) }))
     } catch (e) {
       set({ error: String(e) })
@@ -70,17 +81,46 @@ export const useTerminalStore = create<TerminalState>()((set) => ({
   },
 
   execCommand: async (backendId, command, workingDir, timeoutMs) => {
-    const result = await invoke<BackendExecResponse>('backend_exec', {
-      backendId,
-      command,
-      workingDir: workingDir ?? null,
-      timeoutMs: timeoutMs ?? null,
-    })
-    return result
+    try {
+      return await safeInvoke<BackendExecResponse>('backend_exec', {
+        backendId,
+        command,
+        workingDir: workingDir ?? null,
+        timeoutMs: timeoutMs ?? null,
+      }, {
+        backendId,
+        stdout: 'Terminal-Ausfuehrung ist nur in der Desktop-App verfuegbar.',
+        stderr: '',
+        exitCode: 1,
+        timedOut: false,
+      })
+    } catch (e) {
+      return {
+        backendId,
+        stdout: '',
+        stderr: String(e),
+        exitCode: 1,
+        timedOut: false,
+      }
+    }
   },
 
   ensureLocalBackend: async () => {
-    const backend = await invoke<TerminalBackend>('backend_ensure_local')
-    return backend
+    try {
+      const backend = await safeInvoke<TerminalBackend>(
+        'backend_ensure_local', undefined, LOCAL_DEFAULT_BACKEND
+      )
+      set((s) => {
+        const exists = s.backends.some(b => b.id === backend.id)
+        return { backends: exists ? s.backends : [backend, ...s.backends] }
+      })
+      return backend
+    } catch {
+      set((s) => {
+        const exists = s.backends.some(b => b.id === LOCAL_DEFAULT_BACKEND.id)
+        return { backends: exists ? s.backends : [LOCAL_DEFAULT_BACKEND, ...s.backends] }
+      })
+      return LOCAL_DEFAULT_BACKEND
+    }
   },
 }))

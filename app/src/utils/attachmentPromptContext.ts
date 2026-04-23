@@ -44,7 +44,10 @@ type RetrievalCandidate = {
   sizeBytes: number
 }
 
-const FOLDER_METADATA_LIMIT = 5000
+const FOLDER_METADATA_LIMIT = 1200
+const MAX_RANKING_LINES = 120
+const MAX_FOLDER_FILES_TO_READ = 36
+const MAX_DIRECT_FILES_TO_READ = 12
 const RETRIEVAL_SNIPPETS_PER_FILE = 4
 const ATTACHMENT_TEXT_PASS_1 = 40_000
 const ATTACHMENT_TEXT_PASS_2 = 80_000
@@ -259,13 +262,17 @@ export async function buildAttachmentPromptContext(
     .sort((a, b) => b.score - a.score)
 
   if (!wantsFullFileList && ranked.length > 0) {
+    const visibleRanked = ranked.slice(0, MAX_RANKING_LINES)
     retrievalLines.push('Selektierte Kandidaten (Ranking):')
     retrievalLines.push(
-      ...ranked.map(
+      ...visibleRanked.map(
         ({ candidate, score }, index) =>
           `${index + 1}. ${getPathName(candidate.displayPath)} | Score ${score} | Sprache ${candidate.language ?? 'unbekannt'} | ${candidate.origin}`,
       ),
     )
+    if (ranked.length > visibleRanked.length) {
+      retrievalLines.push(`... weitere ${ranked.length - visibleRanked.length} Kandidaten ausgeblendet`)
+    }
   }
 
   // Direct file attachments: read full text instead of snippets
@@ -274,13 +281,33 @@ export async function buildAttachmentPromptContext(
     directFilePaths.has(candidate.displayPath.toLowerCase()) ||
     fileAttachments.some((f) => candidate.readPath.toLowerCase().endsWith(f.path.split(/[\\/]/).pop()!.toLowerCase()))
 
+  let folderReads = 0
+  let directReads = 0
+  let skippedByReadLimit = 0
+
   for (const { candidate } of ranked) {
     if (wantsFullFileList) {
       // Bei Voll-Listen-Abfragen reichen Metadaten; Volltext-Retrieval wird uebersprungen.
       continue
     }
+
+    const directCandidate = isDirectFile(candidate)
+    if (directCandidate) {
+      if (directReads >= MAX_DIRECT_FILES_TO_READ) {
+        skippedByReadLimit += 1
+        continue
+      }
+      directReads += 1
+    } else {
+      if (folderReads >= MAX_FOLDER_FILES_TO_READ) {
+        skippedByReadLimit += 1
+        continue
+      }
+      folderReads += 1
+    }
+
     try {
-      if (isDirectFile(candidate)) {
+      if (directCandidate) {
         // Full text for directly attached files (PDFs, docs, etc.)
         const fullRead = await invoke<ExtractTextLimitedResponse>('fs_extract_text_limited', {
           path: candidate.readPath,
@@ -327,6 +354,11 @@ export async function buildAttachmentPromptContext(
 
   if (retrievalLines.length > 0) {
     retrievalLines.push(`Iterative Vertiefung aktiv: ${deepReads} Datei(en) mit zweitem Read-Pass.`)
+    if (skippedByReadLimit > 0) {
+      retrievalLines.push(
+        `Retrieval aus Performancegruenden begrenzt: ${skippedByReadLimit} Datei(en) wurden in diesem Durchlauf uebersprungen.`,
+      )
+    }
   }
 
   const failedBlock =

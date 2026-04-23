@@ -15,6 +15,11 @@ describe('streamChatTurn', () => {
   beforeEach(() => {
     invokeMock.mockReset()
     listenMock.mockReset()
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      value: { invoke: vi.fn() },
+      configurable: true,
+      writable: true,
+    })
   })
 
   it('falls back to chat_turn when the stream command fails', async () => {

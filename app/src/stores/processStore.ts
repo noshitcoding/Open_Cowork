@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { invoke } from '@tauri-apps/api/core'
+import { safeInvoke } from '../utils/safeInvoke'
 
 export type ManagedProcess = {
   id: string
@@ -54,7 +54,7 @@ export const useProcessStore = create<ProcessState>()((set) => ({
   loadProcesses: async () => {
     set({ loading: true, error: null })
     try {
-      const processes = await invoke<ProcessStatusResult[]>('process_list')
+      const processes = await safeInvoke<ProcessStatusResult[]>('process_list', undefined, [])
       set({ processes, loading: false })
     } catch (e) {
       set({ error: String(e), loading: false })
@@ -62,28 +62,54 @@ export const useProcessStore = create<ProcessState>()((set) => ({
   },
 
   startProcess: async (label, command, backendId, requiresAdmin = false) => {
-    const result = await invoke<ProcessStartResult>('process_start', {
-      label,
-      command,
-      backendId: backendId ?? null,
-      requiresAdmin,
-    })
-    return result
+    try {
+      return await safeInvoke<ProcessStartResult>('process_start', {
+        label,
+        command,
+        backendId: backendId ?? null,
+        requiresAdmin,
+      }, {
+        processId: `proc-${Date.now()}`,
+        pid: null,
+        status: 'unavailable',
+        message: 'Prozess-Verwaltung ist nur in der Desktop-App verfuegbar.',
+      })
+    } catch (e) {
+      return {
+        processId: `proc-err-${Date.now()}`,
+        pid: null,
+        status: 'error',
+        message: String(e),
+      }
+    }
   },
 
   stopProcess: async (processId) => {
     try {
-      await invoke('process_stop', { processId })
+      await safeInvoke('process_stop', { processId }, undefined)
     } catch (e) {
       set({ error: String(e) })
     }
   },
 
   approveProcess: async (processId, approved) => {
-    const result = await invoke<ProcessStartResult>('process_approve', {
-      processId,
-      approved,
-    })
-    return result
+    try {
+      return await safeInvoke<ProcessStartResult>('process_approve', {
+        processId,
+        approved,
+      }, {
+        processId,
+        pid: null,
+        status: 'unavailable',
+        message: 'Prozess-Genehmigung ist nur in der Desktop-App verfuegbar.',
+      })
+    } catch (e) {
+      return {
+        processId,
+        pid: null,
+        status: 'error',
+        message: String(e),
+      }
+    }
   },
 }))

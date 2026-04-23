@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { invoke } from '@tauri-apps/api/core'
+import { safeInvoke } from '../utils/safeInvoke'
 
 export type InsightsEvent = {
   id: string
@@ -100,6 +100,54 @@ const normalizeSummary = (value: unknown): InsightsSummary => {
   }
 }
 
+/* ── Local fallback for insights events ─────────────────────────────── */
+
+const LOCAL_INSIGHTS_KEY = 'open-cowork-insights-events'
+
+function getLocalEvents(): InsightsEvent[] {
+  try {
+    const raw = localStorage.getItem(LOCAL_INSIGHTS_KEY)
+    return raw ? JSON.parse(raw) : []
+  } catch { return [] }
+}
+
+function addLocalEvent(ev: InsightsEvent): void {
+  try {
+    const events = getLocalEvents()
+    events.unshift(ev)
+    localStorage.setItem(LOCAL_INSIGHTS_KEY, JSON.stringify(events.slice(0, 500)))
+  } catch { /* noop */ }
+}
+
+function buildLocalSummary(): InsightsSummary {
+  const events = getLocalEvents()
+  const categories = new Map<string, number>()
+  for (const ev of events) {
+    categories.set(ev.category, (categories.get(ev.category) ?? 0) + 1)
+  }
+  return {
+    totalEvents: events.length,
+    totalSessions: 0,
+    totalMessagesSent: events.filter(e => e.event_type === 'message').length,
+    totalTokensEst: 0,
+    avgSessionDurationMin: 0,
+    topCategories: Array.from(categories.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10)
+      .map(([category, count]) => ({ category, count })),
+    recentEvents: events.slice(0, 10).map(e => ({
+      eventType: e.event_type,
+      category: e.category,
+      valueText: e.value_text,
+      createdAt: e.created_at,
+    })),
+    skillUsageCount: events.filter(e => e.event_type === 'skill_use').length,
+    memoryEntryCount: 0,
+  }
+}
+
+/* ── Store ────────────────────────────────────────────────────────────── */
+
 type InsightsState = {
   events: InsightsEvent[]
   summary: InsightsSummary | null
@@ -124,10 +172,10 @@ export const useInsightsStore = create<InsightsState>()((set) => ({
   loadEvents: async (category, limit = 100) => {
     set({ loading: true, error: null })
     try {
-      const events = await invoke<unknown[]>('insights_list', {
+      const events = await safeInvoke<unknown[]>('insights_list', {
         category: category ?? null,
         limit,
-      })
+      }, getLocalEvents().slice(0, limit))
       set({ events: asArray(events, normalizeEvent), loading: false })
     } catch (e) {
       set({ error: String(e), loading: false })
@@ -135,21 +183,37 @@ export const useInsightsStore = create<InsightsState>()((set) => ({
   },
 
   recordEvent: async (e) => {
-    const id = await invoke<string>('insights_record', {
-      eventType: e.eventType,
-      category: e.category,
-      valueNum: e.valueNum ?? null,
-      valueText: e.valueText ?? null,
-      sessionId: e.sessionId ?? null,
-      metadataJson: e.metadataJson ?? null,
-    })
-    return id
+    const id = `ev-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    try {
+      const result = await safeInvoke<string>('insights_record', {
+        eventType: e.eventType,
+        category: e.category,
+        valueNum: e.valueNum ?? null,
+        valueText: e.valueText ?? null,
+        sessionId: e.sessionId ?? null,
+        metadataJson: e.metadataJson ?? null,
+      }, id)
+      return result
+    } catch {
+      // Fallback: store locally
+      addLocalEvent({
+        id,
+        event_type: e.eventType,
+        category: e.category,
+        value_num: e.valueNum ?? null,
+        value_text: e.valueText ?? null,
+        session_id: e.sessionId ?? null,
+        metadata_json: e.metadataJson ?? null,
+        created_at: new Date().toISOString(),
+      })
+      return id
+    }
   },
 
   loadSummary: async () => {
     set({ loading: true, error: null })
     try {
-      const summary = await invoke<unknown>('insights_summary')
+      const summary = await safeInvoke<unknown>('insights_summary', undefined, buildLocalSummary())
       set({ summary: normalizeSummary(summary), loading: false })
     } catch (e) {
       set({ error: String(e), loading: false })

@@ -194,6 +194,9 @@ export function extractTextContent(message: Message): string {
   if (message.type === 'tombstone') return ''
   if (message.type === 'tool_use_summary') return `[${message.summary.toolName}] ${message.summary.outputSnippet}`
   if ('content' in message) {
+    if (!Array.isArray(message.content)) {
+      return typeof message.content === 'string' ? message.content : ''
+    }
     return message.content
       .filter((b): b is ContentBlockText => b.type === 'text')
       .map(b => b.text)

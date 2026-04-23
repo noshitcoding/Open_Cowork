@@ -226,8 +226,11 @@ export default function ChatView() {
         },
       )
 
-      const fallbackText = response.requiresApproval && response.proposedPlan.length > 0
-        ? `Plan erstellt. Bitte Freigabe prüfen:\n- ${response.proposedPlan.join('\n- ')}`
+      const proposedPlan = Array.isArray(response.proposedPlan) ? response.proposedPlan : []
+      const requiresApproval = Boolean(response.requiresApproval)
+
+      const fallbackText = requiresApproval && proposedPlan.length > 0
+        ? `Plan erstellt. Bitte Freigabe prüfen:\n- ${proposedPlan.join('\n- ')}`
         : 'Das Modell hat keine sichtbare Antwort geliefert. Bitte erneut versuchen oder Modell/Prompt prüfen.'
       const presentation = resolveAssistantPresentation(response.assistantMessage, {
         verboseMode,
@@ -262,15 +265,15 @@ export default function ChatView() {
           assistantVisibleResponse: presentation.content,
           endpoint: response.endpoint,
           model: response.model,
-          requiresApproval: response.requiresApproval,
-          proposedPlan: response.proposedPlan,
+          requiresApproval,
+          proposedPlan,
         })
       }
 
-      if (response.requiresApproval) {
-        setPendingApproval(response.proposedPlan)
+      if (requiresApproval) {
+        setPendingApproval(proposedPlan)
         const taskId = createTask(text, text.slice(0, 60), activeThreadId)
-        const steps: TaskStep[] = response.proposedPlan.map((title, i) => ({
+        const steps: TaskStep[] = proposedPlan.map((title, i) => ({
           id: `${taskId}-step-${i}`,
           index: i,
           title,

@@ -1,17 +1,19 @@
-import { invoke } from '@tauri-apps/api/core'
+/**
+ * Audit event logger.
+ * Safely writes audit events to the backend when available.
+ * Uses safeInvokeVoid so it never breaks product flows.
+ */
+
+import { safeInvokeVoid } from './safeInvoke'
 
 export async function writeAuditEvent(
   area: string,
   action: string,
   details?: Record<string, unknown>
 ): Promise<void> {
-  try {
-    await invoke('audit_event', {
-      area,
-      action,
-      details: details ?? null,
-    })
-  } catch {
-    // Audit logging must never break product flows.
-  }
+  await safeInvokeVoid('audit_event', {
+    area,
+    action,
+    details: details ?? null,
+  })
 }

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { generateSessionTitle, listSessions } from './sessionPersistence'
+import { generateSessionTitle, listSessions, loadSession } from './sessionPersistence'
 
 const invokeMock = vi.fn()
 
@@ -46,5 +46,54 @@ describe('sessionPersistence', () => {
         updatedAt: 2000,
       },
     ])
+  })
+
+  it('loads legacy role/content rows as valid session messages', async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === 'db_list_threads') {
+        return Promise.resolve([
+          {
+            id: 'legacy-1',
+            title: 'Alte Session',
+            created_at: 1000,
+            updated_at: 2000,
+          },
+        ])
+      }
+
+      if (command === 'db_list_messages') {
+        return Promise.resolve([
+          {
+            id: 'm-1',
+            role: 'user',
+            content: '{"role":"user","content":"Hallo aus alt","timestamp":1001}',
+            timestamp: 1001,
+          },
+          {
+            id: 'm-2',
+            role: 'assistant',
+            content: '{"role":"assistant","content":"Antwort alt","timestamp":1002}',
+            timestamp: 1002,
+          },
+        ])
+      }
+
+      return Promise.resolve([])
+    })
+
+    await expect(loadSession('legacy-1')).resolves.toMatchObject({
+      id: 'legacy-1',
+      title: 'Alte Session',
+      messages: [
+        {
+          type: 'user',
+          content: [{ type: 'text', text: 'Hallo aus alt' }],
+        },
+        {
+          type: 'assistant',
+          content: [{ type: 'text', text: 'Antwort alt' }],
+        },
+      ],
+    })
   })
 })

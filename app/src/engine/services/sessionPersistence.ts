@@ -4,6 +4,7 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import type { Message, TokenUsage, AppState } from '../types'
+import { generateUUID } from '../types'
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -70,7 +71,53 @@ const normalizeSummary = (value: unknown): SessionSummary | null => {
 
 const parseMessage = (content: string): Message | null => {
   try {
-    return JSON.parse(content) as Message
+    const parsed = JSON.parse(content) as unknown
+    if (!parsed || typeof parsed !== 'object') return null
+
+    const message = parsed as RawRecord
+    const type = asString(message.type)
+
+    if (type) {
+      return message as Message
+    }
+
+    // Backward compatibility: older rows may store { role, content, timestamp }
+    const role = asString(message.role)
+    const timestamp = asNumber(message.timestamp, Date.now())
+    const uuid = asString(message.uuid, generateUUID())
+    const textContent = asString(message.content)
+
+    if (role === 'user') {
+      return {
+        type: 'user',
+        uuid,
+        content: [{ type: 'text', text: textContent }],
+        timestamp,
+      }
+    }
+
+    if (role === 'assistant') {
+      return {
+        type: 'assistant',
+        uuid,
+        content: [{ type: 'text', text: textContent }],
+        model: asString(message.model, 'legacy'),
+        stopReason: null,
+        usage: { input_tokens: 0, output_tokens: 0 },
+        timestamp,
+      }
+    }
+
+    if (role === 'system') {
+      return {
+        type: 'system',
+        uuid,
+        content: textContent,
+        timestamp,
+      }
+    }
+
+    return null
   } catch {
     return null
   }

@@ -255,7 +255,22 @@ export const useCrewStore = create<CrewState>()(
           ),
         })),
 
-      runCrew: (crewId) => {
+      runCrew: async (crewId) => {
+        const state = get()
+        const crew = state.crews.find(c => c.id === crewId)
+        if (!crew || crew.tasks.length === 0) return
+
+        // Get Ollama config
+        let ollamaUrl = 'http://192.168.178.82:11434'
+        let ollamaModel = 'gpt-oss:20b'
+        try {
+          const configStore = await import('./configStore')
+          const config = configStore.useConfigStore.getState()
+          ollamaUrl = config.ollama.baseUrl
+          ollamaModel = config.ollama.model
+        } catch { /* use defaults */ }
+
+        // Mark crew as running
         set(s => ({
           crews: s.crews.map(c =>
             c.id === crewId
@@ -265,9 +280,103 @@ export const useCrewStore = create<CrewState>()(
                   tasks: c.tasks.map((t, i) => ({
                     ...t,
                     status: i === 0 ? 'running' as const : 'pending' as const,
+                    output: null,
                   })),
                   updatedAt: Date.now(),
                 }
+              : c
+          ),
+        }))
+
+        const addLog = get().addLog
+        const taskResults: string[] = []
+
+        for (let i = 0; i < crew.tasks.length; i++) {
+          const currentCrew = get().crews.find(c => c.id === crewId)
+          if (!currentCrew || currentCrew.status !== 'running') break
+
+          const task = crew.tasks[i]
+          const agent = crew.agents.find(a => a.id === task.agentId)
+
+          // Mark current task as running
+          get().updateTask(crewId, task.id, { status: 'running' })
+
+          addLog({
+            id: `log-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+            crewId,
+            agentId: task.agentId,
+            taskId: task.id,
+            action: `Task gestartet: ${task.description.slice(0, 60)}`,
+            result: `Agent: ${agent?.name ?? 'Unbekannt'}`,
+            timestamp: Date.now(),
+          })
+
+          try {
+            // Build system prompt from agent definition
+            const systemPrompt = agent
+              ? `Du bist "${agent.name}", Rolle: ${agent.role}.\nDein Ziel: ${agent.goal}\nHintergrund: ${agent.backstory}\nVerfuegbare Tools: ${agent.tools.join(', ')}\nMax Iterationen: ${agent.maxIterations}`
+              : 'Du bist ein hilfreicher Assistent.'
+
+            // Build task prompt with context from previous tasks
+            const previousContext = taskResults.length > 0
+              ? `\n\nErgebnisse vorheriger Schritte:\n${taskResults.map((r, idx) => `--- Schritt ${idx + 1} ---\n${r}`).join('\n')}`
+              : ''
+
+            const taskPrompt = `Aufgabe: ${task.description}${task.expectedOutput ? `\nErwartetes Ergebnis: ${task.expectedOutput}` : ''}${previousContext}`
+
+            const response = await fetch(`${ollamaUrl}/api/chat`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                model: agent?.modelOverride ?? ollamaModel,
+                messages: [
+                  { role: 'system', content: systemPrompt },
+                  { role: 'user', content: taskPrompt },
+                ],
+                stream: false,
+              }),
+            })
+
+            if (!response.ok) throw new Error(`Ollama HTTP ${response.status}`)
+
+            const data = await response.json() as { message?: { content?: string } }
+            const output = data.message?.content ?? '(keine Antwort)'
+
+            taskResults.push(output)
+            get().updateTask(crewId, task.id, { status: 'completed', output })
+
+            addLog({
+              id: `log-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+              crewId,
+              agentId: task.agentId,
+              taskId: task.id,
+              action: 'Task abgeschlossen',
+              result: output.slice(0, 200),
+              timestamp: Date.now(),
+            })
+          } catch (e) {
+            get().updateTask(crewId, task.id, { status: 'failed', output: String(e) })
+            taskResults.push(`FEHLER: ${e}`)
+
+            addLog({
+              id: `log-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+              crewId,
+              agentId: task.agentId,
+              taskId: task.id,
+              action: 'Task fehlgeschlagen',
+              result: String(e).slice(0, 200),
+              timestamp: Date.now(),
+            })
+          }
+        }
+
+        // Mark crew as completed
+        const finalCrew = get().crews.find(c => c.id === crewId)
+        const hasFailed = finalCrew?.tasks.some(t => t.status === 'failed')
+        set(s => ({
+          crews: s.crews.map(c =>
+            c.id === crewId
+              ? { ...c, status: (hasFailed ? 'failed' : 'completed') as Crew['status'], updatedAt: Date.now() }
               : c
           ),
         }))
@@ -277,7 +386,14 @@ export const useCrewStore = create<CrewState>()(
         set(s => ({
           crews: s.crews.map(c =>
             c.id === crewId
-              ? { ...c, status: 'idle' as const, updatedAt: Date.now() }
+              ? {
+                  ...c,
+                  status: 'idle' as const,
+                  tasks: c.tasks.map(t =>
+                    t.status === 'running' ? { ...t, status: 'failed' as const, output: 'Abgebrochen' } : t
+                  ),
+                  updatedAt: Date.now(),
+                }
               : c
           ),
         }))

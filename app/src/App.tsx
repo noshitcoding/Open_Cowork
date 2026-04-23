@@ -8,6 +8,7 @@ import { useLogStore } from './stores/logStore'
 import { useConfigStore } from './stores/configStore'
 import { writeAuditEvent } from './utils/audit'
 import { seedDefaultPersonalities, seedDefaultMemory } from './utils/defaultSeeds'
+import { startScheduledWorker, stopScheduledWorker } from './engine/scheduledWorker'
 import './App.css'
 
 const WelcomeScreen = lazy(() => import('./components/WelcomeScreen'))
@@ -59,6 +60,9 @@ function App() {
     void writeAuditEvent('runtime', 'app_started', {
       startupMs: Math.round(performance.now() - startedAt),
     })
+    // Start scheduled tasks worker
+    startScheduledWorker()
+    return () => stopScheduledWorker()
   }, [addLog, loadChatFromDb, loadTasksFromDb])
 
   useEffect(() => {

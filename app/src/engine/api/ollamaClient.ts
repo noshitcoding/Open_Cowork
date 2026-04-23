@@ -159,6 +159,39 @@ type EngineToolDef = {
   input_schema: ToolInputSchema
 }
 
+type TauriWindow = Window & {
+  __TAURI_INTERNALS__?: {
+    invoke?: unknown
+  }
+  __TAURI_IPC__?: unknown
+}
+
+function canUseTauriInvoke(): boolean {
+  if (typeof window === 'undefined') {
+    return true
+  }
+
+  const tauriWindow = window as TauriWindow
+  return typeof tauriWindow.__TAURI_INTERNALS__?.invoke === 'function'
+    || typeof tauriWindow.__TAURI_IPC__ === 'function'
+}
+
+function normalizeTauriInvokeError(error: unknown): Error {
+  const message = error instanceof Error ? error.message : String(error)
+  const lower = message.toLowerCase()
+  const isBridgeMissing = lower.includes('__tauri_internals__')
+    || lower.includes('is undefined')
+    || lower.includes('tauri')
+
+  if (isBridgeMissing) {
+    return new Error(
+      'Tauri-Bridge nicht verfuegbar. Die App laeuft vermutlich nicht als Tauri-Desktop-App. Starte Open_Cowork mit "npm run tauri dev" (oder als gebaute Desktop-App).',
+    )
+  }
+
+  return error instanceof Error ? error : new Error(message)
+}
+
 const TEXTUAL_TOOL_NAME_ALIASES: Record<string, string> = {
   webfetch: 'WebFetch',
   web_fetch: 'WebFetch',
@@ -719,6 +752,10 @@ async function invokeTauriChatFallback(
   systemPrompt: string,
   tools?: EngineToolDef[],
 ): Promise<SampleResult> {
+  if (!canUseTauriInvoke()) {
+    throw normalizeTauriInvokeError('window.__TAURI_INTERNALS__ is undefined')
+  }
+
   const history: TauriChatHistoryItem[] = messages.map((msg) => ({
     role: msg.role,
     content: blockContentToText(msg.content),
@@ -733,17 +770,22 @@ async function invokeTauriChatFallback(
     ? history.slice(0, lastUserIndex)
     : history.slice(0, Math.max(0, history.length - 1))
 
-  const fallback = await invoke<TauriChatTurnResponse>('chat_turn', {
-    request: {
-      prompt: promptWithSystem,
-      history: priorHistory,
-      config: {
-        baseUrl: config.baseUrl,
-        model: config.model,
-        timeoutMs: Math.max(1000, config.timeoutMs ?? 200_000),
+  let fallback: TauriChatTurnResponse
+  try {
+    fallback = await invoke<TauriChatTurnResponse>('chat_turn', {
+      request: {
+        prompt: promptWithSystem,
+        history: priorHistory,
+        config: {
+          baseUrl: config.baseUrl,
+          model: config.model,
+          timeoutMs: Math.max(1000, config.timeoutMs ?? 200_000),
+        },
       },
-    },
-  })
+    })
+  } catch (error) {
+    throw normalizeTauriInvokeError(error)
+  }
 
   const extracted = extractTextualToolCalls(fallback.assistantMessage, tools)
   const content: ContentBlock[] = []

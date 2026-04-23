@@ -236,6 +236,9 @@ export default function WelcomeScreen() {
         },
       )
 
+      const proposedPlan = Array.isArray(response.proposedPlan) ? response.proposedPlan : []
+      const requiresApproval = Boolean(response.requiresApproval)
+
       const visibleAssistantMessage = sanitizeAssistantContent(response.assistantMessage, verboseMode)
       updateMessage(threadId, createdAssistantMessageId, {
         content: visibleAssistantMessage,
@@ -266,14 +269,14 @@ export default function WelcomeScreen() {
           assistantVisibleResponse: visibleAssistantMessage,
           endpoint: response.endpoint,
           model: response.model,
-          requiresApproval: response.requiresApproval,
-          proposedPlan: response.proposedPlan,
+          requiresApproval,
+          proposedPlan,
         })
       }
 
-      if (response.requiresApproval) {
+      if (requiresApproval) {
         const taskId = createTask(text, text.slice(0, 60), threadId)
-        const steps: TaskStep[] = response.proposedPlan.map((title, i) => ({
+        const steps: TaskStep[] = proposedPlan.map((title, i) => ({
           id: `${taskId}-step-${i}`,
           index: i,
           title,

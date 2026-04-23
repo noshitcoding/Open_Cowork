@@ -43,6 +43,7 @@ type ChatState = {
   setBusy: (busy: boolean) => void
   setError: (error: string | null) => void
   deleteThread: (id: string) => void
+  removeLastMessages: (threadId: string, count: number) => number
 }
 
 function generateId(): string {
@@ -204,6 +205,35 @@ export const useChatStore = create<ChatState>()((set) => ({
       activeThreadId: state.activeThreadId === id ? null : state.activeThreadId,
     }))
     void persistInvoke('db_delete_thread', { id }, 'db_delete_thread')
+  },
+
+  removeLastMessages: (threadId, count) => {
+    let removed = 0
+    set((state) => ({
+      threads: state.threads.map((t) => {
+        if (t.id !== threadId) return t
+        // Remove last `count` non-system messages (user+assistant pairs)
+        const keep: ChatMessage[] = []
+        const removable = [...t.messages].reverse()
+        let toRemove = count * 2 // Remove pairs of user+assistant
+        const removedIds: string[] = []
+        for (const msg of removable) {
+          if (toRemove > 0 && msg.role !== 'system') {
+            removedIds.push(msg.id)
+            toRemove--
+            removed++
+          } else {
+            keep.unshift(msg)
+          }
+        }
+        // Persist deletions
+        for (const msgId of removedIds) {
+          void persistInvoke('db_delete_message', { id: msgId }, 'db_delete_message rewind')
+        }
+        return { ...t, messages: keep, updatedAt: Date.now() }
+      }),
+    }))
+    return removed
   },
 }))
 

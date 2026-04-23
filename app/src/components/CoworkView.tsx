@@ -16,6 +16,7 @@ import { useCrewStore } from '../stores/crewStore'
 import { useEngineStore } from '../stores/engineStore'
 import { useUiStore } from '../stores/uiStore'
 import type { ToolProgressData } from '../engine/types'
+import { checkOllamaConnection } from '../engine/api/ollamaClient'
 import {
   extractFileAttachmentsFromFileList,
   extractFileAttachmentsFromUriList,
@@ -106,6 +107,16 @@ function stringifyVerboseValue(value: unknown): string {
     return JSON.stringify(value, null, 2)
   } catch {
     return String(value)
+  }
+}
+
+async function getOllamaStatusText(config: { baseUrl: string; model: string }): Promise<string> {
+  try {
+    const health = await invoke<{ status: string }>('ollama_health_check', { config })
+    return health.status
+  } catch {
+    const reachable = await checkOllamaConnection(config.baseUrl)
+    return reachable ? 'ERREICHBAR (Web-Check)' : 'NICHT ERREICHBAR'
   }
 }
 
@@ -1130,7 +1141,12 @@ export default function CoworkView() {
 
       if (slash.command === 'rewind') {
         const count = Number.parseInt(slash.args ?? '1', 10) || 1
-        appendAssistantMessage(`Letzte ${count} Nachricht(en) zurueckgespult. Sende deine naechste Anweisung.`)
+        if (activeThread) {
+          const removed = useChatStore.getState().removeLastMessages(activeThread.id, count)
+          appendAssistantMessage(`${removed} Nachricht(en) entfernt. Sende deine naechste Anweisung.`)
+        } else {
+          appendAssistantMessage('Kein aktiver Thread zum Zurueckspulen.')
+        }
         return
       }
 
@@ -1177,12 +1193,8 @@ export default function CoworkView() {
       if (slash.command === 'status') {
         const procs = useProcessStore.getState().processes
         const backends = useTerminalStore.getState().backends
-        try {
-          const health = await invoke<{ status: string }>('ollama_health_check', { config: ollama })
-          appendAssistantMessage(`Status:\n- Ollama: ${health.status}\n- Modell: ${ollama.model}\n- Threads: ${useChatStore.getState().threads.length}\n- Prozesse: ${procs.length}\n- Backends: ${backends.length}\n- Plan-Mode: ${claudePlanMode ? 'aktiv' : 'inaktiv'}\n- Permissions: ${claudePermissionMode}`)
-        } catch {
-          appendAssistantMessage(`Status:\n- Ollama: nicht erreichbar\n- Modell: ${ollama.model}\n- Threads: ${useChatStore.getState().threads.length}\n- Prozesse: ${procs.length}\n- Backends: ${backends.length}`)
-        }
+        const ollamaStatus = await getOllamaStatusText(ollama)
+        appendAssistantMessage(`Status:\n- Ollama: ${ollamaStatus}\n- Modell: ${ollama.model}\n- Threads: ${useChatStore.getState().threads.length}\n- Prozesse: ${procs.length}\n- Backends: ${backends.length}\n- Plan-Mode: ${claudePlanMode ? 'aktiv' : 'inaktiv'}\n- Permissions: ${claudePermissionMode}`)
         return
       }
 
@@ -1200,12 +1212,41 @@ export default function CoworkView() {
 
       if (slash.command === 'export') {
         if (activeThread) {
-          const format = slash.args?.trim() ?? 'json'
-          const data = format === 'json'
-            ? JSON.stringify(activeThread, null, 2)
-            : activeMessages.map(m => `[${m.role}] ${m.content}`).join('\n\n')
+          const format = slash.args?.trim() ?? 'md'
+          let data: string
+          let mimeType: string
+          let ext: string
+          if (format === 'json') {
+            data = JSON.stringify(activeThread, null, 2)
+            mimeType = 'application/json'
+            ext = 'json'
+          } else if (format === 'txt') {
+            data = activeMessages.map(m => `[${m.role}] ${m.content}`).join('\n\n')
+            mimeType = 'text/plain'
+            ext = 'txt'
+          } else {
+            // Default: Markdown
+            data = `# Chat Export: ${activeThread.title}\n\n` +
+              activeMessages.map(m => {
+                const prefix = m.role === 'user' ? '## 👤 Du' : m.role === 'assistant' ? '## 🤖 Open_Cowork' : '## ⚙️ System'
+                return `${prefix}\n\n${m.content}`
+              }).join('\n\n---\n\n')
+            mimeType = 'text/markdown'
+            ext = 'md'
+          }
+          // File download via Blob
+          const blob = new Blob([data], { type: mimeType })
+          const url = URL.createObjectURL(blob)
+          const a = document.createElement('a')
+          a.href = url
+          a.download = `chat-export-${activeThread.title.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 30)}.${ext}`
+          document.body.appendChild(a)
+          a.click()
+          document.body.removeChild(a)
+          URL.revokeObjectURL(url)
+          // Also copy to clipboard
           await navigator.clipboard.writeText(data).catch(() => {})
-          appendAssistantMessage(`Export (${format}) in Zwischenablage kopiert (${data.length} Zeichen).`)
+          appendAssistantMessage(`Export (${ext}) heruntergeladen und in Zwischenablage kopiert (${data.length} Zeichen).`)
         }
         return
       }
@@ -1224,12 +1265,10 @@ export default function CoworkView() {
       if (slash.command === 'doctor') {
         setBusy(true)
         try {
-          const health = await invoke<{ status: string }>('ollama_health_check', { config: ollama })
+          const ollamaStatus = await getOllamaStatusText(ollama)
           const backends = useTerminalStore.getState().backends
           const entries = useMemoryStore.getState().entries
-          appendAssistantMessage(`System-Diagnose:\n- Ollama: ${health.status} (${ollama.baseUrl})\n- Modell: ${ollama.model}\n- DB: aktiv\n- MCP: ${mcpServer.command ? `konfiguriert (${mcpServer.name})` : 'nicht konfiguriert'}\n- Audit: aktiv\n- Terminal-Backends: ${backends.length}\n- Memory-Eintraege: ${entries.length}\n- Plugins: ${plugins.length}`)
-        } catch {
-          appendAssistantMessage(`System-Diagnose:\n- Ollama: NICHT ERREICHBAR (${ollama.baseUrl})\n- Pruefe: laeuft ollama serve?\n- MCP: ${mcpServer.command ? 'konfiguriert' : 'nicht konfiguriert'}\n- DB: aktiv`)
+          appendAssistantMessage(`System-Diagnose:\n- Ollama: ${ollamaStatus} (${ollama.baseUrl})\n- Modell: ${ollama.model}\n- DB: aktiv\n- MCP: ${mcpServer.command ? `konfiguriert (${mcpServer.name})` : 'nicht konfiguriert'}\n- Audit: aktiv\n- Terminal-Backends: ${backends.length}\n- Memory-Eintraege: ${entries.length}\n- Plugins: ${plugins.length}`)
         } finally {
           setBusy(false)
         }
@@ -1466,7 +1505,47 @@ export default function CoworkView() {
       }
 
       if (slash.command === 'voice') {
-        appendAssistantMessage('Spracheingabe: Nutze die Browser SpeechRecognition API.\nIn Tauri-Desktop-Apps ist Web Speech API verfuegbar wenn Webview dies unterstuetzt.')
+        type SpeechRecognitionConstructor = new () => {
+          lang: string
+          interimResults: boolean
+          maxAlternatives: number
+          onresult: ((event: SpeechRecognitionEvent) => void) | null
+          onerror: ((event: Event) => void) | null
+          onend: (() => void) | null
+          start: () => void
+        }
+        const SpeechRecognition = (window as unknown as {
+          SpeechRecognition?: SpeechRecognitionConstructor
+          webkitSpeechRecognition?: SpeechRecognitionConstructor
+        }).SpeechRecognition
+          ?? (window as unknown as { webkitSpeechRecognition?: SpeechRecognitionConstructor }).webkitSpeechRecognition
+        if (!SpeechRecognition) {
+          appendAssistantMessage('Spracheingabe nicht verfuegbar: Dein Browser unterstuetzt die Web Speech API nicht.')
+          return
+        }
+        const recognition = new SpeechRecognition()
+        recognition.lang = 'de-DE'
+        recognition.interimResults = false
+        recognition.maxAlternatives = 1
+        recognition.onresult = (event: SpeechRecognitionEvent) => {
+          const transcript = event.results[0]?.[0]?.transcript ?? ''
+          if (transcript) {
+            appendAssistantMessage(`🎤 Erkannt: "${transcript}"\nSende diesen Text als naechste Anweisung oder bearbeite ihn.`)
+            // Pre-fill the input
+            const textarea = document.querySelector<HTMLTextAreaElement>('textarea[placeholder]')
+            if (textarea) {
+              const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set
+              nativeInputValueSetter?.call(textarea, transcript)
+              textarea.dispatchEvent(new Event('input', { bubbles: true }))
+            }
+          }
+        }
+        recognition.onerror = (event: Event) => {
+          const errEvent = event as Event & { error?: string }
+          appendAssistantMessage(`🎤 Spracheingabe-Fehler: ${errEvent.error ?? 'Unbekannter Fehler'}`)
+        }
+        recognition.start()
+        appendAssistantMessage('🎤 Spracheingabe gestartet... Sprich jetzt!')
         return
       }
 

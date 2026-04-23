@@ -11,6 +11,11 @@ describe('sampleOllamaMessage', () => {
     invokeMock.mockReset()
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      value: { invoke: vi.fn() },
+      configurable: true,
+      writable: true,
+    })
   })
 
   it('falls back to tauri chat when the stream ends without usable content', async () => {
