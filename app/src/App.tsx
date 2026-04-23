@@ -1,32 +1,38 @@
-import { useEffect } from 'react'
+import { Suspense, lazy, useEffect } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import Layout from './components/Layout'
-import WelcomeScreen from './components/WelcomeScreen'
-import CoworkView from './components/CoworkView'
-import SettingsView from './components/SettingsView'
 import { useUiStore } from './stores/uiStore'
 import { useChatStore } from './stores/chatStore'
 import { useTaskStore } from './stores/taskStore'
 import { useLogStore } from './stores/logStore'
 import { useConfigStore } from './stores/configStore'
 import { writeAuditEvent } from './utils/audit'
+import { seedDefaultPersonalities, seedDefaultMemory } from './utils/defaultSeeds'
 import './App.css'
+
+const WelcomeScreen = lazy(() => import('./components/WelcomeScreen'))
+const CoworkView = lazy(() => import('./components/CoworkView'))
+const SettingsView = lazy(() => import('./components/SettingsView'))
+const FeaturesView = lazy(() => import('./components/FeaturesView'))
 
 function AppRoutes() {
   const activeThreadId = useChatStore((s) => s.activeThreadId)
 
   return (
-    <Routes>
-      <Route path="/" element={<Layout />}>
-        <Route index element={activeThreadId ? <CoworkView /> : <WelcomeScreen />} />
-        <Route path="settings" element={
-          <div className="code-mode" style={{ overflow: 'auto', height: '100%' }}>
-            <SettingsView />
-          </div>
-        } />
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Route>
-    </Routes>
+    <Suspense fallback={<div className="main-content" style={{ padding: 24 }}>Ansicht wird geladen...</div>}>
+      <Routes>
+        <Route path="/" element={<Layout />}>
+          <Route index element={activeThreadId ? <CoworkView /> : <WelcomeScreen />} />
+          <Route path="settings" element={
+            <div className="code-mode" style={{ overflow: 'auto', height: '100%' }}>
+              <SettingsView />
+            </div>
+          } />
+          <Route path="features" element={<FeaturesView />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Route>
+      </Routes>
+    </Suspense>
   )
 }
 
@@ -42,6 +48,8 @@ function App() {
     const startedAt = performance.now()
     loadChatFromDb()
     loadTasksFromDb()
+    seedDefaultPersonalities().catch(() => {})
+    seedDefaultMemory().catch(() => {})
     addLog({
       level: 'info',
       area: 'runtime',

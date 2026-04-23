@@ -1,3 +1,4 @@
+use futures_util::StreamExt;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
@@ -53,6 +54,13 @@ struct GenerateResponse {
     response: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct GenerateStreamResponse {
+    response: Option<String>,
+    done: Option<bool>,
+    error: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OllamaHealthResponse {
@@ -74,7 +82,7 @@ pub struct PlanResponse {
     pub steps: Vec<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChatMessage {
     pub role: String,
@@ -89,6 +97,13 @@ pub struct ChatTurnResponse {
     pub assistant_message: String,
     pub requires_approval: bool,
     pub proposed_plan: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatStreamChunkPayload {
+    pub stream_id: String,
+    pub chunk: String,
 }
 
 #[derive(Debug, Error)]
@@ -300,24 +315,7 @@ pub async fn chat_turn(
     let client = build_http_client(config.timeout_ms)?;
 
     let generate_url = format!("{}/api/generate", config.base_url);
-
-    let mut history_text = String::new();
-    for msg in history.iter().rev().take(8).rev() {
-        history_text.push_str(&format!("{}: {}\n", msg.role, msg.content));
-    }
-
-    let chat_prompt = format!(
-        "Du bist Open_Cowork, ein lokaler Assistenz-Agent. Antworte knapp, klar und auf Deutsch.\n\
-    Wenn die Aufgabe riskante oder destruktive Aktionen enthalten koennte, schlage einen Plan vor und kennzeichne das als approval-beduerftig.\n\
-    WICHTIGE REGELN:\n\
-    - Gib niemals Platzhalter- oder Warte-Antworten wie 'ich analysiere', 'bitte warten', 'kommt gleich' oder aehnliches aus.\n\
-    - Gib immer direkt eine finale, inhaltliche Antwort in genau dieser Nachricht.\n\
-    - Erfinde niemals Dokumentinhalte.\n\
-    - Wenn nur ein Dateipfad vorhanden ist, aber kein extrahierter Dokumenttext im Prompt steht, sage klar, dass der Inhalt nicht vorliegt und bitte um dokumentierten Textauszug oder aktivierte Dateianalyse.\n\n\
-    Kontextverlauf:\n{}\nNutzer: {}\n\nAntwort:",
-        history_text,
-        prompt
-    );
+    let chat_prompt = build_chat_prompt(&prompt, &history);
 
     let payload = serde_json::json!({
         "model": config.model,
@@ -382,42 +380,235 @@ pub async fn chat_turn(
         generate_payload.response.len()
     );
 
-    let risk_terms = [
-        "delete",
-        "remove",
-        "drop",
-        "format",
-        "shutdown",
-        "kill",
-        "rm -rf",
-        "powershell",
-        "registry",
-        "firewall",
-    ];
+    Ok(build_chat_turn_response(config, prompt, generate_payload.response))
+}
 
-    let normalized_prompt = prompt.to_lowercase();
-    let requires_approval = risk_terms.iter().any(|term| normalized_prompt.contains(term));
+pub async fn chat_turn_stream<F>(
+    stream_id: String,
+    config: Option<OllamaConfig>,
+    prompt: String,
+    history: Vec<ChatMessage>,
+    mut on_chunk: F,
+) -> Result<ChatTurnResponse, OllamaError>
+where
+    F: FnMut(ChatStreamChunkPayload) -> Result<(), OllamaError>,
+{
+    let config = normalize_config(config)?;
+    let client = build_http_client(config.timeout_ms)?;
+    let generate_url = format!("{}/api/generate", config.base_url);
+    let chat_prompt = build_chat_prompt(&prompt, &history);
 
-    let proposed_plan = if requires_approval {
-        vec![
-            "Risikoanalyse fuer die angefragte Aktion erstellen".to_string(),
-            "Explizite Nutzerfreigabe vor Ausfuehrung einholen".to_string(),
-            "Aktion in begrenztem Scope ausfuehren und Ergebnis pruefen".to_string(),
-        ]
-    } else {
-        parse_steps(&generate_payload.response)
-            .into_iter()
-            .take(6)
-            .collect::<Vec<String>>()
+    let payload = serde_json::json!({
+        "model": config.model,
+        "prompt": chat_prompt,
+        "stream": true,
+        "options": {
+            "temperature": 0.25
+        }
+    });
+
+    let started = Instant::now();
+    log::info!(
+        "ollama chat_turn_stream start endpoint={} model={} timeoutMs={} historyItems={} promptChars={}",
+        config.base_url,
+        config.model,
+        config.timeout_ms,
+        history.len(),
+        prompt.len()
+    );
+
+    let response = client
+        .post(&generate_url)
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|error| request_error("/api/generate", &config, error))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(OllamaError::RequestFailed(format!(
+            "Ollama returned status {} for /api/generate{}",
+            status,
+            if body.trim().is_empty() {
+                String::new()
+            } else {
+                format!(": {}", body.trim())
+            }
+        )));
+    }
+
+    let mut stream = response.bytes_stream();
+    let mut line_buffer = String::new();
+    let mut assistant_message = String::new();
+
+    while let Some(next) = stream.next().await {
+        let bytes = match next {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                let stream_error = request_error("/api/generate stream", &config, error);
+                log::warn!(
+                    "ollama chat_turn_stream fallback endpoint={} model={} reason={}",
+                    config.base_url,
+                    config.model,
+                    stream_error
+                );
+                return chat_turn(Some(config.clone()), prompt.clone(), history.clone()).await;
+            }
+        };
+        let text = String::from_utf8_lossy(&bytes);
+        line_buffer.push_str(&text);
+
+        while let Some(newline_idx) = line_buffer.find('\n') {
+            let line = line_buffer[..newline_idx].trim().to_string();
+            line_buffer = line_buffer[newline_idx + 1..].to_string();
+            handle_stream_line(&stream_id, &line, &mut assistant_message, &mut on_chunk)?;
+        }
+    }
+
+    let trailing = line_buffer.trim().to_string();
+    if !trailing.is_empty() {
+        handle_stream_line(&stream_id, &trailing, &mut assistant_message, &mut on_chunk)?;
+    }
+
+    if assistant_message.trim().is_empty() {
+        log::warn!(
+            "ollama chat_turn_stream empty endpoint={} model={} elapsedMs={}",
+            config.base_url,
+            config.model,
+            started.elapsed().as_millis()
+        );
+        return chat_turn(Some(config.clone()), prompt, history).await;
+    }
+
+    log::info!(
+        "ollama chat_turn_stream success endpoint={} model={} elapsedMs={} chars={}",
+        config.base_url,
+        config.model,
+        started.elapsed().as_millis(),
+        assistant_message.len()
+    );
+
+    Ok(build_chat_turn_response(config, prompt, assistant_message))
+}
+
+fn handle_stream_line<F>(
+    stream_id: &str,
+    line: &str,
+    assistant_message: &mut String,
+    on_chunk: &mut F,
+) -> Result<(), OllamaError>
+where
+    F: FnMut(ChatStreamChunkPayload) -> Result<(), OllamaError>,
+{
+    let normalized = line.strip_prefix("data:").unwrap_or(line).trim();
+
+    if normalized.is_empty() {
+        return Ok(());
+    }
+
+    let payload: GenerateStreamResponse = match serde_json::from_str(normalized) {
+        Ok(payload) => payload,
+        Err(error) => {
+            log::debug!("ignoring non-json ollama stream line: {} ({})", normalized, error);
+            return Ok(());
+        }
     };
 
-    Ok(ChatTurnResponse {
+    if let Some(error) = payload.error {
+        return Err(OllamaError::RequestFailed(error));
+    }
+
+    if let Some(chunk) = payload.response {
+        if !chunk.is_empty() {
+            assistant_message.push_str(&chunk);
+            on_chunk(ChatStreamChunkPayload {
+                stream_id: stream_id.to_string(),
+                chunk,
+            })?;
+        }
+    }
+
+    let _done = payload.done.unwrap_or(false);
+    Ok(())
+}
+
+fn build_chat_prompt(prompt: &str, history: &[ChatMessage]) -> String {
+    let mut history_text = String::new();
+    for msg in history.iter().rev().take(8).rev() {
+        history_text.push_str(&format!("{}: {}\n", msg.role, msg.content));
+    }
+
+    format!(
+        "Du bist Open_Cowork, ein lokaler Assistenz-Agent. Antworte knapp, klar und auf Deutsch.\n\
+    Wenn die Aufgabe riskante oder destruktive Aktionen enthalten koennte, schlage einen Plan vor und kennzeichne das als approval-beduerftig.\n\
+    WICHTIGE REGELN:\n\
+    - Gib niemals Platzhalter- oder Warte-Antworten wie 'ich analysiere', 'bitte warten', 'kommt gleich' oder aehnliches aus.\n\
+    - Gib immer direkt eine finale, inhaltliche Antwort in genau dieser Nachricht.\n\
+    - Erfinde niemals Dokumentinhalte.\n\
+    - Wenn nur ein Dateipfad vorhanden ist, aber kein extrahierter Dokumenttext im Prompt steht, sage klar, dass der Inhalt nicht vorliegt und bitte um dokumentierten Textauszug oder aktivierte Dateianalyse.\n\n\
+    Kontextverlauf:\n{}\nNutzer: {}\n\nAntwort:",
+        history_text,
+        prompt
+    )
+}
+
+fn detect_risky_action(text: &str) -> bool {
+    let normalized = text.to_lowercase();
+    let dangerous_phrases = [
+        "rm -rf",
+        "format c:",
+        "format d:",
+        "drop table",
+        "drop database",
+        "truncate table",
+        "delete from",
+        "shutdown /s",
+        "shutdown -h",
+        "shutdown now",
+        "kill -9",
+        "taskkill /f",
+        "remove-item -recurse",
+        "del /s /q",
+        "rmdir /s",
+        "registry delete",
+        "reg delete",
+        "netsh advfirewall",
+        "iptables -f",
+        "chmod 777",
+        "mkfs.",
+        "dd if=",
+    ];
+    dangerous_phrases.iter().any(|phrase| normalized.contains(phrase))
+}
+
+fn build_chat_turn_response(
+    config: OllamaConfig,
+    prompt: String,
+    assistant_message: String,
+) -> ChatTurnResponse {
+    let requires_approval =
+        detect_risky_action(&prompt) || detect_risky_action(&assistant_message);
+
+    let proposed_plan = if requires_approval {
+        let response_steps = parse_steps(&assistant_message);
+        let steps: Vec<String> = response_steps.into_iter().take(6).collect();
+        if steps.is_empty() || (steps.len() == 1 && steps[0] == assistant_message.trim()) {
+            vec![assistant_message.lines().next().unwrap_or("Aktion pruefen").trim().to_string()]
+        } else {
+            steps
+        }
+    } else {
+        vec![]
+    };
+
+    ChatTurnResponse {
         endpoint: config.base_url,
         model: config.model,
-        assistant_message: generate_payload.response,
+        assistant_message,
         requires_approval,
         proposed_plan,
-    })
+    }
 }
 
 fn parse_steps(raw: &str) -> Vec<String> {

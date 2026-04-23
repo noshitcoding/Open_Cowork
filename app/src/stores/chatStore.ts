@@ -6,6 +6,11 @@ export type ChatMessage = {
   role: 'user' | 'assistant' | 'system'
   content: string
   timestamp: number
+  attachments?: Array<{ path: string; kind: 'file' | 'folder' }>
+  debugContent?: string
+  thinkingContent?: string
+  verboseContent?: string
+  streaming?: boolean
 }
 
 export type ChatThread = {
@@ -24,8 +29,15 @@ type ChatState = {
   error: string | null
   loadFromDb: () => Promise<void>
   addThread: (title: string) => string
+  hydrateThread: (thread: ChatThread) => void
   setActiveThread: (id: string | null) => void
-  addMessage: (threadId: string, message: Omit<ChatMessage, 'id'>) => void
+  addMessage: (threadId: string, message: Omit<ChatMessage, 'id'>) => string
+  updateMessage: (
+    threadId: string,
+    messageId: string,
+    patch: Partial<Pick<ChatMessage, 'content' | 'debugContent' | 'thinkingContent' | 'verboseContent' | 'streaming'>>,
+    options?: { persist?: boolean },
+  ) => void
   setPendingApproval: (steps: string[]) => void
   clearApproval: () => void
   setBusy: (busy: boolean) => void
@@ -35,6 +47,21 @@ type ChatState = {
 
 function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+}
+
+function isTauriRuntime(): boolean {
+  return typeof window !== 'undefined' && Boolean((window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__)
+}
+
+async function persistInvoke(command: string, args: Record<string, unknown>, context: string): Promise<void> {
+  if (!isTauriRuntime()) {
+    return
+  }
+  try {
+    await invoke(command, args)
+  } catch (error) {
+    console.error(`[chatStore] ${context} failed`, error)
+  }
 }
 
 export const useChatStore = create<ChatState>()((set) => ({
@@ -52,20 +79,26 @@ export const useChatStore = create<ChatState>()((set) => ({
       const threads: ChatThread[] = []
       for (const dt of dbThreads) {
         const dbMsgs = await invoke<DbMessage[]>('db_list_messages', { threadId: dt.id })
+        const messages = Array.isArray(dbMsgs) ? dbMsgs : []
         threads.push({
           id: dt.id,
           title: dt.title,
-          messages: dbMsgs.map((m) => ({
+          messages: messages.map((m) => ({
             id: m.id,
             role: m.role as ChatMessage['role'],
-            content: m.content,
+            content: typeof m.content === 'string' ? m.content : '',
             timestamp: m.timestamp,
           })),
           createdAt: new Date(dt.created_at).getTime(),
           updatedAt: new Date(dt.updated_at).getTime(),
         })
       }
-      set({ threads })
+      set({
+        threads: threads.map((thread) => ({
+          ...thread,
+          messages: Array.isArray(thread.messages) ? thread.messages : [],
+        })),
+      })
     } catch {
       // DB not available (e.g. in tests) - keep in-memory state
     }
@@ -92,18 +125,38 @@ export const useChatStore = create<ChatState>()((set) => ({
       activeThreadId: id,
     }))
     const isoNow = new Date(now).toISOString()
-    invoke('db_save_thread', { id, title, createdAt: isoNow }).catch(() => {})
-    invoke('db_save_message', {
+    void persistInvoke('db_save_thread', { id, title, createdAt: isoNow }, 'db_save_thread')
+    void persistInvoke('db_save_message', {
       id: systemMsg.id, threadId: id, role: systemMsg.role, content: systemMsg.content, timestamp: systemMsg.timestamp,
-    }).catch(() => {})
+    }, 'db_save_message system')
     return id
+  },
+
+  hydrateThread: (thread) => {
+    const normalized: ChatThread = {
+      ...thread,
+      messages: Array.isArray(thread.messages) ? thread.messages : [],
+      updatedAt: thread.updatedAt || Date.now(),
+    }
+    set((state) => {
+      const remaining = state.threads.filter((item) => item.id !== normalized.id)
+      return {
+        threads: [normalized, ...remaining],
+        activeThreadId: normalized.id,
+      }
+    })
   },
 
   setActiveThread: (id) => set({ activeThreadId: id }),
 
   addMessage: (threadId, message) => {
     const msgId = generateId()
-    const full: ChatMessage = { ...message, id: msgId }
+    const full: ChatMessage = {
+      ...message,
+      id: msgId,
+      content: typeof message.content === 'string' ? message.content : '',
+      attachments: Array.isArray(message.attachments) ? message.attachments : undefined,
+    }
     set((state) => ({
       threads: state.threads.map((t) =>
         t.id === threadId
@@ -111,9 +164,33 @@ export const useChatStore = create<ChatState>()((set) => ({
           : t
       ),
     }))
-    invoke('db_save_message', {
-      id: msgId, threadId, role: message.role, content: message.content, timestamp: message.timestamp,
-    }).catch(() => {})
+    void persistInvoke('db_save_message', {
+      id: msgId, threadId, role: message.role, content: full.content, timestamp: message.timestamp,
+    }, 'db_save_message addMessage')
+    return msgId
+  },
+
+  updateMessage: (threadId, messageId, patch, options) => {
+    set((state) => ({
+      threads: state.threads.map((t) =>
+        t.id === threadId
+          ? {
+              ...t,
+              messages: t.messages.map((m) =>
+                m.id === messageId ? { ...m, ...patch } : m
+              ),
+              updatedAt: Date.now(),
+            }
+          : t
+      ),
+    }))
+
+    if (options?.persist && typeof patch.content === 'string') {
+      void persistInvoke('db_update_message_content', {
+        id: messageId,
+        content: patch.content,
+      }, 'db_update_message_content')
+    }
   },
 
   setPendingApproval: (steps) => set({ pendingApproval: steps }),
@@ -126,7 +203,7 @@ export const useChatStore = create<ChatState>()((set) => ({
       threads: state.threads.filter((t) => t.id !== id),
       activeThreadId: state.activeThreadId === id ? null : state.activeThreadId,
     }))
-    invoke('db_delete_thread', { id }).catch(() => {})
+    void persistInvoke('db_delete_thread', { id }, 'db_delete_thread')
   },
 }))
 

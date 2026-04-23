@@ -33,6 +33,10 @@ cd app/src-tauri
 cargo test
 ```
 
+Desktop Smoke:
+
+- [DESKTOP_SMOKE_TEST.md](DESKTOP_SMOKE_TEST.md)
+
 ## CI-Gates (aktueller Stand)
 
 - Frontend Build muss erfolgreich sein
@@ -49,6 +53,9 @@ cargo test
 3. Im Bereich "Cowork Chat" eine Aufgabe senden
 4. Antwort und ggf. Freigabehinweis pruefen
 5. Bei Freigabehinweis "Plan freigeben" ausloesen
+
+Vollstaendige Desktop-Checkliste:
+- [DESKTOP_SMOKE_TEST.md](DESKTOP_SMOKE_TEST.md)
 
 ## Funktionstest: MCP Probe
 

@@ -8,6 +8,8 @@ import PersonalitySelector from './PersonalitySelector'
 import SessionSearchPanel from './SessionSearchPanel'
 import PipelinePanel from './PipelinePanel'
 import ModelSwitcher from './ModelSwitcher'
+import CrewPanel from './CrewPanel'
+import ArtifactsView from './ArtifactsView'
 
 const TABS = [
   { key: 'memory', label: '🧠 Memory', Component: MemoryPanel },
@@ -18,7 +20,9 @@ const TABS = [
   { key: 'model', label: '🔄 Modell', Component: ModelSwitcher },
   { key: 'processes', label: '⚙️ Prozesse', Component: ProcessPanel },
   { key: 'terminal', label: '💻 Terminal', Component: TerminalPanel },
+  { key: 'artifacts', label: '🗃️ Artefakte', Component: ArtifactsView },
   { key: 'pipelines', label: '🔗 Pipelines', Component: PipelinePanel },
+  { key: 'crew', label: '🚀 Crew AI', Component: CrewPanel },
 ] as const
 
 type TabKey = (typeof TABS)[number]['key']

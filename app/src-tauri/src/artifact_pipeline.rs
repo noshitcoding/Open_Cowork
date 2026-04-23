@@ -1,8 +1,13 @@
+use pdfium_render::prelude::*;
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::fs;
 use std::io::Read;
-use std::path::Path;
+use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
+
+static PDFIUM_SEARCH_PATHS: OnceLock<Mutex<Vec<PathBuf>>> = OnceLock::new();
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -104,12 +109,143 @@ pub fn extract_text_for_llm(path: &Path) -> Result<String, String> {
             }
             Ok(combined)
         }
-        "pdf" => {
-            let text = pdf_extract::extract_text(path).map_err(|err| err.to_string())?;
-            Ok(text)
-        }
+        "pdf" => safe_extract_pdf_text(path),
         _ => Err("format does not provide text extraction".to_string()),
     }
+}
+
+pub fn extract_text_for_llm_limited(path: &Path, max_chars: usize) -> Result<(String, bool), String> {
+    let ext = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    if ext == "pdf" {
+        return safe_extract_pdf_text_limited(path, Some(max_chars));
+    }
+
+    let text = extract_text_for_llm(path)?;
+    Ok(truncate_text(text, max_chars))
+}
+
+pub fn set_pdfium_search_paths(paths: Vec<PathBuf>) {
+    let search_paths = PDFIUM_SEARCH_PATHS.get_or_init(|| Mutex::new(Vec::new()));
+    if let Ok(mut guard) = search_paths.lock() {
+        *guard = paths;
+    }
+}
+
+fn safe_extract_pdf_text(path: &Path) -> Result<String, String> {
+    let (text, _) = safe_extract_pdf_text_limited(path, None)?;
+    Ok(text)
+}
+
+fn safe_extract_pdf_text_limited(path: &Path, max_chars: Option<usize>) -> Result<(String, bool), String> {
+    match extract_pdf_text_with_pdfium(path, max_chars) {
+        Ok((text, truncated)) if !text.trim().is_empty() => return Ok((text, truncated)),
+        Ok(_) => {}
+        Err(_) => {}
+    }
+
+    match catch_unwind(AssertUnwindSafe(|| pdf_extract::extract_text(path))) {
+        Ok(Ok(text)) => Ok(match max_chars {
+            Some(limit) => truncate_text(text, limit),
+            None => (text, false),
+        }),
+        Ok(Err(err)) => Err(err.to_string()),
+        Err(_) => Err("PDF-Text konnte nicht extrahiert werden: Parser ist abgestuerzt".to_string()),
+    }
+}
+
+fn truncate_text(text: String, max_chars: usize) -> (String, bool) {
+    let mut chars = text.chars();
+    let limited: String = chars.by_ref().take(max_chars).collect();
+    let truncated = chars.next().is_some();
+    (limited, truncated)
+}
+
+fn extract_pdf_text_with_pdfium(path: &Path, max_chars: Option<usize>) -> Result<(String, bool), String> {
+    let pdfium = bind_pdfium()?;
+    let document = pdfium
+        .load_pdf_from_file(path, None)
+        .map_err(|err| err.to_string())?;
+    let mut output = String::new();
+    let mut truncated = false;
+
+    for (index, page) in document.pages().iter().enumerate() {
+        let text = page
+            .text()
+            .map_err(|err| err.to_string())?
+            .all();
+        if !output.is_empty() {
+            output.push_str("\n\n");
+        }
+        output.push_str(&format!("--- Seite {} ---\n", index + 1));
+        output.push_str(&text);
+
+        if let Some(limit) = max_chars {
+            let char_count = output.chars().count();
+            if char_count >= limit {
+                let (limited, _) = truncate_text(output, limit);
+                output = limited;
+                truncated = true;
+                break;
+            }
+        }
+    }
+
+    Ok((output, truncated))
+}
+
+fn bind_pdfium() -> Result<Pdfium, String> {
+    let mut errors = Vec::new();
+
+    for candidate in pdfium_library_candidates() {
+        if !candidate.is_file() {
+            continue;
+        }
+
+        match Pdfium::bind_to_library(&candidate) {
+            Ok(bindings) => return Ok(Pdfium::new(bindings)),
+            Err(err) => errors.push(format!("{}: {}", candidate.display(), err)),
+        }
+    }
+
+    match Pdfium::bind_to_system_library() {
+        Ok(bindings) => Ok(Pdfium::new(bindings)),
+        Err(err) => {
+            errors.push(format!("system library: {}", err));
+            Err(format!("Pdfium konnte nicht geladen werden ({})", errors.join("; ")))
+        }
+    }
+}
+
+fn pdfium_library_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+
+    if let Some(search_paths) = PDFIUM_SEARCH_PATHS.get() {
+        if let Ok(guard) = search_paths.lock() {
+            candidates.extend(guard.iter().cloned());
+        }
+    }
+
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            candidates.push(exe_dir.join("pdfium.dll"));
+            candidates.push(exe_dir.join("resources").join("pdfium").join("bin").join("pdfium.dll"));
+            candidates.push(exe_dir.join("pdfium").join("bin").join("pdfium.dll"));
+        }
+    }
+
+    if let Ok(current_dir) = std::env::current_dir() {
+        candidates.push(current_dir.join("resources").join("pdfium").join("bin").join("pdfium.dll"));
+        candidates.push(current_dir.join("src-tauri").join("resources").join("pdfium").join("bin").join("pdfium.dll"));
+    }
+
+    candidates.sort();
+    candidates.dedup();
+    candidates
 }
 
 fn read_text_limited(path: &Path, max_chars: usize) -> Result<String, String> {
@@ -314,10 +450,10 @@ fn parse_svg(path: &Path, size_bytes: u64) -> Result<ArtifactParseResponse, Stri
 }
 
 fn parse_pdf(path: &Path, size_bytes: u64) -> Result<ArtifactParseResponse, String> {
-    let extracted_text = pdf_extract::extract_text(path).ok();
+    let extracted_text = safe_extract_pdf_text_limited(path, Some(3000)).ok();
     let preview = extracted_text
-        .as_deref()
-        .map(|text| text.chars().take(3000).collect::<String>())
+        .as_ref()
+        .map(|(text, _)| text.clone())
         .unwrap_or_else(|| "PDF-Binaerformat: Textvorschau nicht verfuegbar".to_string());
     let preview_chars = preview.chars().count();
 
@@ -326,7 +462,12 @@ fn parse_pdf(path: &Path, size_bytes: u64) -> Result<ArtifactParseResponse, Stri
         format: "application/pdf".to_string(),
         size_bytes,
         summary: if extracted_text.is_some() {
-            format!("PDF-Text extrahiert, Vorschauzeichen: {}", preview_chars)
+            let truncated = extracted_text.as_ref().map(|(_, value)| *value).unwrap_or(false);
+            format!(
+                "PDF-Text extrahiert, Vorschauzeichen: {}{}",
+                preview_chars,
+                if truncated { " (Vorschau gekuerzt)" } else { "" }
+            )
         } else {
             "PDF erkannt, Text konnte nicht extrahiert werden".to_string()
         },

@@ -48,7 +48,22 @@ function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
 }
 
-export const useTaskStore = create<TaskState>()((set) => ({
+function isTauriRuntime(): boolean {
+  return typeof window !== 'undefined' && Boolean((window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__)
+}
+
+async function persistInvoke(command: string, args: Record<string, unknown>, context: string): Promise<void> {
+  if (!isTauriRuntime()) {
+    return
+  }
+  try {
+    await invoke(command, args)
+  } catch (error) {
+    console.error(`[taskStore] ${context} failed`, error)
+  }
+}
+
+export const useTaskStore = create<TaskState>()((set, get) => ({
   tasks: [],
   activeTaskId: null,
 
@@ -105,9 +120,9 @@ export const useTaskStore = create<TaskState>()((set) => ({
       activeTaskId: id,
     }))
     const isoNow = new Date(now).toISOString()
-    invoke('db_save_task', {
+    void persistInvoke('db_save_task', {
       id, title, prompt, status: 'created', threadId, createdAt: isoNow,
-    }).catch(() => {})
+    }, 'db_save_task')
     return id
   },
 
@@ -117,7 +132,30 @@ export const useTaskStore = create<TaskState>()((set) => ({
         t.id === taskId ? { ...t, status, updatedAt: Date.now() } : t
       ),
     }))
-    invoke('db_update_task_status', { id: taskId, status }).catch(() => {})
+    void persistInvoke('db_update_task_status', { id: taskId, status }, 'db_update_task_status')
+
+    if (status === 'running') {
+      void (async () => {
+        if (!isTauriRuntime()) {
+          return
+        }
+        try {
+          await invoke('execute_task', { taskId })
+          await get().loadFromDb()
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error)
+          set((state) => ({
+            tasks: state.tasks.map((t) =>
+              t.id === taskId
+                ? { ...t, error: errorMessage, status: 'failed' as TaskStatus, updatedAt: Date.now() }
+                : t
+            ),
+          }))
+          void persistInvoke('db_update_task_status', { id: taskId, status: 'failed' }, 'db_update_task_status failed fallback')
+          console.error('[taskStore] execute_task failed', error)
+        }
+      })()
+    }
   },
 
   setTaskSteps: (taskId, steps) => {
@@ -127,10 +165,10 @@ export const useTaskStore = create<TaskState>()((set) => ({
       ),
     }))
     for (const step of steps) {
-      invoke('db_save_step', {
+      void persistInvoke('db_save_step', {
         id: step.id, taskId, idx: step.index, title: step.title,
         stateVal: step.state, requiresApproval: step.requiresApproval, riskLevel: step.riskLevel,
-      }).catch(() => {})
+      }, 'db_save_step')
     }
   },
 
@@ -149,7 +187,7 @@ export const useTaskStore = create<TaskState>()((set) => ({
       ),
     }))
     if (patch.state !== undefined) {
-      invoke('db_update_step', { id: stepId, stateVal: patch.state, output: patch.output ?? null }).catch(() => {})
+      void persistInvoke('db_update_step', { id: stepId, stateVal: patch.state, output: patch.output ?? null }, 'db_update_step')
     }
   },
 
@@ -163,6 +201,6 @@ export const useTaskStore = create<TaskState>()((set) => ({
           : t
       ),
     }))
-    invoke('db_update_task_status', { id: taskId, status: 'failed' }).catch(() => {})
+    void persistInvoke('db_update_task_status', { id: taskId, status: 'failed' }, 'db_update_task_status setTaskError')
   },
 }))

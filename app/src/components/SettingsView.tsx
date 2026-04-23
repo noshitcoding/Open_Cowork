@@ -1,7 +1,7 @@
-import { useState } from 'react'
-import { invoke } from '@tauri-apps/api/core'
+import { useEffect, useState } from 'react'
 import { useConfigStore } from '../stores/configStore'
 import type { AppPreferences, StartView } from '../stores/configStore'
+import { useEngineStore } from '../stores/engineStore'
 import MemoryPanel from './MemoryPanel'
 import SkillPanel from './SkillPanel'
 import InsightsPanel from './InsightsPanel'
@@ -12,13 +12,11 @@ import SessionSearchPanel from './SessionSearchPanel'
 import PipelinePanel from './PipelinePanel'
 import ModelSwitcher from './ModelSwitcher'
 import McpView from './McpView'
+import RunPanel from './RunPanel'
+import RuntimeInstructionsPanel from './RuntimeInstructionsPanel'
 
 type OllamaHealth = {
   ok: boolean
-  endpoint: string
-  model: string
-  latencyMs: number
-  version: string | null
   models: string[]
   error: string | null
 }
@@ -73,23 +71,55 @@ type CategoryKey = (typeof CATEGORIES)[number]['key']
 /* ── Main Component ─────────────────────────── */
 
 export default function SettingsView() {
-  const { ollama, setOllama, preferences, setPreference, availableModels } = useConfigStore()
+  const { ollama, setOllama, preferences, setPreference, availableModels, setAvailableModels } = useConfigStore()
+  const engineConfig = useEngineStore((s) => s.config)
+  const setEngineConfig = useEngineStore((s) => s.setConfig)
+  const checkOllamaStatus = useEngineStore((s) => s.checkOllamaStatus)
+  const fetchOllamaModels = useEngineStore((s) => s.fetchOllamaModels)
+  const contextWarning = useEngineStore((s) => s.contextWarning)
+  const compactionCount = useEngineStore((s) => s.compactionCount)
+  const currentSessionId = useEngineStore((s) => s.currentSessionId)
   const [health, setHealth] = useState<OllamaHealth | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [activeCategory, setActiveCategory] = useState<CategoryKey>('ai')
+
+  const parseNumberInput = (raw: string, fallback: number): number => {
+    const normalized = raw.replace(',', '.').trim()
+    const parsed = Number(normalized)
+    return Number.isFinite(parsed) ? parsed : fallback
+  }
 
   const pref = <K extends keyof AppPreferences>(key: K) => ({
     checked: preferences[key] as boolean,
     onChange: (v: boolean) => setPreference(key, v as AppPreferences[K]),
   })
 
+  useEffect(() => {
+    if (availableModels.length > 0) return
+    void refreshModelsOnly()
+  }, [])
+
+  const refreshModelsOnly = async () => {
+    try {
+      const models = await fetchOllamaModels()
+      setAvailableModels(models.map((model) => model.id))
+    } catch {
+      // optional convenience refresh
+    }
+  }
+
   const runHealthCheck = async () => {
     setBusy(true)
     setError(null)
     try {
-      const response = await invoke<OllamaHealth>('ollama_health_check', { config: ollama })
-      setHealth(response)
+      const [ok, models] = await Promise.all([
+        checkOllamaStatus(),
+        fetchOllamaModels().catch(() => []),
+      ])
+      const names = models.map((model) => model.id)
+      setAvailableModels(names)
+      setHealth({ ok, models: names, error: ok ? null : 'Ollama ist nicht erreichbar.' })
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
       setHealth(null)
@@ -137,36 +167,64 @@ export default function SettingsView() {
                       {!availableModels.includes(ollama.model) && <option value={ollama.model}>{ollama.model}</option>}
                     </select>
                   ) : (
-                    <input value={ollama.model} onChange={(e) => setOllama({ model: e.target.value })} placeholder="llama3.1:8b" />
+                    <input value={ollama.model} onChange={(e) => setOllama({ model: e.target.value })} placeholder="gpt-oss:20b" />
                   )}
                 </label>
                 <label>
                   Timeout (ms)
-                  <input type="number" min={1000} max={600000} step={1000} value={ollama.timeoutMs} onChange={(e) => setOllama({ timeoutMs: Number(e.target.value) })} />
+                  <input
+                    type="number"
+                    min={1000}
+                    max={86400000}
+                    step={1000}
+                    value={ollama.timeoutMs}
+                    onChange={(e) => setOllama({ timeoutMs: parseNumberInput(e.target.value, ollama.timeoutMs) })}
+                  />
                 </label>
                 <label>
                   Context Window
-                  <input type="number" min={512} max={131072} step={512} value={ollama.contextWindow} onChange={(e) => setOllama({ contextWindow: Number(e.target.value) })} />
+                  <input
+                    type="number"
+                    min={512}
+                    max={262144}
+                    step={512}
+                    value={ollama.contextWindow}
+                    onChange={(e) => setOllama({ contextWindow: parseNumberInput(e.target.value, ollama.contextWindow) })}
+                  />
                 </label>
                 <label>
                   Temperature
-                  <input type="number" min={0} max={2} step={0.05} value={ollama.temperature} onChange={(e) => setOllama({ temperature: Number(e.target.value) })} />
+                  <input
+                    type="number"
+                    min={0}
+                    max={2}
+                    step={0.05}
+                    value={ollama.temperature}
+                    onChange={(e) => setOllama({ temperature: parseNumberInput(e.target.value, ollama.temperature) })}
+                  />
                 </label>
               </div>
               <div className="actions">
                 <button disabled={busy} onClick={runHealthCheck}>
                   {busy ? '⏳ Pruefung laeuft...' : '🔍 Health Check'}
                 </button>
+                <button disabled={busy} onClick={() => void refreshModelsOnly()}>
+                  Modelle laden
+                </button>
                 {health && <span className={health.ok ? 'success' : 'error'}>{health.ok ? '✓ Verbunden' : '✗ Fehler'}</span>}
               </div>
               {error && <p className="error" style={{ marginTop: 12 }}>{error}</p>}
               {health && (
                 <div className="card" style={{ marginTop: 12 }}>
-                  <p><strong>Latenz:</strong> {health.latencyMs} ms</p>
-                  <p><strong>Server-Version:</strong> {health.version ?? '—'}</p>
                   <p><strong>Verfuegbare Modelle:</strong> {health.models.join(', ') || 'keine'}</p>
+                  {health.error && <p><strong>Fehler:</strong> {health.error}</p>}
                 </div>
               )}
+              <div className="card" style={{ marginTop: 12 }}>
+                <p><strong>Aktive Session:</strong> {currentSessionId ?? 'Keine geladen'}</p>
+                <p><strong>Compactions:</strong> {compactionCount}</p>
+                <p><strong>Kontextwarnung:</strong> {contextWarning.level === 'none' ? 'Keine' : `${contextWarning.level} (${contextWarning.estimatedTokens} Tokens)`}</p>
+              </div>
               <Toggle label="Stream-Antworten automatisch speichern" hint="Ollama-Antworten werden waehrend des Streamings gesichert" {...pref('ollamaStreamAutosave')} />
             </Section>
 
@@ -194,6 +252,41 @@ export default function SettingsView() {
               </div>
             </Section>
 
+            <Section title="Engine-Konfiguration" icon="🔧">
+              <div className="grid">
+                <label>
+                  Max Turns pro Anfrage
+                  <input type="number" min={1} max={100} value={engineConfig.maxTurns} onChange={(e) => setEngineConfig({ maxTurns: Number(e.target.value) })} />
+                </label>
+                <label>
+                  Session Persistence
+                  <select value={engineConfig.sessionPersistence ? 'enabled' : 'disabled'} onChange={(e) => setEngineConfig({ sessionPersistence: e.target.value === 'enabled' })}>
+                    <option value="enabled">Aktiviert</option>
+                    <option value="disabled">Deaktiviert</option>
+                  </select>
+                </label>
+                <label>
+                  Berechtigungs-Modus
+                  <select value={engineConfig.permissionMode} onChange={(e) => setEngineConfig({ permissionMode: e.target.value as 'default' | 'plan' | 'bypass' | 'strict' })}>
+                    <option value="default">Standard</option>
+                    <option value="plan">Plan-Modus</option>
+                    <option value="bypass">Bypass (alles erlauben)</option>
+                    <option value="strict">Strikt (alles fragen)</option>
+                  </select>
+                </label>
+              </div>
+              <label style={{ marginTop: 12, display: 'block' }}>
+                System-Prompt Erweiterung
+                <textarea
+                  rows={3}
+                  value={engineConfig.appendSystemPrompt}
+                  onChange={(e) => setEngineConfig({ appendSystemPrompt: e.target.value })}
+                  placeholder="Zusaetzliche Anweisungen fuer den Agenten..."
+                  style={{ width: '100%', resize: 'vertical' }}
+                />
+              </label>
+            </Section>
+
             <SkillPanel />
             <PipelinePanel />
           </div>
@@ -215,6 +308,7 @@ export default function SettingsView() {
             <p className="hint-text">Vergangene Sessions durchsuchen und Nutzungsstatistiken einsehen</p>
             <SessionSearchPanel />
             <InsightsPanel />
+            <RunPanel />
           </div>
         )}
 
@@ -319,6 +413,8 @@ export default function SettingsView() {
                 </label>
               </div>
             </Section>
+
+            <RuntimeInstructionsPanel />
           </div>
         )}
 

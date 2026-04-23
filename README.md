@@ -61,11 +61,30 @@ cd app/src-tauri
 cargo test
 ```
 
+## Standard MCP Server (DuckDuckGo Web Search)
+
+Open_Cowork ist standardmaessig mit einem lokalen MCP-Server fuer DuckDuckGo-Websuche vorkonfiguriert.
+
+- Name: `duckduckgo-websearch`
+- Command: `node`
+- Args: `scripts/mcp/duckduckgo-websearch-server.mjs`
+
+Anpassbare Parameter (Env im MCP-Dialog):
+
+- `DDG_MAX_RESULTS` (Standard `5`)
+- `DDG_REGION` (Standard `wt-wt`, z. B. `de-de`, `us-en`)
+- `DDG_SAFESEARCH` (`off`, `moderate`, `strict`; Standard `moderate`)
+- `DDG_TIMEOUT_MS` (Standard `10000`)
+- `DDG_HTML_ENDPOINT` (optional, Standard `https://html.duckduckgo.com/html/`)
+
+Toolname im MCP-Server: `search_web`
+
 ## Dokumentation
 
 - `docs/ARCHITECTURE.md`
 - `docs/OLLAMA_CONFIGURATION.md`
 - `docs/DEVELOPMENT_AND_OPERATIONS.md`
+- `docs/DESKTOP_SMOKE_TEST.md`
 
 ## Plugin-Skill Beispiele (in der App enthalten)
 

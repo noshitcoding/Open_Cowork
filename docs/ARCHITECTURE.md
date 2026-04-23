@@ -32,7 +32,7 @@ Open_Cowork verwendet eine lokale Desktop-Architektur mit klarer Trennung zwisch
 - **taskStore**: Task-Lifecycle, Steps mit Status, DB-Sync via Tauri-Commands
 - **memoryStore**: Agent-Memory-Eintraege, Profil, Provider, Hints
 - **skillStore**: Erlernbare Skills, Lernverlauf, Auto-Generierung
-- **sessionStore**: Sessions (Start/End/Freeze), Suchfunktion
+- **engineStore**: QueryEngine-Bindung, Ollama-Laufzeit, Session-Laden/Speichern, Kontext- und Approval-State
 - **insightsStore**: Nutzungsstatistiken, Events, Summary
 - **personalityStore**: Persoenlichkeitsprofile mit Model-Override
 - **pipelineStore**: Artifact-Pipelines und Tool-Gateway

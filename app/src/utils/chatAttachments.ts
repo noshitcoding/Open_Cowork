@@ -49,6 +49,46 @@ export function formatAttachmentContext(attachments: ChatAttachment[]): string {
   return [`Verbundene Pfade (${attachments.length}):`, ...lines].join('\n')
 }
 
+const ATTACHMENT_CONTEXT_BLOCK_REGEX = /(?:^|\n)Verbundene Pfade \(\d+\):\n((?:\d+\.\s+(?:Datei|Ordner):[^\n]*(?:\n|$))+)/i
+
+export function extractAttachmentsFromContent(content: string): {
+  content: string
+  attachments: ChatAttachment[]
+} {
+  if (!content.trim()) {
+    return { content: '', attachments: [] }
+  }
+
+  const match = ATTACHMENT_CONTEXT_BLOCK_REGEX.exec(content)
+  if (!match) {
+    return { content: content.trim(), attachments: [] }
+  }
+
+  const attachments = match[1]
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const entry = line.match(/^\d+\.\s+(Datei|Ordner):\s*(.+)$/i)
+      if (!entry) return null
+      return {
+        kind: entry[1].toLowerCase() === 'ordner' ? 'folder' : 'file',
+        path: entry[2].trim(),
+      } satisfies ChatAttachment
+    })
+    .filter((item): item is ChatAttachment => item !== null && item.path.length > 0)
+
+  const cleanedContent = content
+    .replace(match[0], '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+
+  return {
+    content: cleanedContent,
+    attachments,
+  }
+}
+
 function fileUriToWindowsPath(value: string): string {
   const trimmed = value.trim()
   if (!trimmed.toLowerCase().startsWith('file://')) return ''

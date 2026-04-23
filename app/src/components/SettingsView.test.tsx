@@ -2,8 +2,11 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import SettingsView from './SettingsView'
 import { useConfigStore } from '../stores/configStore'
+import { useEngineStore } from '../stores/engineStore'
 
 const invokeMock = vi.fn()
+const checkOllamaStatusMock = vi.fn()
+const fetchOllamaModelsMock = vi.fn()
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: (...args: unknown[]) => invokeMock(...args),
@@ -39,10 +42,10 @@ function resetConfigStore() {
   useConfigStore.setState({
     ollama: {
       baseUrl: 'http://192.168.178.82:11434',
-      model: 'llama3.1:8b',
+      model: 'gpt-oss:20b',
       timeoutMs: 200000,
-      contextWindow: 8192,
-      temperature: 0.2,
+      contextWindow: 128000,
+      temperature: 0.1,
     },
     preferences: {
       autoApproveSafeTools: true,
@@ -86,11 +89,35 @@ function resetConfigStore() {
   })
 }
 
+function resetEngineStore() {
+  checkOllamaStatusMock.mockReset()
+  fetchOllamaModelsMock.mockReset()
+  checkOllamaStatusMock.mockResolvedValue(true)
+  fetchOllamaModelsMock.mockResolvedValue([
+    { id: 'gpt-oss:20b', name: 'gpt-oss:20b', size: 1 },
+  ])
+  useEngineStore.setState({
+    config: {
+      ...useEngineStore.getState().config,
+      maxTurns: 25,
+      permissionMode: 'default',
+      appendSystemPrompt: '',
+      sessionPersistence: true,
+    },
+    contextWarning: { level: 'none', estimatedTokens: 0 },
+    compactionCount: 0,
+    currentSessionId: null,
+    checkOllamaStatus: checkOllamaStatusMock,
+    fetchOllamaModels: fetchOllamaModelsMock,
+  })
+}
+
 describe('SettingsView', () => {
   beforeEach(() => {
     invokeMock.mockReset()
     invokeMock.mockImplementation(defaultInvoke)
     resetConfigStore()
+    resetEngineStore()
   })
 
   /* ── 1. sidebar renders all 9 categories ── */
@@ -180,10 +207,12 @@ describe('SettingsView', () => {
 
   /* ── 12. Ollama model input updates store ── */
   it('updates Ollama model on input change', async () => {
+    useConfigStore.setState({ availableModels: ['gpt-oss:20b', 'mistral:7b'] })
     await act(async () => { render(<SettingsView />) })
-    // ModelSwitcher also shows model; pick the first input element
-    const inputs = screen.getAllByDisplayValue('llama3.1:8b')
-    fireEvent.change(inputs[0], { target: { value: 'mistral:7b' } })
+    const modelControls = screen.getAllByDisplayValue('gpt-oss:20b')
+    const modelSelect = modelControls.find((element) => element.tagName === 'SELECT')
+    expect(modelSelect).toBeTruthy()
+    fireEvent.change(modelSelect!, { target: { value: 'mistral:7b' } })
     expect(useConfigStore.getState().ollama.model).toBe('mistral:7b')
   })
 
@@ -198,29 +227,17 @@ describe('SettingsView', () => {
   })
 
   /* ── 14. Health check invokes backend ── */
-  it('calls ollama_health_check on button click', async () => {
-    invokeMock.mockImplementation((cmd: string) => {
-      if (cmd === 'ollama_health_check') {
-        return Promise.resolve({
-          ok: true, endpoint: 'http://192.168.178.82:11434', model: 'llama3.1:8b',
-          latencyMs: 42, version: '0.3.0', models: ['llama3.1:8b'], error: null,
-        })
-      }
-      return defaultInvoke(cmd)
-    })
+  it('uses engine store health and model refresh on button click', async () => {
     await act(async () => { render(<SettingsView />) })
     await act(async () => { fireEvent.click(screen.getByText('🔍 Health Check')) })
     await waitFor(() => expect(screen.getByText('✓ Verbunden')).toBeInTheDocument())
+    expect(checkOllamaStatusMock).toHaveBeenCalled()
+    expect(fetchOllamaModelsMock).toHaveBeenCalled()
   })
 
   /* ── 15. Health check error ── */
   it('shows error message on health check failure', async () => {
-    invokeMock.mockImplementation((cmd: string) => {
-      if (cmd === 'ollama_health_check') {
-        return Promise.reject(new Error('Connection refused'))
-      }
-      return defaultInvoke(cmd)
-    })
+    checkOllamaStatusMock.mockRejectedValue(new Error('Connection refused'))
     await act(async () => { render(<SettingsView />) })
     await act(async () => { fireEvent.click(screen.getByText('🔍 Health Check')) })
     await waitFor(() => expect(screen.getByText('Connection refused')).toBeInTheDocument())
@@ -228,10 +245,10 @@ describe('SettingsView', () => {
 
   /* ── 16. Model dropdown with available models ── */
   it('renders model dropdown when availableModels are set', async () => {
-    useConfigStore.setState({ availableModels: ['llama3.1:8b', 'mistral:7b', 'codellama:13b'] })
+    useConfigStore.setState({ availableModels: ['gpt-oss:20b', 'mistral:7b', 'codellama:13b'] })
     await act(async () => { render(<SettingsView />) })
     // The first select we find for model in the Ollama config section
-    const selects = screen.getAllByDisplayValue('llama3.1:8b')
+    const selects = screen.getAllByDisplayValue('gpt-oss:20b')
     const selectEl = selects.find((el) => el.tagName === 'SELECT')
     expect(selectEl).toBeTruthy()
   })

@@ -23,6 +23,8 @@ type McpCallResponse = {
   error: string | null
 }
 
+const SCREENSHOT_MCP_COMMAND = 'open-cowork-screenshot-mcp'
+
 type ClaudeMcpServer = {
   type?: string
   command?: string
@@ -118,6 +120,7 @@ export default function McpView() {
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [status, setStatus] = useState<'unknown' | 'online' | 'offline'>('unknown')
+  const isScreenshotServer = mcpServer.command.trim().toLowerCase() === SCREENSHOT_MCP_COMMAND
 
   const selectServer = (name: string) => {
     setActiveMcpServer(name)
@@ -182,6 +185,36 @@ export default function McpView() {
       })
       setCallResult(response)
     } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const quickMcpCall = async (toolName: string, toolArgs: Record<string, unknown>) => {
+    setBusy(true)
+    setError(null)
+    setCallResult(null)
+    try {
+      const env = currentEnv()
+      setMcpServer({ env })
+
+      const response = await invoke<McpCallResponse>('mcp_call_tool', {
+        request: {
+          name: mcpServer.name,
+          command: mcpServer.command,
+          args: splitArgs(mcpServer.args),
+          env,
+          toolName,
+          toolArgs,
+        },
+      })
+      setCallResult(response)
+      if (response.success) {
+        setStatus('online')
+      }
+    } catch (err) {
+      setStatus('offline')
       setError(err instanceof Error ? err.message : String(err))
     } finally {
       setBusy(false)
@@ -280,6 +313,22 @@ export default function McpView() {
       {/* ── Notices ─────────────── */}
       {notice && <p className="success">{notice}</p>}
       {error && <p className="error">{error}</p>}
+
+      {/* ── Screenshot Quick Actions ─────────────── */}
+      {isScreenshotServer && (
+        <div className="panel">
+          <h2>📸 Screenshot Schnellstart</h2>
+          <p className="hint-text">Nimmt standardmäßig alle Bildschirme auf und speichert PNG-Dateien im App-Datenordner.</p>
+          <div className="actions">
+            <button type="button" disabled={busy} onClick={() => quickMcpCall('capture_screenshot', { allScreens: true })}>
+              {busy ? '⏳ Aufnahme läuft...' : 'Alle Bildschirme aufnehmen'}
+            </button>
+            <button type="button" className="btn-secondary" disabled={busy} onClick={() => quickMcpCall('list_screens', {})}>
+              Bildschirme anzeigen
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ── Server List ────────── */}
       <div className="panel">

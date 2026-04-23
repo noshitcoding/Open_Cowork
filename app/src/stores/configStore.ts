@@ -35,6 +35,9 @@ export type AppPreferences = {
   defaultStartView: StartView
   focusMode: boolean
   compactMode: boolean
+  verboseMode: boolean
+  limitThinkingWindow: boolean
+  superVerboseAuditLogging: boolean
   fontScale: number
   shortcutOverlayEnabled: boolean
   syncThemeWithSystem: boolean
@@ -71,10 +74,10 @@ type ConfigState = {
 
 const DEFAULT_OLLAMA: OllamaConfig = {
   baseUrl: 'http://192.168.178.82:11434',
-  model: 'llama3.1:8b',
+  model: 'gpt-oss:20b',
   timeoutMs: 200000,
-  contextWindow: 8192,
-  temperature: 0.2,
+  contextWindow: 128000,
+  temperature: 0.1,
 }
 
 const DEFAULT_PREFERENCES: AppPreferences = {
@@ -94,6 +97,9 @@ const DEFAULT_PREFERENCES: AppPreferences = {
   defaultStartView: 'last',
   focusMode: false,
   compactMode: false,
+  verboseMode: false,
+  limitThinkingWindow: true,
+  superVerboseAuditLogging: false,
   fontScale: 100,
   shortcutOverlayEnabled: true,
   syncThemeWithSystem: false,
@@ -111,10 +117,15 @@ const DEFAULT_PREFERENCES: AppPreferences = {
 }
 
 const DEFAULT_MCP: McpServerConfig = {
-  name: 'local-docs',
-  command: 'open-cowork-docs-mcp',
-  args: '',
-  env: {},
+  name: 'duckduckgo-websearch',
+  command: 'node',
+  args: 'scripts/mcp/duckduckgo-websearch-server.mjs',
+  env: {
+    DDG_MAX_RESULTS: '5',
+    DDG_REGION: 'wt-wt',
+    DDG_SAFESEARCH: 'moderate',
+    DDG_TIMEOUT_MS: '10000',
+  },
 }
 
 function normalizeServer(server: McpServerConfig): McpServerConfig {
@@ -136,8 +147,24 @@ function isLegacyFilesystemServer(server: McpServerConfig): boolean {
   )
 }
 
+function isLegacyLocalDocsServer(server: McpServerConfig): boolean {
+  const command = server.command.trim().toLowerCase()
+  const name = server.name.trim().toLowerCase()
+  return command === 'open-cowork-docs-mcp' || name === 'local-docs'
+}
+
+function isLegacyScreenshotServer(server: McpServerConfig): boolean {
+  const command = server.command.trim().toLowerCase()
+  const name = server.name.trim().toLowerCase()
+  return command === 'open-cowork-screenshot-mcp' || name === 'screenshot'
+}
+
 function migrateServer(server: McpServerConfig): McpServerConfig {
-  if (!isLegacyFilesystemServer(server)) {
+  if (
+    !isLegacyFilesystemServer(server)
+    && !isLegacyLocalDocsServer(server)
+    && !isLegacyScreenshotServer(server)
+  ) {
     return server
   }
 
@@ -272,6 +299,7 @@ export const useConfigStore = create<ConfigState>()(
           mcpServers,
           activeMcpServerName,
           mcpServer: chooseServer(mcpServers, activeMcpServerName),
+          availableModels: Array.isArray(state.availableModels) ? state.availableModels : [],
         }
       },
     }

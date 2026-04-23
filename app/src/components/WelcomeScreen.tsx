@@ -16,14 +16,9 @@ import {
   type ChatAttachment,
 } from '../utils/chatAttachments'
 import { buildAttachmentPromptContext } from '../utils/attachmentPromptContext'
-
-type ChatTurnResponse = {
-  endpoint: string
-  model: string
-  assistantMessage: string
-  requiresApproval: boolean
-  proposedPlan: string[]
-}
+import { buildModelDebugContent, extractThinkingContent, sanitizeAssistantContent } from '../utils/messageDisplay'
+import { streamChatTurn } from '../utils/ollamaStreaming'
+import { writeAuditEvent } from '../utils/audit'
 
 const QUICK_ACTIONS = [
   { icon: '📄', title: 'Datei erstellen', prompt: 'Erstelle eine neue Datei' },
@@ -43,12 +38,15 @@ export default function WelcomeScreen() {
   const [attachmentNotice, setAttachmentNotice] = useState<string | null>(null)
 
   const ollama = useConfigStore((s) => s.ollama)
+  const verboseMode = useConfigStore((s) => s.preferences.verboseMode)
+  const superVerboseAuditLogging = useConfigStore((s) => s.preferences.superVerboseAuditLogging)
   const availableModels = useConfigStore((s) => s.availableModels)
   const setOllama = useConfigStore((s) => s.setOllama)
   const setAvailableModels = useConfigStore((s) => s.setAvailableModels)
+  const selectableModels = Array.isArray(availableModels) ? availableModels : []
 
   const { workingFolder, workingPathKind, setWorkingPath } = useUiStore()
-  const { addThread, setActiveThread, addMessage } = useChatStore()
+  const { addThread, setActiveThread, addMessage, updateMessage } = useChatStore()
   const { createTask, setTaskSteps, updateTaskStatus } = useTaskStore()
   const addLog = useLogStore((s) => s.addLog)
 
@@ -59,8 +57,9 @@ export default function WelcomeScreen() {
           ok: boolean
           models: string[]
         }>('ollama_health_check', { config: ollama })
-        if (health.ok && health.models.length > 0) {
-          setAvailableModels(health.models)
+        const models = Array.isArray(health.models) ? health.models : []
+        if (health.ok && models.length > 0) {
+          setAvailableModels(models)
         }
       } catch {
         // Ollama not available
@@ -146,7 +145,7 @@ export default function WelcomeScreen() {
       ? [{ path: workingFolder, kind: workingPathKind === 'file' ? 'file' : 'folder' }]
       : []
     const mergedForSend = mergeAttachments(pathAttachment, attachments)
-    const attachmentBuild = await buildAttachmentPromptContext(mergedForSend.next)
+    const attachmentBuild = await buildAttachmentPromptContext(mergedForSend.next, text)
     const attachmentContext = attachmentBuild.context
     const promptWithAttachments = attachmentContext ? `${text}\n\n${attachmentContext}` : text
 
@@ -154,12 +153,29 @@ export default function WelcomeScreen() {
     const threadId = addThread(text.slice(0, 50))
     setActiveThread(threadId)
 
-    const userMessage = { role: 'user' as const, content: promptWithAttachments, timestamp: Date.now() }
+    const userMessage = {
+      role: 'user' as const,
+      content: text,
+      timestamp: Date.now(),
+      attachments: mergedForSend.next,
+      debugContent: promptWithAttachments,
+    }
+    if (superVerboseAuditLogging) {
+      void writeAuditEvent('super_verbose', 'welcome_user_prompt', {
+        view: 'welcome',
+        threadId,
+        prompt: text,
+        promptWithAttachments,
+        attachments: mergedForSend.next,
+      })
+    }
     addMessage(threadId, userMessage)
 
     if (inputRef.current) inputRef.current.value = ''
     setAttachments([])
     setAttachmentNotice(null)
+
+    let assistantMessageId: string | null = null
 
     try {
       const started = Date.now()
@@ -177,6 +193,15 @@ export default function WelcomeScreen() {
           source: 'welcome',
         },
       })
+      if (superVerboseAuditLogging) {
+        void writeAuditEvent('super_verbose', 'welcome_llm_request_started', {
+          view: 'welcome',
+          threadId,
+          prompt: text,
+          promptWithAttachments,
+          ollama,
+        })
+      }
       if (attachmentBuild.failedFiles.length > 0) {
         addLog({
           level: 'warn',
@@ -187,18 +212,38 @@ export default function WelcomeScreen() {
           },
         })
       }
-      const response = await invoke<ChatTurnResponse>('chat_turn', {
-        request: {
+      let rawAssistantMessage = ''
+      const createdAssistantMessageId = addMessage(threadId, {
+        role: 'assistant',
+        content: '',
+        timestamp: Date.now(),
+        streaming: true,
+      })
+      assistantMessageId = createdAssistantMessageId
+
+      const response = await streamChatTurn(
+        {
           prompt: promptWithAttachments,
           history: [],
           config: ollama,
         },
-      })
+        (chunk) => {
+          rawAssistantMessage += chunk
+          updateMessage(threadId, createdAssistantMessageId, {
+            content: sanitizeAssistantContent(rawAssistantMessage, verboseMode),
+            thinkingContent: extractThinkingContent(rawAssistantMessage),
+          })
+        },
+      )
 
-      addMessage(threadId, {
-        role: 'assistant',
-        content: response.assistantMessage,
-        timestamp: Date.now(),
+      const visibleAssistantMessage = sanitizeAssistantContent(response.assistantMessage, verboseMode)
+      updateMessage(threadId, createdAssistantMessageId, {
+        content: visibleAssistantMessage,
+        debugContent: buildModelDebugContent(response.assistantMessage, visibleAssistantMessage),
+        thinkingContent: extractThinkingContent(response.assistantMessage),
+        streaming: false,
+      }, {
+        persist: true,
       })
       addLog({
         level: 'info',
@@ -211,6 +256,20 @@ export default function WelcomeScreen() {
           responseChars: response.assistantMessage.length,
         },
       })
+      if (superVerboseAuditLogging) {
+        void writeAuditEvent('super_verbose', 'welcome_llm_request_finished', {
+          view: 'welcome',
+          threadId,
+          prompt: text,
+          promptWithAttachments,
+          assistantRawResponse: response.assistantMessage,
+          assistantVisibleResponse: visibleAssistantMessage,
+          endpoint: response.endpoint,
+          model: response.model,
+          requiresApproval: response.requiresApproval,
+          proposedPlan: response.proposedPlan,
+        })
+      }
 
       if (response.requiresApproval) {
         const taskId = createTask(text, text.slice(0, 60), threadId)
@@ -241,11 +300,26 @@ export default function WelcomeScreen() {
           source: 'welcome',
         },
       })
-      addMessage(threadId, {
-        role: 'assistant',
-        content: `LLM-Anfrage fehlgeschlagen: ${message}\n\nPrüfe unter Einstellungen den Ollama-Endpoint, das Modell und den Timeout.`,
-        timestamp: Date.now(),
-      })
+      if (superVerboseAuditLogging) {
+        void writeAuditEvent('super_verbose', 'welcome_llm_request_failed', {
+          view: 'welcome',
+          threadId,
+          prompt: text,
+          promptWithAttachments,
+          error: message,
+          ollama,
+        })
+      }
+      const failureContent = `LLM-Anfrage fehlgeschlagen: ${message}\n\nPrüfe unter Einstellungen den Ollama-Endpoint, das Modell und den Timeout.`
+      if (assistantMessageId) {
+        updateMessage(threadId, assistantMessageId, { content: failureContent, streaming: false }, { persist: true })
+      } else {
+        addMessage(threadId, {
+          role: 'assistant',
+          content: failureContent,
+          timestamp: Date.now(),
+        })
+      }
     } finally {
       setBusy(false)
     }
@@ -357,8 +431,8 @@ export default function WelcomeScreen() {
                 value={ollama.model}
                 onChange={(e) => setOllama({ model: e.target.value })}
               >
-                {availableModels.length > 0 ? (
-                  availableModels.map((m) => (
+                {selectableModels.length > 0 ? (
+                  selectableModels.map((m) => (
                     <option key={m} value={m}>
                       {m}
                     </option>

@@ -5,6 +5,23 @@ export type ParsedSlashCommand = {
   args: string
 } | null
 
+export type SlashCommandDefinition = {
+  command: string
+  args?: string
+  description: string
+}
+
+export const SLASH_COMMAND_DEFINITIONS: SlashCommandDefinition[] = [
+  { command: '/help', description: 'Diese Hilfe anzeigen' },
+  { command: '/tools', description: 'Aktive Tool-Konfiguration anzeigen' },
+  { command: '/mode', args: 'plan|execute', description: 'Plan-Mode ein/aus' },
+  { command: '/permissions', args: '<mode>', description: 'default | acceptEdits | bypassPermissions | dontAsk | plan' },
+  { command: '/plan', args: '<prompt>', description: 'Prompt als Plan-Anfrage ausfuehren' },
+  { command: '/fetch', args: '<url>', description: 'URL laden und Textauszug anzeigen' },
+  { command: '/tool', args: '<name> <args>', description: 'Tool Dispatcher nutzen' },
+  { command: '/todo', args: 'add <titel> | list', description: 'Einfache Todo-Steuerung' },
+]
+
 export function parseSlashCommand(input: string): ParsedSlashCommand {
   const trimmed = input.trim()
   if (!trimmed.startsWith('/')) return null
@@ -53,14 +70,10 @@ export function buildClaudeSystemAddendum(input: {
 export function buildSlashHelpText(pluginSkillLines: string[] = []): string {
   const baseLines = [
     'Verfuegbare Slash-Commands:',
-    '/help - Diese Hilfe anzeigen',
-    '/tools - Aktive Tool-Konfiguration anzeigen',
-    '/mode plan|execute - Plan-Mode ein/aus',
-    '/permissions <mode> - default | acceptEdits | bypassPermissions | dontAsk | plan',
-    '/plan <prompt> - Prompt als Plan-Anfrage ausfuehren',
-    '/fetch <url> - URL laden und Textauszug anzeigen',
-    '/tool <name> <args> - Tool Dispatcher nutzen (z. B. /tool read_file C:\\tmp\\a.txt)',
-    '/todo add <titel> | /todo list - einfache Todo-Steuerung',
+    ...SLASH_COMMAND_DEFINITIONS.map((definition) => {
+      const usage = [definition.command, definition.args].filter(Boolean).join(' ')
+      return `${usage} - ${definition.description}`
+    }),
   ]
 
   if (pluginSkillLines.length > 0) {

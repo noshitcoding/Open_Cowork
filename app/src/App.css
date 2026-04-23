@@ -777,6 +777,24 @@ body {
   word-break: break-word;
 }
 
+.chat-command-highlight {
+  display: inline-block;
+  padding: 0 4px;
+  border: 1px solid rgba(20, 184, 166, 0.28);
+  border-radius: 6px;
+  background: rgba(20, 184, 166, 0.12);
+  color: #0f766e;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.cowork-msg.user .chat-command-highlight {
+  border-color: rgba(255, 255, 255, 0.4);
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+}
+
 .cowork-msg.assistant .msg-content {
   background: var(--bg-white);
   border: 1px solid var(--border-color);
@@ -854,6 +872,11 @@ body {
   overflow: hidden;
 }
 
+.verbose-panel {
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--border-color));
+  background: color-mix(in srgb, var(--bg-secondary) 92%, var(--accent) 8%);
+}
+
 .thinking-header {
   display: flex;
   justify-content: space-between;
@@ -879,6 +902,10 @@ body {
   word-break: break-word;
   font-size: 12px;
   line-height: 1.5;
+}
+
+.verbose-panel pre {
+  font-family: "Cascadia Code", "Fira Code", Consolas, monospace;
 }
 
 .stream-placeholder {
@@ -1104,6 +1131,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  position: relative;
 }
 
 .attachment-actions {
@@ -1202,6 +1230,65 @@ body {
 .cowork-input textarea.input-drop-active {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px var(--accent-light);
+}
+
+.slash-command-menu {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 8px);
+  z-index: 20;
+  max-height: 260px;
+  overflow-y: auto;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-white);
+  box-shadow: var(--shadow-lg);
+  padding: 6px;
+}
+
+.slash-command-option {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(150px, 0.35fr) 1fr;
+  gap: 12px;
+  align-items: center;
+  padding: 8px 10px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+}
+
+.slash-command-option:hover,
+.slash-command-option.active {
+  background: var(--accent-light);
+}
+
+.slash-command-usage {
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--accent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.slash-command-usage span {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.slash-command-description {
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .btn-send {

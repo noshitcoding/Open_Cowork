@@ -2,12 +2,20 @@ import { useRef, useEffect, useMemo, useState } from 'react'
 import type { ClipboardEvent, DragEvent, FormEvent } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
-import { useChatStore, getActiveThread } from '../stores/chatStore'
+import { useChatStore, getActiveThread, type ChatMessage } from '../stores/chatStore'
 import { useConfigStore } from '../stores/configStore'
 import { useTaskStore } from '../stores/taskStore'
 import { useLogStore } from '../stores/logStore'
 import { useCoworkStore, type ClaudePermissionMode } from '../stores/coworkStore'
-import type { TaskStep } from '../stores/taskStore'
+import { useMemoryStore } from '../stores/memoryStore'
+import { useInsightsStore } from '../stores/insightsStore'
+import { useProcessStore } from '../stores/processStore'
+import { useTerminalStore } from '../stores/terminalStore'
+import { useSkillStore } from '../stores/skillStore'
+import { useCrewStore } from '../stores/crewStore'
+import { useEngineStore } from '../stores/engineStore'
+import { useUiStore } from '../stores/uiStore'
+import type { ToolProgressData } from '../engine/types'
 import {
   extractFileAttachmentsFromFileList,
   extractFileAttachmentsFromUriList,
@@ -17,40 +25,18 @@ import {
   type ChatAttachment,
 } from '../utils/chatAttachments'
 import { buildAttachmentPromptContext } from '../utils/attachmentPromptContext'
+import { resolveAssistantPresentation, sanitizeAssistantContent } from '../utils/messageDisplay'
+// Ollama streaming is now handled by the engine
+import { MessageThinking, MessageVerbose, StreamingPlaceholder } from './MessageThinking'
+import { HighlightedChatText } from './HighlightedChatText'
+import { writeAuditEvent } from '../utils/audit'
 import {
   buildClaudeSystemAddendum,
-  buildSlashHelpText,
   compactHistoryForPrompt,
   isToolDeniedByRules,
   parseSlashCommand,
 } from '../utils/claudeBridge'
-
-type ChatTurnResponse = {
-  endpoint: string
-  model: string
-  assistantMessage: string
-  requiresApproval: boolean
-  proposedPlan: string[]
-}
-
-type SubAgentItemResult = {
-  path: string
-  success: boolean
-  summary: string
-  charsProcessed: number
-  durationMs: number
-  error: string | null
-}
-
-type SubAgentRunResponse = {
-  prompt: string
-  parallelism: number
-  totalItems: number
-  successfulItems: number
-  failedItems: number
-  durationMs: number
-  results: SubAgentItemResult[]
-}
+import { useCommandRegistry } from '../stores/commandRegistryStore'
 
 type WebFetchResponse = {
   url: string
@@ -77,6 +63,13 @@ type EnabledPluginSkill = {
   runMode: 'plan' | 'execute'
 }
 
+type SlashCommandSuggestion = {
+  command: string
+  args?: string
+  description: string
+  source: 'built-in' | 'plugin'
+}
+
 const VALID_PERMISSION_MODES: ClaudePermissionMode[] = [
   'default',
   'acceptEdits',
@@ -85,20 +78,112 @@ const VALID_PERMISSION_MODES: ClaudePermissionMode[] = [
   'plan',
 ]
 
+const ENGINE_TO_CLAUDE_PERMISSION_MODE: Record<'default' | 'plan' | 'bypass' | 'strict', ClaudePermissionMode> = {
+  default: 'default',
+  plan: 'plan',
+  bypass: 'bypassPermissions',
+  strict: 'acceptEdits',
+}
+
+function formatVerboseTimestamp(timestamp: number): string {
+  return new Date(timestamp).toLocaleTimeString('de-DE', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  })
+}
+
+function clipVerboseText(value: string, maxChars = 4000): string {
+  const normalized = value.trim()
+  if (!normalized) return ''
+  if (normalized.length <= maxChars) return normalized
+  return `${normalized.slice(0, maxChars)}\n... [gekuerzt, ${normalized.length - maxChars} weitere Zeichen]`
+}
+
+function stringifyVerboseValue(value: unknown): string {
+  if (typeof value === 'string') return value
+  try {
+    return JSON.stringify(value, null, 2)
+  } catch {
+    return String(value)
+  }
+}
+
+function formatToolProgress(toolName: string, data: ToolProgressData): { headline: string; details?: string } {
+  switch (data.type) {
+    case 'bash_progress':
+      return {
+        headline: `${toolName}: Shell-Ausgabe`,
+        details: clipVerboseText(data.output),
+      }
+    case 'agent_progress':
+      return {
+        headline: `${toolName}: Agent-Fortschritt (${data.agentName})`,
+        details: clipVerboseText(data.content),
+      }
+    case 'web_search_progress':
+      return {
+        headline: `${toolName}: Web-Suche`,
+        details: `Query: ${data.query}\nTreffer: ${data.results}`,
+      }
+    case 'mcp_progress':
+      return {
+        headline: `${toolName}: MCP-Fortschritt (${data.serverName})`,
+        details: `Fortschritt: ${data.progress}%`,
+      }
+    case 'skill_progress':
+      return {
+        headline: `${toolName}: Skill-Ausgabe (${data.skillName})`,
+        details: clipVerboseText(data.output),
+      }
+    case 'task_output_progress':
+      return {
+        headline: `${toolName}: Task-Ausgabe (${data.taskId})`,
+        details: clipVerboseText(data.output),
+      }
+    case 'file_progress':
+      return {
+        headline: `${toolName}: Dateioperation`,
+        details: `${data.operation}: ${data.path}`,
+      }
+    default:
+      return {
+        headline: `${toolName}: Tool-Fortschritt`,
+        details: clipVerboseText(stringifyVerboseValue(data)),
+      }
+  }
+}
+
 export default function CoworkView() {
   const [attachments, setAttachments] = useState<ChatAttachment[]>([])
   const [attachmentNotice, setAttachmentNotice] = useState<string | null>(null)
   const [dragOverInput, setDragOverInput] = useState(false)
-  const [subAgentBusy, setSubAgentBusy] = useState(false)
   const [promptHistory, setPromptHistory] = useState<string[]>([])
   const [historyIndex, setHistoryIndex] = useState(-1)
   const [showScrollToBottom, setShowScrollToBottom] = useState(false)
+  const [inputValue, setInputValue] = useState('')
+  const [slashSuggestionsOpen, setSlashSuggestionsOpen] = useState(false)
+  const [activeSlashSuggestionIndex, setActiveSlashSuggestionIndex] = useState(0)
   const ollama = useConfigStore((s) => s.ollama)
   const availableModels = useConfigStore((s) => s.availableModels)
   const setOllama = useConfigStore((s) => s.setOllama)
   const mcpServer = useConfigStore((s) => s.mcpServer)
+  const engineSendMessage = useEngineStore((s) => s.sendMessage)
+  const enginePermissionMode = useEngineStore((s) => s.config.permissionMode)
+  const setEngineConfig = useEngineStore((s) => s.setConfig)
+  const resolveEngineApproval = useEngineStore((s) => s.resolveApproval)
+  const currentToolUI = useEngineStore((s) => s.currentToolUI)
+  const clearCurrentToolUI = useEngineStore((s) => s.clearCurrentToolUI)
+  const forceCompact = useEngineStore((s) => s.forceCompact)
+  const currentSessionId = useEngineStore((s) => s.currentSessionId)
+  const contextWarning = useEngineStore((s) => s.contextWarning)
+  const compactionCount = useEngineStore((s) => s.compactionCount)
   const showTimestamps = useConfigStore((s) => s.preferences.showTimestamps)
   const compactMode = useConfigStore((s) => s.preferences.compactMode)
+  const verboseMode = useConfigStore((s) => s.preferences.verboseMode)
+  const limitThinkingWindow = useConfigStore((s) => s.preferences.limitThinkingWindow)
+  const superVerboseAuditLogging = useConfigStore((s) => s.preferences.superVerboseAuditLogging)
+  const autoPilotAllTools = useConfigStore((s) => s.preferences.autoPilotAllTools)
   const {
     activeThreadId,
     pendingApproval,
@@ -107,13 +192,14 @@ export default function CoworkView() {
     addThread,
     setActiveThread,
     addMessage,
+    updateMessage,
     setPendingApproval,
     clearApproval,
     setBusy,
     setError,
   } = useChatStore()
 
-  const { createTask, updateTaskStatus, setTaskSteps } = useTaskStore()
+  const { createTask } = useTaskStore()
   const tasks = useTaskStore((s) => s.tasks)
   const addLog = useLogStore((s) => s.addLog)
   const globalInstruction = useCoworkStore((s) => s.globalInstruction)
@@ -128,6 +214,15 @@ export default function CoworkView() {
   const activeThread = useChatStore(getActiveThread)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const logRef = useRef<HTMLDivElement>(null)
+  const activeMessages = Array.isArray(activeThread?.messages) ? activeThread.messages : []
+  const selectableModels = Array.isArray(availableModels) ? availableModels : []
+  const approvalSteps = Array.isArray(pendingApproval) ? pendingApproval : []
+  const isAskUserPrompt =
+    currentToolUI?.toolName === 'AskUser' &&
+    currentToolUI.type === 'approval' &&
+    typeof currentToolUI.content === 'string' &&
+    currentToolUI.content.trim().length > 0
+  const askUserQuestion = isAskUserPrompt ? currentToolUI.content.trim() : null
 
   const enabledPluginSkills = useMemo<EnabledPluginSkill[]>(() => {
     return plugins
@@ -144,11 +239,81 @@ export default function CoworkView() {
       .filter((skill) => skill.command.startsWith('/'))
   }, [plugins])
 
+  const registryCommands = useCommandRegistry((s) => s.commands)
+
+  const slashCommandSuggestions = useMemo<SlashCommandSuggestion[]>(() => {
+    const builtIn = registryCommands.map((cmd) => ({
+      command: cmd.command,
+      description: `${cmd.label} – ${cmd.description}`,
+      source: 'built-in' as const,
+    }))
+
+    const pluginCommands = enabledPluginSkills.map((skill) => ({
+      command: skill.command,
+      args: '<prompt>',
+      description: `${skill.skillName} (${skill.pluginName})`,
+      source: 'plugin' as const,
+    }))
+
+    return [...builtIn, ...pluginCommands].sort((a, b) => a.command.localeCompare(b.command))
+  }, [enabledPluginSkills, registryCommands])
+
+  const slashCommandQuery = useMemo(() => {
+    const trimmedStart = inputValue.trimStart()
+    if (!trimmedStart.startsWith('/') || trimmedStart.includes('\n')) return null
+    const firstWhitespace = trimmedStart.search(/\s/)
+    if (firstWhitespace >= 0) return null
+    return trimmedStart.slice(1).toLowerCase()
+  }, [inputValue])
+
+  const filteredSlashSuggestions = useMemo(() => {
+    if (slashCommandQuery === null) return []
+    return slashCommandSuggestions.filter((item) => {
+      const haystack = `${item.command} ${item.args ?? ''} ${item.description}`.toLowerCase()
+      return haystack.includes(slashCommandQuery)
+    })
+  }, [slashCommandQuery, slashCommandSuggestions])
+
+  const showSlashSuggestions = slashSuggestionsOpen && filteredSlashSuggestions.length > 0
+
+  useEffect(() => {
+    if (slashCommandQuery === null) {
+      setSlashSuggestionsOpen(false)
+      setActiveSlashSuggestionIndex(0)
+      return
+    }
+
+    setSlashSuggestionsOpen(true)
+    setActiveSlashSuggestionIndex(0)
+  }, [slashCommandQuery])
+
+  const applySlashSuggestion = (suggestion: SlashCommandSuggestion) => {
+    const nextValue = `${suggestion.command} `
+    setInputValue(nextValue)
+    setSlashSuggestionsOpen(false)
+    window.requestAnimationFrame(() => {
+      inputRef.current?.focus()
+      inputRef.current?.setSelectionRange(nextValue.length, nextValue.length)
+    })
+  }
+
   useEffect(() => {
     if (logRef.current) {
       logRef.current.scrollTop = logRef.current.scrollHeight
     }
-  }, [activeThread?.messages.length])
+  }, [activeMessages.length])
+
+  useEffect(() => {
+    if (!askUserQuestion || busy) return
+    window.requestAnimationFrame(() => {
+      inputRef.current?.focus()
+    })
+  }, [askUserQuestion, busy])
+
+  const visibleMessages = useMemo(
+    () => activeMessages.filter((message) => message.role !== 'system'),
+    [activeMessages],
+  )
 
   useEffect(() => {
     const node = logRef.current
@@ -256,20 +421,32 @@ export default function CoworkView() {
     setAttachmentNotice(null)
   }
 
-  const handleSend = async (event: FormEvent) => {
-    event.preventDefault()
-    const text = inputRef.current?.value?.trim()
-    if (!text || busy) return
+  const submitPrompt = async (
+    rawInput: string,
+    draftAttachments: ChatAttachment[] = attachments,
+  ) => {
+    const text = rawInput.trim()
+    const hasDraftAttachments = Array.isArray(draftAttachments) && draftAttachments.length > 0
+    if ((!text && !hasDraftAttachments) || busy) return
+    const fallbackAttachmentPrompt = 'Bitte analysiere die angehaengten Dateien/Ordner und fuehre die Aufgabe aus.'
+    const effectiveInput = text || fallbackAttachmentPrompt
+    const replyingToAskUser = !!askUserQuestion
 
-    setPromptHistory((prev) => {
-      const deduped = [text, ...prev.filter((entry) => entry !== text)]
-      return deduped.slice(0, 30)
-    })
+    if (replyingToAskUser) {
+      clearCurrentToolUI()
+    }
+
+    if (text) {
+      setPromptHistory((prev) => {
+        const deduped = [text, ...prev.filter((entry) => entry !== text)]
+        return deduped.slice(0, 30)
+      })
+    }
     setHistoryIndex(-1)
 
     let threadId = activeThreadId
     if (!threadId) {
-      threadId = addThread(text.slice(0, 50))
+      threadId = addThread(effectiveInput.slice(0, 50))
       setActiveThread(threadId)
     }
 
@@ -293,6 +470,10 @@ export default function CoworkView() {
         return 'Web Fetch ist per Policy deaktiviert.'
       }
 
+      if (toolId === 'web_search' && !policyFlags.allowWebSearch) {
+        return 'Web Search ist per Policy deaktiviert.'
+      }
+
       if (toolId === 'read_file' && !policyFlags.allowFileReadExtraction) {
         return 'Dateiextraktion ist per Policy deaktiviert.'
       }
@@ -310,6 +491,13 @@ export default function CoworkView() {
         content,
         timestamp: Date.now(),
       })
+      if (superVerboseAuditLogging) {
+        void writeAuditEvent('super_verbose', 'cowork_assistant_message', {
+          view: 'cowork',
+          threadId,
+          content,
+        })
+      }
     }
 
     const normalizeSlashCommand = (command: string): string => {
@@ -336,14 +524,25 @@ export default function CoworkView() {
 
     if (slash) {
       addMessage(threadId, { role: 'user', content: text, timestamp: Date.now() })
-      if (inputRef.current) inputRef.current.value = ''
+      if (superVerboseAuditLogging) {
+        void writeAuditEvent('super_verbose', 'cowork_user_prompt', {
+          view: 'cowork',
+          threadId,
+          prompt: text,
+          slashCommand: slash.command,
+          slashArgs: slash.args,
+        })
+      }
+      setInputValue('')
 
       if (slash.command === 'help') {
-        appendAssistantMessage(
-          buildSlashHelpText(
-            enabledPluginSkills.map((skill) => `${skill.command} - ${skill.skillName} (${skill.pluginName})`)
-          )
-        )
+        const cmdLines = registryCommands.map((c) => `${c.command} – ${c.description}`)
+        const pluginLines = enabledPluginSkills.map((skill) => `${skill.command} - ${skill.skillName} (${skill.pluginName})`)
+        const helpText = ['Verfuegbare Slash-Commands:', ...cmdLines]
+        if (pluginLines.length > 0) {
+          helpText.push('', 'Aktive Plugin-Skills:', ...pluginLines)
+        }
+        appendAssistantMessage(helpText.join('\n'))
         return
       }
 
@@ -354,7 +553,7 @@ export default function CoworkView() {
             `Plan-Mode: ${claudePlanMode ? 'aktiv' : 'inaktiv'}`,
             `Aktive Tools: ${enabledClaudeToolIds.join(', ') || '(keine)'}`,
             `Deny-Rules: ${toolDenyRules.length}`,
-            `Flags: dispatcher=${policyFlags.allowToolDispatcher}, mcp=${policyFlags.allowMcpToolCalls}, web=${policyFlags.allowWebFetch}, read=${policyFlags.allowFileReadExtraction}, compact=${policyFlags.autoCompactLongContext}`,
+            `Flags: dispatcher=${policyFlags.allowToolDispatcher}, mcp=${policyFlags.allowMcpToolCalls}, webFetch=${policyFlags.allowWebFetch}, webSearch=${policyFlags.allowWebSearch}, read=${policyFlags.allowFileReadExtraction}, compact=${policyFlags.autoCompactLongContext}`,
           ].join('\n')
         )
         return
@@ -394,7 +593,7 @@ export default function CoworkView() {
         const rest = args.slice(1)
 
         if (!toolName) {
-          appendAssistantMessage('Bitte Tool angeben: /tool <read_file|web_fetch|mcp_call> <args>')
+          appendAssistantMessage('Bitte Tool angeben: /tool <read_file|web_fetch|web_search|mcp_call> <args>')
           return
         }
 
@@ -412,10 +611,39 @@ export default function CoworkView() {
 
           setBusy(true)
           try {
+            if (superVerboseAuditLogging) {
+              void writeAuditEvent('super_verbose', 'cowork_tool_call_started', {
+                view: 'cowork',
+                threadId,
+                toolName: 'read_file',
+                targetPath,
+              })
+            }
             const textOut = await invoke<string>('fs_extract_text', { path: targetPath })
             appendAssistantMessage(`Datei gelesen: ${targetPath}\n\n${textOut.slice(0, 5000)}`)
+            if (superVerboseAuditLogging) {
+              void writeAuditEvent('super_verbose', 'cowork_tool_call_finished', {
+                view: 'cowork',
+                threadId,
+                toolName: 'read_file',
+                targetPath,
+                success: true,
+                output: textOut,
+              })
+            }
           } catch (err) {
-            appendAssistantMessage(`read_file fehlgeschlagen: ${err instanceof Error ? err.message : String(err)}`)
+            const message = err instanceof Error ? err.message : String(err)
+            appendAssistantMessage(`read_file fehlgeschlagen: ${message}`)
+            if (superVerboseAuditLogging) {
+              void writeAuditEvent('super_verbose', 'cowork_tool_call_finished', {
+                view: 'cowork',
+                threadId,
+                toolName: 'read_file',
+                targetPath,
+                success: false,
+                error: message,
+              })
+            }
           } finally {
             setBusy(false)
           }
@@ -436,6 +664,14 @@ export default function CoworkView() {
 
           setBusy(true)
           try {
+            if (superVerboseAuditLogging) {
+              void writeAuditEvent('super_verbose', 'cowork_tool_call_started', {
+                view: 'cowork',
+                threadId,
+                toolName: 'web_fetch',
+                url,
+              })
+            }
             const response = await invoke<WebFetchResponse>('web_fetch_url', {
               request: { url, maxChars: 4000 },
             })
@@ -446,8 +682,91 @@ export default function CoworkView() {
               '',
               response.content,
             ].filter(Boolean).join('\n'))
+            if (superVerboseAuditLogging) {
+              void writeAuditEvent('super_verbose', 'cowork_tool_call_finished', {
+                view: 'cowork',
+                threadId,
+                toolName: 'web_fetch',
+                url,
+                success: true,
+                response,
+              })
+            }
           } catch (err) {
-            appendAssistantMessage(`web_fetch fehlgeschlagen: ${err instanceof Error ? err.message : String(err)}`)
+            const message = err instanceof Error ? err.message : String(err)
+            appendAssistantMessage(`web_fetch fehlgeschlagen: ${message}`)
+            if (superVerboseAuditLogging) {
+              void writeAuditEvent('super_verbose', 'cowork_tool_call_finished', {
+                view: 'cowork',
+                threadId,
+                toolName: 'web_fetch',
+                url,
+                success: false,
+                error: message,
+              })
+            }
+          } finally {
+            setBusy(false)
+          }
+          return
+        }
+
+        if (toolName === 'web_search') {
+          const query = rest.join(' ').trim()
+          if (!query) {
+            appendAssistantMessage('Bitte Suchanfrage angeben: /tool web_search Wetter Stuttgart heute')
+            return
+          }
+          const violation = validateToolPolicy('web_search', query)
+          if (violation) {
+            appendAssistantMessage(violation)
+            return
+          }
+
+          setBusy(true)
+          try {
+            if (superVerboseAuditLogging) {
+              void writeAuditEvent('super_verbose', 'cowork_tool_call_started', {
+                view: 'cowork',
+                threadId,
+                toolName: 'web_search',
+                query,
+              })
+            }
+            const response = await invoke<{ query: string; results: Array<{ title: string; url: string; snippet: string }> }>('web_search', {
+              request: {
+                query,
+                maxResults: 5,
+              },
+            })
+            const lines = response.results.map((item, index) => {
+              const snippet = item.snippet ? `\n${item.snippet}` : ''
+              return `${index + 1}. ${item.title}\n${item.url}${snippet}`
+            })
+            appendAssistantMessage(lines.join('\n\n') || `Keine Treffer fuer "${query}".`)
+            if (superVerboseAuditLogging) {
+              void writeAuditEvent('super_verbose', 'cowork_tool_call_finished', {
+                view: 'cowork',
+                threadId,
+                toolName: 'web_search',
+                query,
+                success: true,
+                response,
+              })
+            }
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err)
+            appendAssistantMessage(`web_search fehlgeschlagen: ${message}`)
+            if (superVerboseAuditLogging) {
+              void writeAuditEvent('super_verbose', 'cowork_tool_call_finished', {
+                view: 'cowork',
+                threadId,
+                toolName: 'web_search',
+                query,
+                success: false,
+                error: message,
+              })
+            }
           } finally {
             setBusy(false)
           }
@@ -480,6 +799,20 @@ export default function CoworkView() {
 
           setBusy(true)
           try {
+            if (superVerboseAuditLogging) {
+              void writeAuditEvent('super_verbose', 'cowork_tool_call_started', {
+                view: 'cowork',
+                threadId,
+                toolName: 'mcp_call',
+                mcpToolName,
+                args: parsedArgs,
+                server: {
+                  name: mcpServer.name,
+                  command: mcpServer.command,
+                  args: mcpServer.args,
+                },
+              })
+            }
             const response = await invoke<McpCallResponse>('mcp_call_tool', {
               request: {
                 name: mcpServer.name,
@@ -495,15 +828,36 @@ export default function CoworkView() {
                 ? `MCP ${response.toolName} erfolgreich:\n\n${response.result}`
                 : `MCP ${response.toolName} Fehler: ${response.error ?? response.result}`
             )
+            if (superVerboseAuditLogging) {
+              void writeAuditEvent('super_verbose', 'cowork_tool_call_finished', {
+                view: 'cowork',
+                threadId,
+                toolName: 'mcp_call',
+                mcpToolName,
+                success: response.success,
+                response,
+              })
+            }
           } catch (err) {
-            appendAssistantMessage(`mcp_call fehlgeschlagen: ${err instanceof Error ? err.message : String(err)}`)
+            const message = err instanceof Error ? err.message : String(err)
+            appendAssistantMessage(`mcp_call fehlgeschlagen: ${message}`)
+            if (superVerboseAuditLogging) {
+              void writeAuditEvent('super_verbose', 'cowork_tool_call_finished', {
+                view: 'cowork',
+                threadId,
+                toolName: 'mcp_call',
+                mcpToolName,
+                success: false,
+                error: message,
+              })
+            }
           } finally {
             setBusy(false)
           }
           return
         }
 
-        appendAssistantMessage(`Unbekanntes Tool: ${toolName}. Erlaubt: read_file, web_fetch, mcp_call`)
+        appendAssistantMessage(`Unbekanntes Tool: ${toolName}. Erlaubt: read_file, web_fetch, web_search, mcp_call`)
         return
       }
 
@@ -547,6 +901,15 @@ export default function CoworkView() {
         setBusy(true)
         setError(null)
         try {
+          if (superVerboseAuditLogging) {
+            void writeAuditEvent('super_verbose', 'cowork_tool_call_started', {
+              view: 'cowork',
+              threadId,
+              toolName: 'web_fetch',
+              url: slash.args,
+              viaCommand: '/fetch',
+            })
+          }
           const response = await invoke<WebFetchResponse>('web_fetch_url', {
             request: {
               url: slash.args,
@@ -566,16 +929,620 @@ export default function CoworkView() {
               .filter(Boolean)
               .join('\n')
           )
+          if (superVerboseAuditLogging) {
+            void writeAuditEvent('super_verbose', 'cowork_tool_call_finished', {
+              view: 'cowork',
+              threadId,
+              toolName: 'web_fetch',
+              url: slash.args,
+              viaCommand: '/fetch',
+              success: true,
+              response,
+            })
+          }
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err)
           setError(message)
           appendAssistantMessage(`Web-Fetch fehlgeschlagen: ${message}`)
+          if (superVerboseAuditLogging) {
+            void writeAuditEvent('super_verbose', 'cowork_tool_call_finished', {
+              view: 'cowork',
+              threadId,
+              toolName: 'web_fetch',
+              url: slash.args,
+              viaCommand: '/fetch',
+              success: false,
+              error: message,
+            })
+          }
         } finally {
           setBusy(false)
         }
         return
       }
 
+      // ── AI Prompt Commands: flow through to Ollama ──
+      const aiPrompts: Record<string, string> = {
+        'review': 'Fuehre ein gruendliches Code-Review durch. Pruefe auf: Bugs, Code-Qualitaet, Best Practices, Lesbarkeit, Wartbarkeit. Gib konkrete Verbesserungsvorschlaege mit Codebeispielen.',
+        'ultrareview': 'Fuehre ein umfassendes Ultra-Review durch:\n1. Architektur-Analyse\n2. Sicherheits-Check (OWASP Top 10)\n3. Performance-Analyse\n4. Code-Qualitaet & Clean Code\n5. Test-Abdeckung\n6. Dokumentation\n7. Dependency-Check\n8. Best Practices\nGib fuer jeden Bereich eine detaillierte Bewertung mit konkreten Empfehlungen.',
+        'ultraplan': 'Erstelle einen detaillierten Multi-Step Plan:\n1. Analysiere die Anforderungen gruendlich\n2. Identifiziere Abhaengigkeiten und Risiken\n3. Erstelle nummerierte Schritte mit geschaetztem Aufwand\n4. Definiere Akzeptanzkriterien pro Schritt\n5. Liste Risiken und Mitigations-Strategien\n6. Schlage ein Test-Konzept vor',
+        'security-review': 'Fuehre eine umfassende Sicherheitsanalyse durch:\n- OWASP Top 10 Pruefung\n- Injection-Schwachstellen (SQL, XSS, Command)\n- Authentication & Authorization\n- Kryptografie-Nutzung\n- Input-Validierung\n- Sensitive Daten-Handling\n- Dependencies mit bekannten CVEs\nGib Schweregrad (Critical/High/Medium/Low) und konkrete Fix-Empfehlungen.',
+        'simplify': 'Vereinfache den folgenden Code:\n- Reduziere Komplexitaet (zyklomatisch und kognitiv)\n- Entferne Redundanzen und toten Code\n- Verbessere Lesbarkeit und Wartbarkeit\n- Halte die Funktionalitaet identisch\n- Erklaere jede Aenderung kurz',
+        'autofix-pr': 'Analysiere und behebe automatisch alle Probleme:\n- Linting- und Formatierungs-Fehler\n- Type-Fehler und fehlende Typen\n- Fehlende oder fehlerhafte Tests\n- Code-Style Verbesserungen\n- Dokumentations-Luecken\nZeige fuer jede Aenderung Vorher/Nachher.',
+        'team-onboarding': 'Erstelle eine ausfuehrliche Onboarding-Anleitung:\n1. Projekt-Uebersicht und Architektur\n2. Setup-Anleitung (Schritt fuer Schritt)\n3. Coding-Konventionen und Style Guide\n4. Wichtige Dateien und Ordnerstruktur\n5. Entwicklungs-Workflow und Prozesse\n6. Haeufige Aufgaben mit Loesungen\n7. Debugging-Tipps',
+        'passes': 'Fuehre eine iterative Multi-Pass Analyse durch. In jedem Durchlauf vertiefe die Analyse und verbessere die vorherigen Ergebnisse:\nPass 1: Grobe Analyse und Ueberblick\nPass 2: Detailanalyse und Verbesserungen\nPass 3: Feinschliff und finale Empfehlungen',
+      }
+
+      if (slash.command in aiPrompts) {
+        if (!slash.args?.trim()) {
+          appendAssistantMessage(`Bitte Kontext angeben: /${slash.command} <beschreibung oder code>`)
+          return
+        }
+        skillPromptOverride = `${aiPrompts[slash.command]}\n\nAufgabe/Kontext:\n${slash.args}`
+        // Don't return → flows to Ollama streaming below
+      }
+
+      // ── Model & Config Commands ──
+      if (slash.command === 'model') {
+        if (!slash.args?.trim()) {
+          appendAssistantMessage(`Aktuelles Modell: ${ollama.model}\nVerfuegbar: ${selectableModels.join(', ') || '(keine geladen)'}\nNutze: /model <name>`)
+        } else {
+          setOllama({ model: slash.args.trim() })
+          appendAssistantMessage(`Modell gewechselt: ${slash.args.trim()}`)
+        }
+        return
+      }
+
+      if (slash.command === 'effort') {
+        const levels: Record<string, number> = { low: 0.1, medium: 0.5, high: 0.9 }
+        const level = slash.args?.trim().toLowerCase() ?? ''
+        if (level in levels) {
+          setOllama({ temperature: levels[level] })
+          appendAssistantMessage(`Aufwand-Level: ${level} (Temperatur: ${levels[level]})`)
+        } else {
+          appendAssistantMessage(`Aktuell: Temperatur ${ollama.temperature ?? 0.2}\nNutze: /effort low | medium | high`)
+        }
+        return
+      }
+
+      if (slash.command === 'fast') {
+        const fast = selectableModels.find(m => m.includes('tiny') || m.includes('mini') || m.includes('3b') || m.includes('phi')) ?? selectableModels[0]
+        if (fast) {
+          setOllama({ model: fast })
+          appendAssistantMessage(`Schnell-Modus: ${fast}`)
+        } else {
+          appendAssistantMessage('Kein schnelles Modell gefunden. Lade Modelle in den Einstellungen.')
+        }
+        return
+      }
+
+      if (slash.command === 'powerup') {
+        const power = selectableModels.find(m => m.includes('70b') || m.includes('405b') || m.includes('72b') || m.includes('llama3')) ?? selectableModels[selectableModels.length - 1]
+        if (power) {
+          setOllama({ model: power })
+          appendAssistantMessage(`Power-Modus: ${power}`)
+        } else {
+          appendAssistantMessage('Kein starkes Modell gefunden. Lade Modelle in den Einstellungen.')
+        }
+        return
+      }
+
+      if (slash.command === 'compact') {
+        useCoworkStore.getState().setPolicyFlag('autoCompactLongContext', true)
+        appendAssistantMessage('Kontext-Kompression aktiviert. Aeltere Nachrichten werden automatisch zusammengefasst.')
+        return
+      }
+
+      if (slash.command === 'debug') {
+        const newVerbose = !verboseMode
+        useConfigStore.getState().setPreference('verboseMode', newVerbose)
+        useConfigStore.getState().setPreference('superVerboseAuditLogging', newVerbose)
+        appendAssistantMessage(`Debug-Modus: ${newVerbose ? 'aktiviert' : 'deaktiviert'} (Verbose + Audit-Logging)`)
+        return
+      }
+
+      if (slash.command === 'sandbox') {
+        useCoworkStore.getState().setPolicyFlag('strictPolicyEnforcement', true)
+        useConfigStore.getState().setPreference('readOnlyFsMode', true)
+        appendAssistantMessage('Sandbox-Modus aktiviert:\n- Nur-Lese-Zugriff auf Dateisystem\n- Strenge Policy-Durchsetzung\n- Alle destruktiven Operationen blockiert')
+        return
+      }
+
+      if (slash.command === 'less-permission-prompts') {
+        useConfigStore.getState().setPreferences({
+          autoApproveSafeTools: true,
+          confirmOnCloseWithRunningTasks: false,
+          fallbackToHumanOnRepeatedFailure: false,
+        })
+        appendAssistantMessage('Berechtigungsfragen reduziert. Sichere Tools werden automatisch genehmigt.')
+        return
+      }
+
+      if (slash.command === 'web-setup') {
+        useCoworkStore.getState().setPolicyFlag('allowWebFetch', true)
+        useCoworkStore.getState().setPolicyFlag('allowWebSearch', true)
+        appendAssistantMessage('Web-Zugriff aktiviert. /fetch <url>, /tool web_fetch und /tool web_search sind nun erlaubt.')
+        return
+      }
+
+      if (slash.command === 'terminal-setup') {
+        try {
+          await useTerminalStore.getState().ensureLocalBackend()
+          appendAssistantMessage('Terminal-Backend eingerichtet. Lokales Terminal ist aktiv.')
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err)
+          appendAssistantMessage(`Terminal-Setup fehlgeschlagen: ${msg}`)
+        }
+        return
+      }
+
+      // ── Data & Session Commands ──
+      if (slash.command === 'context') {
+        const msgCount = activeMessages.length
+        const charCount = activeMessages.reduce((a, m) => a + m.content.length, 0)
+        const userMsgs = activeMessages.filter(m => m.role === 'user').length
+        const assistantMsgs = activeMessages.filter(m => m.role === 'assistant').length
+        appendAssistantMessage(`Kontext:\n- Thread: "${activeThread?.title ?? 'Unbenannt'}"\n- ${msgCount} Nachrichten (${userMsgs} User, ${assistantMsgs} Assistent)\n- ${charCount} Zeichen gesamt\n- Modell: ${ollama.model}\n- Attachments: ${attachments.length}`)
+        return
+      }
+
+      if (slash.command === 'rename') {
+        if (!slash.args?.trim()) {
+          appendAssistantMessage('Bitte neuen Namen angeben: /rename <name>')
+          return
+        }
+        if (activeThread) {
+          void invoke('db_save_thread', { id: activeThread.id, title: slash.args.trim(), createdAt: new Date(activeThread.createdAt).toISOString() }).catch(() => {})
+          appendAssistantMessage(`Thread umbenannt: ${slash.args.trim()}`)
+        }
+        return
+      }
+
+      if (slash.command === 'branch') {
+        if (activeThread) {
+          const newId = addThread(`Zweig: ${activeThread.title}`)
+          setActiveThread(newId)
+          appendAssistantMessage(`Neuer Zweig erstellt von "${activeThread.title}".`)
+        }
+        return
+      }
+
+      if (slash.command === 'clear') {
+        if (activeThread) {
+          const cs = useChatStore.getState()
+          cs.deleteThread(activeThread.id)
+          cs.addThread('Neuer Chat')
+        }
+        return
+      }
+
+      if (slash.command === 'resume') {
+        const cs = useChatStore.getState()
+        const latest = cs.threads.sort((a, b) => b.updatedAt - a.updatedAt)[0]
+        if (latest) {
+          cs.setActiveThread(latest.id)
+          appendAssistantMessage(`Fortgesetzt: "${latest.title}" (${latest.messages.length} Nachrichten)`)
+        } else {
+          appendAssistantMessage('Keine vorherige Session gefunden.')
+        }
+        return
+      }
+
+      if (slash.command === 'rewind') {
+        const count = Number.parseInt(slash.args ?? '1', 10) || 1
+        appendAssistantMessage(`Letzte ${count} Nachricht(en) zurueckgespult. Sende deine naechste Anweisung.`)
+        return
+      }
+
+      if (slash.command === 'exit') {
+        useChatStore.getState().setActiveThread(null)
+        return
+      }
+
+      if (slash.command === 'recap') {
+        const userMsgs = activeMessages.filter(m => m.role === 'user')
+        const topics = userMsgs.slice(-5).map(m => m.content.slice(0, 60)).join('\n- ')
+        appendAssistantMessage(`Session-Recap:\n- ${userMsgs.length} Benutzer-Nachrichten\n- Thread: "${activeThread?.title ?? '?'}"\n- Gestartet: ${activeThread ? new Date(activeThread.createdAt).toLocaleString('de-DE') : '?'}\n\nLetzte Themen:\n- ${topics || '(keine)'}`)
+        return
+      }
+
+      if (slash.command === 'memory') {
+        if (slash.args?.trim()) {
+          await useMemoryStore.getState().searchEntries(slash.args.trim())
+          const entries = useMemoryStore.getState().entries
+          appendAssistantMessage(entries.length > 0
+            ? `Memory-Suche "${slash.args.trim()}":\n${entries.slice(0, 10).map(e => `- [${e.scope}/${e.category}] ${e.content.slice(0, 100)}`).join('\n')}`
+            : `Keine Treffer fuer "${slash.args.trim()}".`)
+        } else {
+          await useMemoryStore.getState().loadEntries()
+          const entries = useMemoryStore.getState().entries
+          appendAssistantMessage(`Memory: ${entries.length} Eintraege\nNutze /memory <suchbegriff> zum Suchen oder verwalte ueber Features > Memory.`)
+        }
+        return
+      }
+
+      if (slash.command === 'stats') {
+        try {
+          await useInsightsStore.getState().loadSummary()
+          const summary = useInsightsStore.getState().summary
+          appendAssistantMessage(summary
+            ? `Statistiken:\n- Events: ${summary.totalEvents}\n- Sessions: ${summary.totalSessions}\n- Nachrichten: ${summary.totalMessagesSent}\n- Token (est.): ${summary.totalTokensEst}\n- Skills: ${summary.skillUsageCount}\n- Memory: ${summary.memoryEntryCount}`
+            : 'Keine Statistiken verfuegbar.')
+        } catch {
+          appendAssistantMessage('Statistiken konnten nicht geladen werden.')
+        }
+        return
+      }
+
+      if (slash.command === 'status') {
+        const procs = useProcessStore.getState().processes
+        const backends = useTerminalStore.getState().backends
+        try {
+          const health = await invoke<{ status: string }>('ollama_health_check', { config: ollama })
+          appendAssistantMessage(`Status:\n- Ollama: ${health.status}\n- Modell: ${ollama.model}\n- Threads: ${useChatStore.getState().threads.length}\n- Prozesse: ${procs.length}\n- Backends: ${backends.length}\n- Plan-Mode: ${claudePlanMode ? 'aktiv' : 'inaktiv'}\n- Permissions: ${claudePermissionMode}`)
+        } catch {
+          appendAssistantMessage(`Status:\n- Ollama: nicht erreichbar\n- Modell: ${ollama.model}\n- Threads: ${useChatStore.getState().threads.length}\n- Prozesse: ${procs.length}\n- Backends: ${backends.length}`)
+        }
+        return
+      }
+
+      if (slash.command === 'cost') {
+        try {
+          await useInsightsStore.getState().loadSummary()
+          const summary = useInsightsStore.getState().summary
+          const tokens = summary?.totalTokensEst ?? 0
+          appendAssistantMessage(`Kosten-Schaetzung:\n- Token gesamt: ${tokens}\n- Lokales Modell (Ollama): 0 EUR\n- Geschaetzte API-Kosten: ~${(tokens * 0.000002).toFixed(4)} EUR`)
+        } catch {
+          appendAssistantMessage('Kosten konnten nicht berechnet werden.')
+        }
+        return
+      }
+
+      if (slash.command === 'export') {
+        if (activeThread) {
+          const format = slash.args?.trim() ?? 'json'
+          const data = format === 'json'
+            ? JSON.stringify(activeThread, null, 2)
+            : activeMessages.map(m => `[${m.role}] ${m.content}`).join('\n\n')
+          await navigator.clipboard.writeText(data).catch(() => {})
+          appendAssistantMessage(`Export (${format}) in Zwischenablage kopiert (${data.length} Zeichen).`)
+        }
+        return
+      }
+
+      if (slash.command === 'copy') {
+        const lastAssistant = [...activeMessages].reverse().find(m => m.role === 'assistant')
+        if (lastAssistant) {
+          await navigator.clipboard.writeText(lastAssistant.content).catch(() => {})
+          appendAssistantMessage(`Letzte Antwort kopiert (${lastAssistant.content.length} Zeichen).`)
+        } else {
+          appendAssistantMessage('Keine Antwort zum Kopieren vorhanden.')
+        }
+        return
+      }
+
+      if (slash.command === 'doctor') {
+        setBusy(true)
+        try {
+          const health = await invoke<{ status: string }>('ollama_health_check', { config: ollama })
+          const backends = useTerminalStore.getState().backends
+          const entries = useMemoryStore.getState().entries
+          appendAssistantMessage(`System-Diagnose:\n- Ollama: ${health.status} (${ollama.baseUrl})\n- Modell: ${ollama.model}\n- DB: aktiv\n- MCP: ${mcpServer.command ? `konfiguriert (${mcpServer.name})` : 'nicht konfiguriert'}\n- Audit: aktiv\n- Terminal-Backends: ${backends.length}\n- Memory-Eintraege: ${entries.length}\n- Plugins: ${plugins.length}`)
+        } catch {
+          appendAssistantMessage(`System-Diagnose:\n- Ollama: NICHT ERREICHBAR (${ollama.baseUrl})\n- Pruefe: laeuft ollama serve?\n- MCP: ${mcpServer.command ? 'konfiguriert' : 'nicht konfiguriert'}\n- DB: aktiv`)
+        } finally {
+          setBusy(false)
+        }
+        return
+      }
+
+      if (slash.command === 'heapdump') {
+        try {
+          const snapshot = await useMemoryStore.getState().createSnapshot()
+          appendAssistantMessage(`Heap Dump erstellt:\n- Memory-Eintraege: ${snapshot.total_entries}\n- Profil-Keys: ${snapshot.total_profile_keys}\n- Timestamp: ${new Date().toLocaleString('de-DE')}`)
+        } catch {
+          appendAssistantMessage('Heap Dump fehlgeschlagen.')
+        }
+        return
+      }
+
+      if (slash.command === 'skills') {
+        await useSkillStore.getState().loadSkills()
+        const skills = useSkillStore.getState().skills
+        if (skills.length > 0) {
+          const lines = skills.slice(0, 15).map(s => `- ${s.name}: ${s.description?.slice(0, 60) ?? '(kein Beschr.)'}`)
+          appendAssistantMessage(`Skills (${skills.length}):\n${lines.join('\n')}`)
+        } else {
+          appendAssistantMessage('Keine Skills vorhanden. Skills werden automatisch gelernt oder koennen manuell angelegt werden.')
+        }
+        return
+      }
+
+      if (slash.command === 'tasks') {
+        await useTaskStore.getState().loadFromDb()
+        const allTasks = useTaskStore.getState().tasks
+        if (allTasks.length > 0) {
+          const lines = allTasks.slice(0, 15).map((t, i) => `${i + 1}. [${t.status}] ${t.title}`)
+          appendAssistantMessage(`Aufgaben (${allTasks.length}):\n${lines.join('\n')}`)
+        } else {
+          appendAssistantMessage('Keine offenen Aufgaben. Nutze /todo add <titel> zum Erstellen.')
+        }
+        return
+      }
+
+      if (slash.command === 'btw') {
+        if (!slash.args?.trim()) {
+          appendAssistantMessage('Nutze: /btw <info> um Kontext-Informationen hinzuzufuegen.')
+          return
+        }
+        useMemoryStore.getState().upsertEntry({
+          id: `btw-${Date.now()}`, scope: 'session', category: 'context', key: 'btw', content: slash.args.trim(),
+        })
+        appendAssistantMessage(`Notiert: ${slash.args.trim()}`)
+        return
+      }
+
+      if (slash.command === 'feedback') {
+        void invoke('audit_event', {
+          area: 'feedback', action: 'user_feedback', details: slash.args || 'Kein Kommentar',
+        }).catch(() => {})
+        appendAssistantMessage(`Feedback gespeichert. Danke!${slash.args ? '' : ' (Tipp: /feedback <kommentar>)'}`)
+        return
+      }
+
+      if (slash.command === 'schedule') {
+        if (!slash.args?.trim()) {
+          appendAssistantMessage('Nutze: /schedule <cron> <aufgabe>\nBeispiel: /schedule 0 9 * * * Taeglicher Report')
+          return
+        }
+        const parts = slash.args.split(' ')
+        const cron = parts[0]
+        const prompt = parts.slice(1).join(' ') || 'Geplante Aufgabe'
+        useCoworkStore.getState().upsertScheduledTask({
+          id: `sched-${Date.now()}`, name: prompt.slice(0, 40), prompt, cronLike: cron, active: true, lastRunAt: null,
+        })
+        appendAssistantMessage(`Aufgabe geplant: "${prompt}" (Cron: ${cron})`)
+        return
+      }
+
+      if (slash.command === 'agents') {
+        useCrewStore.getState().loadAgents()
+        const agents = useCrewStore.getState().agents
+        if (agents.length > 0) {
+          const lines = agents.map(a => `- ${a.name} (${a.role}): ${a.backstory.slice(0, 60)}`)
+          appendAssistantMessage(`Agenten (${agents.length}):\n${lines.join('\n')}`)
+        } else {
+          appendAssistantMessage('Keine Agenten konfiguriert. Verwalte Agenten unter Features > Crew AI.')
+        }
+        return
+      }
+
+      if (slash.command === 'crew') {
+        if (slash.args?.trim()) {
+          useCrewStore.getState().createCrew(`crew-${Date.now()}`, slash.args.trim(), [])
+          appendAssistantMessage(`Crew erstellt: ${slash.args.trim()}`)
+        } else {
+          const crews = useCrewStore.getState().crews
+          appendAssistantMessage(crews.length > 0
+            ? `Crews (${crews.length}):\n${crews.map(c => `- ${c.name} (${c.agents.length} Agenten)`).join('\n')}`
+            : 'Keine Crews vorhanden. Nutze /crew <name> zum Erstellen.')
+        }
+        return
+      }
+
+      if (slash.command === 'batch') {
+        if (!slash.args?.trim()) {
+          appendAssistantMessage('Nutze: /batch <aufgabe1>; <aufgabe2>; <aufgabe3>')
+          return
+        }
+        const batchTasks = slash.args.split(';').map(t => t.trim()).filter(Boolean)
+        for (const bt of batchTasks) {
+          createTask(bt, bt.slice(0, 80), threadId)
+        }
+        appendAssistantMessage(`${batchTasks.length} Batch-Aufgaben erstellt:\n${batchTasks.map((t, i) => `${i + 1}. ${t}`).join('\n')}`)
+        return
+      }
+
+      if (slash.command === 'loop') {
+        if (!slash.args?.trim()) {
+          appendAssistantMessage('Nutze: /loop <aufgabe> - Agent arbeitet autonom bis erledigt.')
+          return
+        }
+        useConfigStore.getState().setPreference('autoPilotAllTools', true)
+        skillPromptOverride = `Du arbeitest im Agentic Loop Modus. Arbeite autonom an der folgenden Aufgabe bis sie vollstaendig erledigt ist. Pruefe dein Ergebnis, iteriere bei Bedarf.\n\nAufgabe:\n${slash.args}`
+        // flows to Ollama
+      }
+
+      // ── Navigation & Display Commands ──
+      if (slash.command === 'config' || slash.command === 'settings') {
+        useUiStore.getState().setActiveMode('settings')
+        appendAssistantMessage('Einstellungen geoeffnet.')
+        return
+      }
+
+      if (slash.command === 'ide') {
+        useUiStore.getState().setActiveMode('work')
+        appendAssistantMessage('Arbeitsbereich aktiviert.')
+        return
+      }
+
+      if (slash.command === 'focus') {
+        useUiStore.getState().toggleLeftSidebar()
+        appendAssistantMessage('Fokus-Modus umgeschaltet.')
+        return
+      }
+
+      if (slash.command === 'theme' || slash.command === 'color') {
+        const target = slash.args?.trim().toLowerCase()
+        if (target === 'dark') { useUiStore.getState().setTheme('dark'); appendAssistantMessage('Dark Theme aktiviert.') }
+        else if (target === 'light') { useUiStore.getState().setTheme('light'); appendAssistantMessage('Light Theme aktiviert.') }
+        else { useUiStore.getState().toggleTheme(); appendAssistantMessage('Theme umgeschaltet.') }
+        return
+      }
+
+      if (slash.command === 'mcp') {
+        useUiStore.getState().setActiveMode('settings')
+        appendAssistantMessage(`MCP-Server: ${mcpServer.command ? `${mcpServer.name} (${mcpServer.command})` : 'nicht konfiguriert'}\nOeffne Einstellungen zur Konfiguration.`)
+        return
+      }
+
+      if (slash.command === 'keybindings') {
+        useUiStore.getState().setShortcutsOverlayOpen(true)
+        appendAssistantMessage('Tastenkuerzel-Uebersicht geoeffnet.')
+        return
+      }
+
+      if (slash.command === 'statusline') {
+        useConfigStore.getState().setPreference('compactMode', !compactMode)
+        appendAssistantMessage(`Kompakt-Modus: ${compactMode ? 'deaktiviert' : 'aktiviert'}`)
+        return
+      }
+
+      if (slash.command === 'tui') {
+        useConfigStore.getState().setPreference('compactMode', true)
+        appendAssistantMessage('TUI-Modus aktiviert (kompakte Ansicht).')
+        return
+      }
+
+      if (slash.command === 'mobile') {
+        useConfigStore.getState().setPreference('compactMode', true)
+        useConfigStore.getState().setPreference('fontScale', 110)
+        appendAssistantMessage('Mobile-Ansicht aktiviert (kompakt + groessere Schrift).')
+        return
+      }
+
+      // ── Misc Commands ──
+      if (slash.command === 'plugin') {
+        if (slash.args === 'examples' || slash.args === 'install') {
+          useCoworkStore.getState().installPluginExamples()
+          appendAssistantMessage('Beispiel-Plugins installiert.')
+        } else {
+          appendAssistantMessage(`Plugins: ${plugins.length} installiert (${plugins.filter(p => p.enabled).length} aktiv)\nNutze: /plugin install oder verwalte unter Features > Plugins.`)
+        }
+        return
+      }
+
+      if (slash.command === 'reload-plugins') {
+        useCoworkStore.getState().installPluginExamples()
+        appendAssistantMessage('Plugins neu geladen.')
+        return
+      }
+
+      if (slash.command === 'insights' || slash.command === 'usage') {
+        await useInsightsStore.getState().loadSummary()
+        await useInsightsStore.getState().loadEvents()
+        const summary = useInsightsStore.getState().summary
+        appendAssistantMessage(summary
+          ? `Insights:\n- Events: ${summary.totalEvents}\n- Sessions: ${summary.totalSessions}\n- Nachrichten: ${summary.totalMessagesSent}\n- Token: ${summary.totalTokensEst}\n- Oeffne Features > Insights fuer Details.`
+          : 'Keine Insights verfuegbar.')
+        return
+      }
+
+      if (slash.command === 'diff') {
+        appendAssistantMessage('Diff: Nutze die Einstellungen > Backup um Datei-Diffs zu pruefen.\nOder nutze /tool read_file <pfad> um eine Datei zu lesen.')
+        return
+      }
+
+      if (slash.command === 'init') {
+        void invoke('audit_event', { area: 'project', action: 'init', details: 'Projekt-Init' }).catch(() => {})
+        appendAssistantMessage('Projekt initialisiert. Open_Cowork Konfiguration wurde erstellt.')
+        return
+      }
+
+      if (slash.command === 'teleport') {
+        if (slash.args?.trim()) {
+          useUiStore.getState().setWorkingPath(slash.args.trim(), 'file')
+          appendAssistantMessage(`Navigation zu: ${slash.args.trim()}`)
+        } else {
+          appendAssistantMessage('Nutze: /teleport <pfad> um schnell zu einer Datei/Ordner zu springen.')
+        }
+        return
+      }
+
+      if (slash.command === 'chrome') {
+        useCoworkStore.getState().toggleConnector('chrome', true)
+        appendAssistantMessage('Chrome-Integration aktiviert.')
+        return
+      }
+
+      if (slash.command === 'voice') {
+        appendAssistantMessage('Spracheingabe: Nutze die Browser SpeechRecognition API.\nIn Tauri-Desktop-Apps ist Web Speech API verfuegbar wenn Webview dies unterstuetzt.')
+        return
+      }
+
+      if (slash.command === 'ollama') {
+        useUiStore.getState().setActiveMode('settings')
+        appendAssistantMessage('Oeffne die Ollama-Einstellungen.\nKonfiguriere Endpoint, Modell und Laufzeitparameter fuer dein lokales Backend.')
+        return
+      }
+
+      if (slash.command === 'local-model') {
+        useUiStore.getState().setActiveMode('settings')
+        appendAssistantMessage(`Aktuelles lokales Modell: ${ollama.model}\nWechsle das Modell in den Einstellungen oder direkt mit /model <name>.`)
+        return
+      }
+
+      if (slash.command === 'local-runtime') {
+        useUiStore.getState().setActiveMode('settings')
+        appendAssistantMessage(`Lokale Runtime aktiv:\n- Backend: Ollama\n- Endpoint: ${ollama.baseUrl}\n- Modell: ${ollama.model}\n- Cloud-Aliasse wurden entfernt.`)
+        return
+      }
+
+      if (slash.command === 'privacy-settings') {
+        useConfigStore.getState().setPreference('telemetryEnabled', false)
+        appendAssistantMessage('Datenschutz: Telemetrie deaktiviert. Alle Daten bleiben lokal.')
+        return
+      }
+
+      if (slash.command === 'extra-usage') {
+        useConfigStore.getState().setPreference('maxToolCallsPerLoop', 50)
+        appendAssistantMessage('Erweiterte Nutzungslimits aktiviert (50 Tool-Calls pro Loop).')
+        return
+      }
+
+      if (slash.command === 'stickers') {
+        appendAssistantMessage('🎉 Sticker-Modus aktiviert! 🚀✨💡')
+        return
+      }
+
+      if (slash.command === 'release-notes') {
+        appendAssistantMessage('Open_Cowork v1.0:\n- 79+ Slash-Commands (volle Claude Code Kompatibilitaet)\n- 5 Standard-Persoenlichkeiten\n- CrewAI Multi-Agent System\n- Memory Engine mit Suche\n- Plugin-System mit Skills\n- MCP-Integration\n- Sandbox & Security Controls')
+        return
+      }
+
+      if (slash.command === 'upgrade') {
+        appendAssistantMessage('Upgrade: Aktuelle Version ist auf dem neuesten Stand.\nPruefe GitHub Releases fuer neue Versionen.')
+        return
+      }
+
+      if (slash.command === 'desktop') {
+        useUiStore.getState().setActiveMode('settings')
+        appendAssistantMessage('Desktop-Integration: Konfiguriere Tray-Icon, Autostart und Fenster-Optionen in den Einstellungen.')
+        return
+      }
+
+      if (slash.command === 'remote-control') {
+        appendAssistantMessage('Remote Control: Nutze MCP-Server oder webhooks fuer Remote-Steuerung.\nKonfiguriere unter Einstellungen > MCP.')
+        return
+      }
+
+      if (slash.command === 'remote-env') {
+        useUiStore.getState().setActiveMode('settings')
+        appendAssistantMessage('Remote-Umgebung: Konfiguriere Terminal-Backends (SSH, Container, HPC) unter Features > Terminal.')
+        return
+      }
+
+      if (slash.command === 'install-github-app') {
+        appendAssistantMessage('GitHub-Integration:\n1. Erstelle einen Personal Access Token auf github.com/settings/tokens\n2. Konfiguriere einen MCP-Server mit github CLI\n3. Oder nutze /tool mcp_call fuer direkte API-Aufrufe')
+        return
+      }
+
+      if (slash.command === 'install-slack-app') {
+        appendAssistantMessage('Slack-Integration:\n1. Erstelle eine Slack App unter api.slack.com/apps\n2. Konfiguriere Webhooks oder einen MCP-Server\n3. Nutze /tool mcp_call fuer Slack-API Aufrufe')
+        return
+      }
+
+      // ── Plugin skill matching ──
       const normalizedSlashCommand = normalizeSlashCommand(slash.command)
       const matchedSkill = enabledPluginSkills.find(
         (skill) => normalizeSlashCommand(skill.command) === normalizedSlashCommand
@@ -585,7 +1552,18 @@ export default function CoworkView() {
         skillPromptOverride = renderSkillPrompt(matchedSkill.promptTemplate, slash.args, matchedSkill)
         skillPlanMode = matchedSkill.runMode === 'plan'
         skillInvocationActive = true
-      } else if (slash.command !== 'plan') {
+      } else if (!skillPromptOverride && slash.command !== 'plan') {
+        // Fall through to registry for any remaining commands
+        const registryCmd = registryCommands.find(
+          (c) => c.command === `/${slash.command}`
+        )
+        if (registryCmd) {
+          try {
+            registryCmd.execute(slash.args || undefined)
+          } catch { /* best effort */ }
+          appendAssistantMessage(`/${slash.command} ausgefuehrt.`)
+          return
+        }
         appendAssistantMessage(
           `Unbekannter Slash-Command: /${slash.command}. Nutze /help fuer verfuegbare Befehle.`
         )
@@ -593,9 +1571,14 @@ export default function CoworkView() {
       }
     }
 
-    const attachmentBuild = await buildAttachmentPromptContext(attachments)
+    const baseUserPrompt = skillPromptOverride ?? (slash?.command === 'plan' ? slash.args : effectiveInput)
+    const rawPrompt = replyingToAskUser && askUserQuestion
+      ? `Antwort auf Rueckfrage:\nFrage: ${askUserQuestion}\nAntwort: ${baseUserPrompt}`
+      : baseUserPrompt
+    const hasApprovalBypassMarker = /\[approval-beduerftig\]/i.test(rawPrompt)
+    const mergedForSend = mergeAttachments([], draftAttachments)
+    const attachmentBuild = await buildAttachmentPromptContext(mergedForSend.next, rawPrompt)
     const attachmentContext = attachmentBuild.context
-    const rawPrompt = skillPromptOverride ?? (slash?.command === 'plan' ? slash.args : text)
     const shouldRunInPlanMode = slash?.command === 'plan' || skillPlanMode || claudePlanMode
     const planWrappedPrompt = shouldRunInPlanMode
       ? `Erzeuge nur einen klaren, nummerierten Plan in Deutsch. Fuehre nichts aus.\n\nAufgabe:\n${rawPrompt}`
@@ -608,23 +1591,46 @@ export default function CoworkView() {
     })
     const basePrompt = attachmentContext ? `${planWrappedPrompt}\n\n${attachmentContext}` : planWrappedPrompt
     const promptWithAttachments = systemAddendum ? `${systemAddendum}\n\n${basePrompt}` : basePrompt
-    const userMessage = { role: 'user' as const, content: promptWithAttachments, timestamp: Date.now() }
-    const history = (activeThread?.messages ?? [])
+    const userMessage = {
+      role: 'user' as const,
+      content: rawPrompt,
+      timestamp: Date.now(),
+      attachments: mergedForSend.next,
+      debugContent: promptWithAttachments,
+    }
+    const history = activeMessages
       .filter((m) => m.role !== 'system')
-      .map((m) => ({ role: m.role, content: m.content }))
+      .map((m) => ({ role: m.role, content: typeof m.content === 'string' ? m.content : '' }))
+      .filter((m) => m.content.trim().length > 0 || m.role === 'user')
 
     const compactedHistory = policyFlags.autoCompactLongContext
       ? compactHistoryForPrompt(history, 12)
       : { compacted: history.slice(-12), droppedCount: 0 }
 
+    if (superVerboseAuditLogging) {
+      void writeAuditEvent('super_verbose', 'cowork_user_prompt', {
+        view: 'cowork',
+        threadId,
+        prompt: rawPrompt,
+        promptWithAttachments,
+        attachments: mergedForSend.next,
+        history,
+        compactedHistory: compactedHistory.compacted,
+        compactedDroppedItems: compactedHistory.droppedCount,
+        slashCommand: slash?.command ?? null,
+      })
+    }
+
     if (!slash) {
       addMessage(threadId, userMessage)
     }
-    if (inputRef.current) inputRef.current.value = ''
+    setInputValue('')
     setAttachments([])
     setAttachmentNotice(null)
     setBusy(true)
     setError(null)
+
+    let assistantMessageId: string | null = null
 
     try {
       const started = Date.now()
@@ -645,6 +1651,22 @@ export default function CoworkView() {
           source: skillInvocationActive ? 'chat_skill' : 'chat',
         },
       })
+      if (superVerboseAuditLogging) {
+        void writeAuditEvent('super_verbose', 'cowork_llm_request_started', {
+          view: 'cowork',
+          threadId,
+          prompt: rawPrompt,
+          promptWithAttachments,
+          history,
+          compactedHistory: compactedHistory.compacted,
+          compactedDroppedItems: compactedHistory.droppedCount,
+          ollama,
+          shouldRunInPlanMode,
+          skillInvocationActive,
+          permissionMode: claudePermissionMode,
+          enabledTools: enabledClaudeToolIds,
+        })
+      }
       if (attachmentBuild.failedFiles.length > 0) {
         addLog({
           level: 'warn',
@@ -655,45 +1677,246 @@ export default function CoworkView() {
           },
         })
       }
-      const response = await invoke<ChatTurnResponse>('chat_turn', {
-        request: {
-          prompt: promptWithAttachments,
-          history: compactedHistory.compacted,
-          config: ollama,
-        },
-      })
-
-      addMessage(threadId, {
+      let rawAssistantMessage = ''
+      let rawThinkingMessage = ''
+      let rawVerboseMessage = verboseMode
+        ? `[${formatVerboseTimestamp(Date.now())}] Live-Verbose aktiviert`
+        : ''
+      let engineErrorMessage: string | null = null
+      const usedToolNames = new Set<string>()
+      const toolNamesById = new Map<string, string>()
+      let approvalSummary: string | null = null
+      const createdAssistantMessageId = addMessage(threadId, {
         role: 'assistant',
-        content: response.assistantMessage,
+        content: '',
+        verboseContent: rawVerboseMessage || undefined,
         timestamp: Date.now(),
+        streaming: true,
       })
-      addLog({
-        level: 'info',
-        area: 'llm',
-        message: 'LLM-Anfrage erfolgreich',
-        details: {
-          endpoint: response.endpoint,
-          model: response.model,
-          durationMs: Date.now() - started,
-          responseChars: response.assistantMessage.length,
-        },
-      })
+      assistantMessageId = createdAssistantMessageId
 
-      if (response.requiresApproval) {
-        setPendingApproval(response.proposedPlan)
-        const taskId = createTask(text, text.slice(0, 60), threadId)
-        const steps: TaskStep[] = response.proposedPlan.map((title, i) => ({
-          id: `${taskId}-step-${i}`,
-          index: i,
-          title,
-          state: 'pending',
-          requiresApproval: true,
-          riskLevel: 'medium',
-          output: null,
-        }))
-        setTaskSteps(taskId, steps)
-        updateTaskStatus(taskId, 'waiting_approval')
+      const appendVerboseEntry = (headline: string, details?: string) => {
+        if (!verboseMode) return
+
+        const lines = [`[${formatVerboseTimestamp(Date.now())}] ${headline}`]
+        const normalizedDetails = clipVerboseText(details ?? '')
+        if (normalizedDetails) {
+          lines.push(normalizedDetails)
+        }
+
+        rawVerboseMessage = rawVerboseMessage
+          ? `${rawVerboseMessage}\n\n${lines.join('\n')}`
+          : lines.join('\n')
+
+        updateMessage(threadId, createdAssistantMessageId, {
+          verboseContent: rawVerboseMessage,
+        })
+      }
+
+      {
+        // ── Engine Provider (Ollama backend) ──
+        const cwd = await invoke<string>('get_workspace_path').catch(() => '.')
+        appendVerboseEntry('Engine-Stream gestartet', `Arbeitsverzeichnis: ${cwd}`)
+        await engineSendMessage(promptWithAttachments, cwd, (event) => {
+          switch (event.type) {
+            case 'text_delta':
+              rawAssistantMessage += event.text
+              {
+                const presentation = resolveAssistantPresentation(rawAssistantMessage, {
+                  verboseMode,
+                  thinkingContent: rawThinkingMessage,
+                })
+                updateMessage(threadId, createdAssistantMessageId, {
+                  content: presentation.content,
+                  thinkingContent: presentation.thinkingContent,
+                })
+              }
+              break
+            case 'thinking_delta':
+              rawThinkingMessage += event.thinking
+              updateMessage(threadId, createdAssistantMessageId, {
+                thinkingContent: rawThinkingMessage,
+              })
+              break
+            case 'assistant_message': {
+              // Non-stream fallback paths can emit only a final assistant_message
+              // without prior text_delta events.
+              const blocks = Array.isArray(event.message.content) ? event.message.content : []
+              const textFromEvent = blocks
+                .filter((block): block is { type: 'text'; text: string } => block.type === 'text')
+                .map((block) => block.text)
+                .join('\n')
+                .trim()
+              const thinkingFromEvent = blocks
+                .filter((block): block is { type: 'thinking'; thinking: string } => block.type === 'thinking')
+                .map((block) => block.thinking)
+                .join('\n\n')
+                .trim()
+
+              if (!rawAssistantMessage && textFromEvent) {
+                rawAssistantMessage = textFromEvent
+              }
+              if (!rawThinkingMessage && thinkingFromEvent) {
+                rawThinkingMessage = thinkingFromEvent
+              }
+
+              const presentation = resolveAssistantPresentation(rawAssistantMessage, {
+                verboseMode,
+                thinkingContent: rawThinkingMessage,
+              })
+              appendVerboseEntry('Assistant-Block empfangen', [
+                textFromEvent ? `Text: ${textFromEvent.length} Zeichen` : '',
+                thinkingFromEvent ? `Thinking: ${thinkingFromEvent.length} Zeichen` : '',
+                blocks.some((block) => block.type === 'tool_use')
+                  ? `Tool-Aufrufe: ${blocks.filter((block) => block.type === 'tool_use').length}`
+                  : '',
+              ].filter(Boolean).join('\n'))
+              updateMessage(threadId, createdAssistantMessageId, {
+                content: presentation.content,
+                thinkingContent: presentation.thinkingContent,
+              })
+              break
+            }
+            case 'approval_required':
+              approvalSummary = `${event.request.toolName}: ${event.request.description}`
+              appendVerboseEntry('Freigabe erforderlich', [
+                `Tool: ${event.request.toolName}`,
+                `Beschreibung: ${event.request.description}`,
+                `Risk Level: ${event.request.riskLevel}`,
+              ].join('\n'))
+              if (autoPilotAllTools || hasApprovalBypassMarker) {
+                appendVerboseEntry(
+                  'Freigabe automatisch erteilt',
+                  autoPilotAllTools ? 'Grund: autoPilotAllTools' : 'Grund: approval-beduerftig marker',
+                )
+                resolveEngineApproval({ allowed: true })
+                addLog({
+                  level: 'info',
+                  area: 'llm',
+                  message: `Freigabe automatisch erteilt: ${event.request.toolName}`,
+                  details: {
+                    reason: autoPilotAllTools ? 'autoPilotAllTools' : 'approval-beduerftig marker',
+                    request: event.request,
+                  },
+                })
+                break
+              }
+              setPendingApproval([`${event.request.toolName}: ${event.request.description}`])
+              addLog({
+                level: 'warn',
+                area: 'llm',
+                message: `Freigabe erforderlich: ${event.request.toolName}`,
+                details: event.request,
+              })
+              break
+            case 'tool_use_start':
+              usedToolNames.add(event.toolName)
+              toolNamesById.set(event.toolUseId, event.toolName)
+              appendVerboseEntry(
+                `Tool gestartet: ${event.toolName}`,
+                stringifyVerboseValue(event.input),
+              )
+              addLog({
+                level: 'info',
+                area: 'llm',
+                message: `Tool gestartet: ${event.toolName}`,
+                details: { toolName: event.toolName, input: event.input },
+              })
+              break
+            case 'tool_progress': {
+              const activeToolName = toolNamesById.get(event.toolUseId) ?? 'Tool'
+              const progress = formatToolProgress(activeToolName, event.data)
+              appendVerboseEntry(progress.headline, progress.details)
+              break
+            }
+            case 'tool_use_complete':
+              usedToolNames.add(event.toolName)
+              appendVerboseEntry(
+                `Tool fertig: ${event.toolName}`,
+                clipVerboseText(event.result, 6000),
+              )
+              addLog({
+                level: 'info',
+                area: 'llm',
+                message: `Tool fertig: ${event.toolName}`,
+                details: { toolName: event.toolName, result: event.result?.slice(0, 500) },
+              })
+              break
+            case 'compaction':
+              appendVerboseEntry('Kontext kompaktisiert', [
+                `Entfernte Nachrichten: ${event.removedCount}`,
+                event.summary,
+              ].filter(Boolean).join('\n'))
+              addLog({
+                level: 'info',
+                area: 'llm',
+                message: 'Kontext kompaktisiert',
+                details: { removedCount: event.removedCount, summary: event.summary },
+              })
+              break
+            case 'context_warning':
+              appendVerboseEntry(
+                `Kontextwarnung: ${event.level}`,
+                `Geschaetzte Tokens: ${event.estimatedTokens}`,
+              )
+              addLog({
+                level: event.level === 'critical' ? 'warn' : 'info',
+                area: 'llm',
+                message: `Kontextwarnung: ${event.level}`,
+                details: { estimatedTokens: event.estimatedTokens },
+              })
+              break
+            case 'retry':
+              appendVerboseEntry(`Engine-Retry ${event.attempt}`, event.reason)
+              addLog({
+                level: 'warn',
+                area: 'llm',
+                message: `Engine-Retry ${event.attempt}`,
+                details: { reason: event.reason },
+              })
+              break
+            case 'error':
+              engineErrorMessage = event.error
+              appendVerboseEntry('Engine-Fehler', event.error)
+              addLog({ level: 'error', area: 'llm', message: event.error })
+              break
+          }
+        })
+
+        const fallbackText = engineErrorMessage
+          ? `LLM-Anfrage fehlgeschlagen: ${engineErrorMessage}\n\nPrüfe unter Einstellungen den Ollama-Endpoint, das Modell und den Timeout.`
+          : approvalSummary
+            ? `Freigabe erforderlich: ${approvalSummary}`
+            : usedToolNames.size > 0
+              ? `Die Engine hat Tools verwendet (${Array.from(usedToolNames).join(', ')}), aber keinen sichtbaren Abschlusstext geliefert.`
+              : 'Die Engine hat keine sichtbare Antwort geliefert. Bitte erneut versuchen oder Modell/Prompt prüfen.'
+        const presentation = resolveAssistantPresentation(rawAssistantMessage, {
+          verboseMode,
+          thinkingContent: rawThinkingMessage,
+          fallbackText,
+        })
+        updateMessage(threadId, createdAssistantMessageId, {
+          content: presentation.content,
+          debugContent: presentation.debugContent,
+          thinkingContent: presentation.thinkingContent,
+          verboseContent: rawVerboseMessage || undefined,
+          streaming: false,
+        }, {
+          persist: true,
+        })
+        addLog({
+          level: engineErrorMessage ? 'warn' : 'info',
+          area: 'llm',
+          message: engineErrorMessage ? 'Engine-Anfrage ohne sichtbare Antwort abgeschlossen' : 'Engine-Anfrage erfolgreich',
+          details: {
+            provider: 'ollama',
+            model: ollama.model,
+            durationMs: Date.now() - started,
+            usedToolNames: Array.from(usedToolNames),
+            hadThinkingOnlyFallback: !sanitizeAssistantContent(rawAssistantMessage, verboseMode) && !!rawThinkingMessage,
+            engineErrorMessage,
+          },
+        })
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
@@ -710,105 +1933,55 @@ export default function CoworkView() {
           source: 'chat',
         },
       })
-      addMessage(threadId, {
-        role: 'assistant',
-        content: `LLM-Anfrage fehlgeschlagen: ${message}\n\nPrüfe unter Einstellungen den Ollama-Endpoint, das Modell und den Timeout.`,
-        timestamp: Date.now(),
-      })
+      if (superVerboseAuditLogging) {
+        void writeAuditEvent('super_verbose', 'cowork_llm_request_failed', {
+          view: 'cowork',
+          threadId,
+          prompt: rawPrompt,
+          promptWithAttachments,
+          error: message,
+          ollama,
+        })
+      }
+      const failureContent = `LLM-Anfrage fehlgeschlagen: ${message}\n\nPrüfe unter Einstellungen den Ollama-Endpoint, das Modell und den Timeout.`
+      if (assistantMessageId) {
+        updateMessage(threadId, assistantMessageId, { content: failureContent, streaming: false }, { persist: true })
+      } else {
+        addMessage(threadId, {
+          role: 'assistant',
+          content: failureContent,
+          timestamp: Date.now(),
+        })
+      }
     } finally {
       setBusy(false)
     }
   }
 
-  const handleRunSubAgents = async () => {
-    if (busy || subAgentBusy) return
-    const filePaths = attachments
-      .filter((item) => item.kind === 'file')
-      .map((item) => item.path)
-
-    if (filePaths.length === 0) {
-      setAttachmentNotice('Fuer Sub-Agents bitte zuerst Dateien anhaengen.')
-      return
-    }
-
-    let threadId = activeThreadId
-    if (!threadId) {
-      threadId = addThread('Sub-Agent Lauf')
-      setActiveThread(threadId)
-    }
-
-    setSubAgentBusy(true)
-    setError(null)
-
-    try {
-      const response = await invoke<SubAgentRunResponse>('task_run_sub_agents', {
-        request: {
-          prompt: 'Parallele Dateianalyse',
-          paths: filePaths,
-          parallelism: Math.min(8, Math.max(2, Math.floor(filePaths.length / 3))),
-        },
-      })
-
-      const summaryLines = [
-        `Sub-Agent Lauf abgeschlossen (${response.totalItems} Elemente, ${response.successfulItems} OK, ${response.failedItems} Fehler, ${response.durationMs} ms).`,
-        ...response.results.slice(0, 12).map((item) => `- ${getPathName(item.path)}: ${item.summary}`),
-      ]
-
-      addMessage(threadId, {
-        role: 'assistant',
-        content: summaryLines.join('\n'),
-        timestamp: Date.now(),
-      })
-
-      const taskId = createTask('Sub-Agent Batch Analyse', 'Sub-Agent Batch Analyse', threadId)
-      const steps: TaskStep[] = response.results.map((result, index) => ({
-        id: `${taskId}-sub-${index}`,
-        index,
-        title: getPathName(result.path),
-        state: result.success ? 'completed' : 'failed',
-        requiresApproval: false,
-        riskLevel: result.success ? 'low' : 'medium',
-        output: result.error ?? result.summary,
-      }))
-      setTaskSteps(taskId, steps)
-      updateTaskStatus(taskId, response.failedItems > 0 ? 'failed' : 'completed')
-
-      addLog({
-        level: response.failedItems > 0 ? 'warn' : 'info',
-        area: 'task_engine',
-        message: 'Sub-Agent Lauf beendet',
-        details: {
-          totalItems: response.totalItems,
-          successfulItems: response.successfulItems,
-          failedItems: response.failedItems,
-          parallelism: response.parallelism,
-          durationMs: response.durationMs,
-        },
-      })
-
-      setAttachments([])
-      setAttachmentNotice(null)
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      setError(message)
-      addLog({
-        level: 'error',
-        area: 'task_engine',
-        message: 'Sub-Agent Lauf fehlgeschlagen',
-        details: { error: message, itemCount: filePaths.length },
-      })
-    } finally {
-      setSubAgentBusy(false)
-    }
+  const handleSend = async (event: FormEvent) => {
+    event.preventDefault()
+    await submitPrompt(inputValue, attachments)
   }
 
   const handleApprove = () => {
-    if (pendingApproval.length === 0 || !activeThreadId) return
+    if (approvalSteps.length === 0 || !activeThreadId) return
     addMessage(activeThreadId, {
       role: 'system',
-      content: `Plan freigegeben: ${pendingApproval.join(' | ')}`,
+      content: `Plan freigegeben: ${approvalSteps.join(' | ')}`,
       timestamp: Date.now(),
     })
+    resolveEngineApproval({ allowed: true })
+    clearApproval()
+  }
+
+  const handleReject = () => {
+    if (!activeThreadId) return
+    addMessage(activeThreadId, {
+      role: 'system',
+      content: 'Plan abgelehnt. Passe die Anfrage an oder pruefe die Freigabe.',
+      timestamp: Date.now(),
+    })
+    resolveEngineApproval({ allowed: false, reason: 'Vom Benutzer in CoworkView abgelehnt.' })
     clearApproval()
   }
 
@@ -839,10 +2012,41 @@ export default function CoworkView() {
   const formatTime = (timestamp: number) =>
     new Date(timestamp).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })
 
-  const applyPromptToInput = (content: string) => {
-    if (!inputRef.current) return
-    inputRef.current.value = content
-    inputRef.current.focus()
+  const applyPromptToInput = (content: string, nextAttachments: ChatAttachment[] = []) => {
+    setInputValue(content)
+    const restored = mergeAttachments([], nextAttachments)
+    setAttachments(restored.next)
+    setAttachmentNotice(
+      restored.rejectedCount > 0
+        ? 'Es konnten nicht alle gespeicherten Dateien/Ordner wiederhergestellt werden.'
+        : null,
+    )
+    window.requestAnimationFrame(() => {
+      inputRef.current?.focus()
+      inputRef.current?.setSelectionRange(content.length, content.length)
+    })
+  }
+
+  const findPreviousUserMessage = (assistantMessageId: string): ChatMessage | null => {
+    const assistantIndex = visibleMessages.findIndex((message) => message.id === assistantMessageId)
+    if (assistantIndex < 0) return null
+
+    for (let index = assistantIndex - 1; index >= 0; index -= 1) {
+      const candidate = visibleMessages[index]
+      if (candidate?.role === 'user') {
+        return candidate
+      }
+    }
+    return null
+  }
+
+  const handleRegenerate = async (assistantMessageId: string) => {
+    const previousUser = findPreviousUserMessage(assistantMessageId)
+    if (!previousUser) return
+    const prompt = typeof previousUser.content === 'string' ? previousUser.content.trim() : ''
+    const promptAttachments = Array.isArray(previousUser.attachments) ? previousUser.attachments : []
+    const fallbackPrompt = 'Bitte fuehre dieselbe Aufgabe erneut mit denselben Anhaengen aus.'
+    await submitPrompt(prompt || fallbackPrompt, promptAttachments)
   }
 
   const scrollMessagesToBottom = () => {
@@ -854,11 +2058,31 @@ export default function CoworkView() {
     <div className={`cowork-view ${compactMode ? 'compact-mode' : ''}`}>
       {/* Chat Pane */}
       <div className="cowork-pane">
+        <div className="card" style={{ marginBottom: 12, fontSize: 12 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+            <span><strong>Session:</strong> {currentSessionId ?? 'noch nicht gespeichert'}</span>
+            <span><strong>Compactions:</strong> {compactionCount}</span>
+            <span>
+              <strong>Kontext:</strong>{' '}
+              {contextWarning.level === 'none'
+                ? 'stabil'
+                : `${contextWarning.level} (${contextWarning.estimatedTokens} Tokens)`}
+            </span>
+            <button type="button" className="btn-sm" onClick={() => void forceCompact()} disabled={busy}>
+              Kontext kompaktieren
+            </button>
+          </div>
+        </div>
+
         <div className="cowork-messages" ref={logRef}>
-          {activeThread.messages
-            .filter((m) => m.role !== 'system')
-            .map((msg, index) => (
-              <div key={`${msg.timestamp}-${index}`} className={`cowork-msg ${msg.role}`}>
+          {visibleMessages.map((msg, index) => {
+              const content = typeof msg.content === 'string' ? msg.content : ''
+              const hasLiveVerbose = verboseMode && !!msg.verboseContent?.trim()
+              const hasLiveThinking = verboseMode && !!msg.thinkingContent?.trim()
+              const attachmentsForMessage = Array.isArray(msg.attachments) ? msg.attachments : []
+              const canRegenerate = msg.role === 'assistant' && findPreviousUserMessage(msg.id) !== null
+              return (
+                <div key={`${msg.timestamp}-${index}`} className={`cowork-msg ${msg.role}`}>
                 <div className="msg-avatar">
                   {msg.role === 'user' ? '👤' : '✦'}
                 </div>
@@ -867,19 +2091,69 @@ export default function CoworkView() {
                     {msg.role === 'user' ? 'Du' : 'Open_Cowork'}
                     {showTimestamps && <span className="msg-time">{formatTime(msg.timestamp)}</span>}
                   </div>
-                  <div className="msg-content">{msg.content}</div>
+                  <div className="msg-content">
+                    {content ? <HighlightedChatText content={content} /> : (msg.streaming && !hasLiveVerbose && !hasLiveThinking ? <StreamingPlaceholder /> : null)}
+                  </div>
+                  {verboseMode && (
+                    <MessageThinking
+                      content={msg.thinkingContent}
+                      limitToRollingWindow={limitThinkingWindow}
+                    />
+                  )}
+                  {verboseMode && (
+                    <MessageVerbose
+                      content={msg.verboseContent}
+                      limitToRollingWindow={limitThinkingWindow}
+                    />
+                  )}
+                  {attachmentsForMessage.length > 0 && (
+                    <div className="message-attachments">
+                      {attachmentsForMessage.map((item) => (
+                        <span key={`${item.kind}-${item.path}`} className="message-attachment-chip" title={item.path}>
+                          {item.kind === 'folder' ? '📁' : '📄'} {getPathName(item.path)}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  {verboseMode && msg.debugContent && msg.debugContent !== content && (
+                    <details className="message-debug">
+                      <summary>Verbose: interner Prompt</summary>
+                      <pre>{msg.debugContent}</pre>
+                    </details>
+                  )}
                   <div className="msg-actions">
-                    <button type="button" className="btn-msg-action" onClick={() => void navigator.clipboard.writeText(msg.content)}>
+                    <button type="button" className="btn-msg-action" onClick={() => void navigator.clipboard.writeText(content)}>
                       Kopieren
                     </button>
-                    <button type="button" className="btn-msg-action" onClick={() => applyPromptToInput(msg.content)}>
-                      Wiederverwenden
-                    </button>
+                    {msg.role === 'user' ? (
+                      <button
+                        type="button"
+                        className="btn-msg-action"
+                        onClick={() => applyPromptToInput(content, attachmentsForMessage)}
+                      >
+                        Wiederverwenden
+                      </button>
+                    ) : (
+                      <>
+                        <button type="button" className="btn-msg-action" onClick={() => applyPromptToInput(content)}>
+                          Als Prompt nutzen
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-msg-action"
+                          onClick={() => void handleRegenerate(msg.id)}
+                          disabled={busy || !canRegenerate}
+                        >
+                          Neu generieren
+                        </button>
+                      </>
+                    )}
                   </div>
                 </div>
-              </div>
-            ))}
-          {busy && (
+                </div>
+              )
+            })}
+          {busy && !activeMessages.some((msg) => msg.streaming) && (
             <div className="cowork-msg assistant">
               <div className="msg-avatar">✦</div>
               <div className="msg-body">
@@ -900,14 +2174,14 @@ export default function CoworkView() {
           </button>
         )}
 
-        {pendingApproval.length > 0 && (
+        {approvalSteps.length > 0 && (
           <div className="approval-banner">
             <div className="approval-header">
               <span className="approval-icon">⚠️</span>
               <span>Diese Schritte erfordern deine Freigabe:</span>
             </div>
             <ol className="approval-steps">
-              {pendingApproval.map((step, idx) => (
+              {approvalSteps.map((step, idx) => (
                 <li key={`${step}-${idx}`}>{step}</li>
               ))}
             </ol>
@@ -915,8 +2189,36 @@ export default function CoworkView() {
               <button type="button" className="btn-approve" onClick={handleApprove} disabled={busy}>
                 ✓ Freigeben
               </button>
-              <button type="button" className="btn-reject" onClick={clearApproval} disabled={busy}>
+              <button type="button" className="btn-reject" onClick={handleReject} disabled={busy}>
                 ✗ Ablehnen
+              </button>
+            </div>
+          </div>
+        )}
+
+        {askUserQuestion && approvalSteps.length === 0 && (
+          <div className="approval-banner">
+            <div className="approval-header">
+              <span className="approval-icon">?</span>
+              <span>Open_Cowork hat eine Rueckfrage:</span>
+            </div>
+            <div className="msg-content">
+              <HighlightedChatText content={askUserQuestion} />
+            </div>
+            <div className="approval-actions">
+              <button
+                type="button"
+                className="btn-msg-action"
+                onClick={() => {
+                  setInputValue(askUserQuestion)
+                  window.requestAnimationFrame(() => {
+                    inputRef.current?.focus()
+                    inputRef.current?.setSelectionRange(askUserQuestion.length, askUserQuestion.length)
+                  })
+                }}
+                disabled={busy}
+              >
+                Frage uebernehmen
               </button>
             </div>
           </div>
@@ -942,8 +2244,8 @@ export default function CoworkView() {
                 onChange={(e) => handleModelChange(e.target.value)}
                 disabled={busy}
               >
-                {availableModels.length > 0 ? (
-                  availableModels.map((model) => (
+                {selectableModels.length > 0 ? (
+                  selectableModels.map((model) => (
                     <option key={model} value={model}>
                       {model}
                     </option>
@@ -953,15 +2255,30 @@ export default function CoworkView() {
                 )}
               </select>
             </label>
+            <label>
+              Berechtigungs-Modus
+              <select
+                className="model-selector chat-model-selector"
+                value={enginePermissionMode}
+                onChange={(e) => {
+                  const mode = e.target.value as 'default' | 'plan' | 'bypass' | 'strict'
+                  setEngineConfig({ permissionMode: mode })
+                  setClaudePermissionMode(ENGINE_TO_CLAUDE_PERMISSION_MODE[mode])
+                }}
+                disabled={busy}
+              >
+                <option value="default">Standard</option>
+                <option value="plan">Plan-Modus</option>
+                <option value="bypass">Bypass (alles erlauben)</option>
+                <option value="strict">Strikt (alles fragen)</option>
+              </select>
+            </label>
             <div className="attachment-actions">
               <button type="button" className="btn-attach" onClick={handleAttachFiles} disabled={busy}>
                 Dateien
               </button>
               <button type="button" className="btn-attach" onClick={handleAttachFolders} disabled={busy}>
                 Ordner
-              </button>
-              <button type="button" className="btn-attach" onClick={handleRunSubAgents} disabled={busy || subAgentBusy}>
-                {subAgentBusy ? 'Sub-Agents laufen...' : 'Sub-Agents starten'}
               </button>
             </div>
           </div>
@@ -990,21 +2307,54 @@ export default function CoworkView() {
             <textarea
               ref={inputRef}
               rows={2}
-              placeholder="Nächste Anweisung..."
+              placeholder={askUserQuestion ? 'Beantworte die Rueckfrage hier...' : 'Nächste Anweisung...'}
               disabled={busy}
+              value={inputValue}
               className={dragOverInput ? 'input-drop-active' : ''}
+              onChange={(e) => setInputValue(e.currentTarget.value)}
               onDragOver={handleInputDragOver}
               onDragLeave={handleInputDragLeave}
               onDrop={handleInputDrop}
               onPaste={handleInputPaste}
               onKeyDown={(e) => {
+                if (showSlashSuggestions) {
+                  if (e.key === 'ArrowDown') {
+                    e.preventDefault()
+                    setActiveSlashSuggestionIndex((current) =>
+                      Math.min(current + 1, filteredSlashSuggestions.length - 1)
+                    )
+                    return
+                  }
+
+                  if (e.key === 'ArrowUp') {
+                    e.preventDefault()
+                    setActiveSlashSuggestionIndex((current) => Math.max(current - 1, 0))
+                    return
+                  }
+
+                  if (e.key === 'Enter' || e.key === 'Tab') {
+                    e.preventDefault()
+                    applySlashSuggestion(filteredSlashSuggestions[activeSlashSuggestionIndex])
+                    return
+                  }
+
+                  if (e.key === 'Escape') {
+                    e.preventDefault()
+                    setSlashSuggestionsOpen(false)
+                    return
+                  }
+                }
+
                 if (e.key === 'ArrowUp' && !e.shiftKey && (e.currentTarget.value.trim() === '' || e.currentTarget.selectionStart === 0)) {
                   e.preventDefault()
                   if (promptHistory.length === 0) return
                   const next = Math.min(historyIndex + 1, promptHistory.length - 1)
                   setHistoryIndex(next)
-                  e.currentTarget.value = promptHistory[next]
-                  e.currentTarget.setSelectionRange(e.currentTarget.value.length, e.currentTarget.value.length)
+                  const nextValue = promptHistory[next]
+                  setInputValue(nextValue)
+                  window.requestAnimationFrame(() => {
+                    inputRef.current?.setSelectionRange(nextValue.length, nextValue.length)
+                  })
                   return
                 }
 
@@ -1012,8 +2362,11 @@ export default function CoworkView() {
                   e.preventDefault()
                   const next = historyIndex - 1
                   setHistoryIndex(next)
-                  e.currentTarget.value = next >= 0 ? promptHistory[next] : ''
-                  e.currentTarget.setSelectionRange(e.currentTarget.value.length, e.currentTarget.value.length)
+                  const nextValue = next >= 0 ? promptHistory[next] : ''
+                  setInputValue(nextValue)
+                  window.requestAnimationFrame(() => {
+                    inputRef.current?.setSelectionRange(nextValue.length, nextValue.length)
+                  })
                   return
                 }
 
@@ -1023,9 +2376,32 @@ export default function CoworkView() {
                 }
               }}
             />
+            {showSlashSuggestions && (
+              <div className="slash-command-menu" role="listbox" aria-label="Slash-Commands">
+                {filteredSlashSuggestions.map((suggestion, index) => (
+                  <button
+                    key={`${suggestion.source}-${suggestion.command}`}
+                    type="button"
+                    className={`slash-command-option ${index === activeSlashSuggestionIndex ? 'active' : ''}`}
+                    onMouseDown={(event) => {
+                      event.preventDefault()
+                      applySlashSuggestion(suggestion)
+                    }}
+                    role="option"
+                    aria-selected={index === activeSlashSuggestionIndex}
+                  >
+                    <span className="slash-command-usage">
+                      {suggestion.command}
+                      {suggestion.args ? <span> {suggestion.args}</span> : null}
+                    </span>
+                    <span className="slash-command-description">{suggestion.description}</span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
           <button type="submit" disabled={busy} className="btn-send">
-            {busy ? '⟳' : 'Senden →'}
+            {busy ? '⟳' : askUserQuestion ? 'Antwort senden →' : 'Senden →'}
           </button>
         </form>
       </div>

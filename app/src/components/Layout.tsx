@@ -53,6 +53,11 @@ export default function Layout() {
         navigate('/settings')
       }
 
+      if (event.key === '3') {
+        event.preventDefault()
+        navigate('/features')
+      }
+
       if (event.shiftKey && event.key.toLowerCase() === 'l') {
         event.preventDefault()
         toggleTheme()
@@ -88,6 +93,9 @@ export default function Layout() {
           </NavLink>
           <NavLink to="/settings" className={({isActive}) => `top-tab${isActive ? ' active' : ''}`}>
             {t('Settings')}
+          </NavLink>
+          <NavLink to="/features" className={({isActive}) => `top-tab${isActive ? ' active' : ''}`}>
+            {t('Features')}
           </NavLink>
         </div>
 
@@ -126,6 +134,7 @@ export default function Layout() {
                 { label: 'Command Palette', keys: 'Ctrl+K' },
                 { label: 'Arbeitsbereich', keys: 'Ctrl+1' },
                 { label: 'Einstellungen', keys: 'Ctrl+2' },
+                { label: 'Features', keys: 'Ctrl+3' },
                 { label: 'Sidebar ein-/ausblenden', keys: 'Ctrl+Shift+B' },
                 { label: 'Theme wechseln', keys: 'Ctrl+Shift+L' },
                 { label: 'Shortcuts anzeigen', keys: 'Ctrl+Shift+?' },

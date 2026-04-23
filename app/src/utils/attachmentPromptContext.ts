@@ -5,30 +5,56 @@ import {
   type ChatAttachment,
 } from './chatAttachments'
 
-const LOCAL_DOCS_MCP_SERVER = {
-  name: 'local-docs',
-  command: 'open-cowork-docs-mcp',
-  args: [] as string[],
-  env: {} as Record<string, string>,
-}
-
-type ArtifactParseResponse = {
-  path: string
-  format: string
+type ImportedAttachmentResponse = {
+  originalPath: string
+  importedPath: string
+  fileName: string
   sizeBytes: number
-  summary: string
-  preview: string
-  metadata: Record<string, unknown>
 }
 
-type McpCallResponse = {
-  success: boolean
-  result: string
-  error: string | null
+type ExtractTextLimitedResponse = {
+  text: string
+  chars: number
+  truncated: boolean
 }
 
-const MCP_CHUNK_SIZE = 16_000
-const MCP_MAX_CHUNKS_PER_FILE = 256
+type FsAttachmentMetadataEntry = {
+  path: string
+  fileName: string
+  extension: string | null
+  language: string | null
+  sizeBytes: number
+}
+
+type FsAttachmentMetadataResponse = {
+  rootPath: string
+  rootKind: 'file' | 'folder'
+  totalFiles: number
+  returnedFiles: number
+  truncated: boolean
+  files: FsAttachmentMetadataEntry[]
+}
+
+type RetrievalCandidate = {
+  readPath: string
+  displayPath: string
+  origin: string
+  extension: string | null
+  language: string | null
+  sizeBytes: number
+}
+
+const FOLDER_METADATA_LIMIT = 5000
+const RETRIEVAL_SNIPPETS_PER_FILE = 4
+const ATTACHMENT_TEXT_PASS_1 = 40_000
+const ATTACHMENT_TEXT_PASS_2 = 80_000
+const SNIPPET_WINDOW = 400
+const DIRECT_FILE_FULL_READ_LIMIT = 80_000
+const STOP_WORDS = new Set([
+  'the', 'and', 'oder', 'und', 'with', 'from', 'that', 'this', 'eine', 'einer', 'einem', 'eines',
+  'ein', 'der', 'die', 'das', 'for', 'auf', 'mit', 'als', 'von', 'to', 'wie', 'what', 'where',
+  'wenn', 'then', 'else', 'bitte', 'kann', 'kannst', 'soll', 'sollte', 'please', 'into', 'durch',
+])
 
 export type AttachmentPromptBuildResult = {
   context: string
@@ -36,13 +62,102 @@ export type AttachmentPromptBuildResult = {
   failedFiles: Array<{ path: string; error: string }>
 }
 
+async function allowFolderAttachments(attachments: ChatAttachment[]): Promise<void> {
+  const roots = new Map<string, string>()
+
+  for (const item of attachments) {
+    if (item.kind === 'folder') {
+      roots.set(item.path.toLowerCase(), item.path)
+    }
+  }
+
+  for (const root of roots.values()) {
+    await invoke('fs_add_allowed_folder', { path: root })
+  }
+}
+
+function extractQueryTerms(query: string): string[] {
+  const terms = query
+    .toLowerCase()
+    .replace(/[^a-z0-9_\-.\s]/gi, ' ')
+    .split(/\s+/)
+    .filter((token) => token.length >= 3 && !STOP_WORDS.has(token))
+
+  return Array.from(new Set(terms)).slice(0, 14)
+}
+
+function scoreCandidate(candidate: RetrievalCandidate, queryTerms: string[], rawQuery: string): number {
+  const haystack = `${candidate.displayPath} ${candidate.origin}`.toLowerCase()
+  let score = 0
+
+  for (const term of queryTerms) {
+    if (haystack.includes(term)) {
+      score += 8
+    }
+  }
+
+  if (rawQuery.includes('test') && candidate.displayPath.toLowerCase().includes('test')) score += 5
+  if (rawQuery.includes('config') && candidate.displayPath.toLowerCase().includes('config')) score += 5
+  if ((rawQuery.includes('fehler') || rawQuery.includes('error')) && candidate.displayPath.toLowerCase().includes('log')) score += 3
+
+  if (candidate.language) score += 1
+  if ((candidate.extension ?? '').includes('md')) score -= 2
+
+  return score
+}
+
+function trimSnippet(input: string): string {
+  return input.replace(/\s+/g, ' ').trim()
+}
+
+function collectSnippets(text: string, queryTerms: string[], maxSnippets: number): string[] {
+  if (!text) return []
+
+  if (queryTerms.length === 0) {
+    const preview = trimSnippet(text.slice(0, SNIPPET_WINDOW * 2))
+    return preview ? [preview] : []
+  }
+
+  const lower = text.toLowerCase()
+  const snippets: string[] = []
+  const usedOffsets: number[] = []
+
+  for (const term of queryTerms) {
+    if (snippets.length >= maxSnippets) break
+    const idx = lower.indexOf(term)
+    if (idx < 0) continue
+    if (usedOffsets.some((offset) => Math.abs(offset - idx) < SNIPPET_WINDOW)) continue
+
+    const start = Math.max(0, idx - SNIPPET_WINDOW)
+    const end = Math.min(text.length, idx + term.length + SNIPPET_WINDOW)
+    const snippet = trimSnippet(text.slice(start, end))
+    if (!snippet) continue
+
+    snippets.push(snippet)
+    usedOffsets.push(idx)
+  }
+
+  return snippets
+}
+
+function pushCandidate(target: RetrievalCandidate, entries: Map<string, RetrievalCandidate>): void {
+  if (!entries.has(target.readPath)) {
+    entries.set(target.readPath, target)
+  }
+}
+
 export async function buildAttachmentPromptContext(
   attachments: ChatAttachment[],
+  retrievalQuery: string,
 ): Promise<AttachmentPromptBuildResult> {
   const baseContext = formatAttachmentContext(attachments)
-  const fileAttachments = attachments.filter((item) => item.kind === 'file').slice(0, 6)
+  const fileAttachments = attachments.filter((item) => item.kind === 'file')
+  const folderAttachments = attachments.filter((item) => item.kind === 'folder')
+  const queryTerms = extractQueryTerms(retrievalQuery)
+  const normalizedQuery = retrievalQuery.toLowerCase()
+  const wantsFullFileList = /alle\s+datei|vollstaendig(e|en)?\s+dateiliste|list(e)?\s+mit\s+allen\s+dateien|all\s+files|full\s+file\s+list/.test(normalizedQuery)
 
-  if (fileAttachments.length === 0) {
+  if (fileAttachments.length === 0 && folderAttachments.length === 0) {
     return {
       context: baseContext,
       parsedFiles: 0,
@@ -50,85 +165,168 @@ export async function buildAttachmentPromptContext(
     }
   }
 
-  const analyses: string[] = []
+  const metadataLines: string[] = []
+  const retrievalLines: string[] = []
   const failedFiles: Array<{ path: string; error: string }> = []
+  const importedFiles = new Map<string, ImportedAttachmentResponse>()
+  const candidates = new Map<string, RetrievalCandidate>()
   let parsedFiles = 0
+  let deepReads = 0
 
-  const callLocalDocsTool = async (
-    toolName: string,
-    toolArgs: Record<string, unknown>,
-  ): Promise<string> => {
-    const mcpResponse = await invoke<McpCallResponse>('mcp_call_tool', {
-      request: {
-        ...LOCAL_DOCS_MCP_SERVER,
-        toolName,
-        toolArgs,
-      },
-    })
-
-    if (!mcpResponse.success) {
-      throw new Error(mcpResponse.error ?? `MCP tool call failed: ${toolName}`)
-    }
-
-    return mcpResponse.result
-  }
-
-  const readFullTextInChunks = async (path: string): Promise<string> => {
-    const chunks: string[] = []
-    let start = 0
-
-    for (let chunkIndex = 0; chunkIndex < MCP_MAX_CHUNKS_PER_FILE; chunkIndex += 1) {
-      const chunk = await callLocalDocsTool('get_chunk', {
-        path,
-        start,
-        length: MCP_CHUNK_SIZE,
-      })
-
-      if (!chunk) {
-        break
-      }
-
-      chunks.push(chunk)
-      const chunkLength = Array.from(chunk).length
-
-      if (chunkLength < MCP_CHUNK_SIZE) {
-        break
-      }
-
-      start += chunkLength
-    }
-
-    if (chunks.length === MCP_MAX_CHUNKS_PER_FILE) {
-      throw new Error('MCP chunk limit erreicht, Dokument ist zu gross fuer den aktuellen Kontextlauf.')
-    }
-
-    return chunks.join('')
+  try {
+    await allowFolderAttachments(attachments)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    failedFiles.push({ path: '(Ordner-Anhaenge)', error: `Ordnerfreigabe fehlgeschlagen: ${message}` })
   }
 
   for (const item of fileAttachments) {
     try {
-      const parsed = await invoke<ArtifactParseResponse>('fs_parse_artifact', {
+      const imported = await invoke<ImportedAttachmentResponse>('fs_import_attachment', {
         path: item.path,
       })
-      const fullText = await readFullTextInChunks(item.path)
-      parsedFiles += 1
+      importedFiles.set(item.path, imported)
 
-      analyses.push(
-        [
-          `Dateianalyse: ${getPathName(parsed.path)}`,
-          `Pfad: ${parsed.path}`,
-          `Format: ${parsed.format}`,
-          `Zusammenfassung: ${parsed.summary}`,
-          `Volltext (fuer LLM-Kontext):`,
-          fullText || '(kein extrahierbarer Text)',
-        ].join('\n'),
-      )
+      const metadata = await invoke<FsAttachmentMetadataResponse>('fs_collect_attachment_metadata', {
+        path: imported.importedPath,
+        maxEntries: 1,
+      })
+      const first = metadata.files[0]
+      if (first) {
+        metadataLines.push(
+          `- Datei ${getPathName(imported.originalPath)} | Groesse ${first.sizeBytes} B | Sprache ${first.language ?? 'unbekannt'}`,
+        )
+        pushCandidate(
+          {
+            readPath: imported.importedPath,
+            displayPath: imported.originalPath,
+            origin: `Datei-Anhang ${imported.originalPath}`,
+            extension: first.extension,
+            language: first.language,
+            sizeBytes: first.sizeBytes,
+          },
+          candidates,
+        )
+      }
     } catch (error) {
       failedFiles.push({
         path: item.path,
+        error: `Import in App-Ordner fehlgeschlagen: ${error instanceof Error ? error.message : String(error)}`,
+      })
+    }
+  }
+
+  for (const folder of folderAttachments) {
+    try {
+      const metadata = await invoke<FsAttachmentMetadataResponse>('fs_collect_attachment_metadata', {
+        path: folder.path,
+        maxEntries: wantsFullFileList ? 50_000 : FOLDER_METADATA_LIMIT,
+      })
+      metadataLines.push(
+        `- Ordner ${folder.path} | Dateien gesamt ${metadata.totalFiles} | betrachtet ${metadata.returnedFiles}${metadata.truncated ? ' (gekuerzt)' : ''}`,
+      )
+
+      if (wantsFullFileList && metadata.files.length > 0) {
+        metadataLines.push(...metadata.files.map((entry) => `  - ${entry.path}`))
+      }
+
+      for (const entry of metadata.files) {
+        pushCandidate(
+          {
+            readPath: entry.path,
+            displayPath: entry.path,
+            origin: `Ordner-Anhang ${folder.path}`,
+            extension: entry.extension,
+            language: entry.language,
+            sizeBytes: entry.sizeBytes,
+          },
+          candidates,
+        )
+      }
+    } catch (error) {
+      failedFiles.push({
+        path: folder.path,
         error: error instanceof Error ? error.message : String(error),
       })
     }
+  }
+
+  const ranked = Array.from(candidates.values())
+    .map((candidate) => ({
+      candidate,
+      score: scoreCandidate(candidate, queryTerms, normalizedQuery),
+    }))
+    .sort((a, b) => b.score - a.score)
+
+  if (!wantsFullFileList && ranked.length > 0) {
+    retrievalLines.push('Selektierte Kandidaten (Ranking):')
+    retrievalLines.push(
+      ...ranked.map(
+        ({ candidate, score }, index) =>
+          `${index + 1}. ${getPathName(candidate.displayPath)} | Score ${score} | Sprache ${candidate.language ?? 'unbekannt'} | ${candidate.origin}`,
+      ),
+    )
+  }
+
+  // Direct file attachments: read full text instead of snippets
+  const directFilePaths = new Set(fileAttachments.map((f) => f.path.toLowerCase()))
+  const isDirectFile = (candidate: RetrievalCandidate) =>
+    directFilePaths.has(candidate.displayPath.toLowerCase()) ||
+    fileAttachments.some((f) => candidate.readPath.toLowerCase().endsWith(f.path.split(/[\\/]/).pop()!.toLowerCase()))
+
+  for (const { candidate } of ranked) {
+    if (wantsFullFileList) {
+      // Bei Voll-Listen-Abfragen reichen Metadaten; Volltext-Retrieval wird uebersprungen.
+      continue
+    }
+    try {
+      if (isDirectFile(candidate)) {
+        // Full text for directly attached files (PDFs, docs, etc.)
+        const fullRead = await invoke<ExtractTextLimitedResponse>('fs_extract_text_limited', {
+          path: candidate.readPath,
+          maxChars: DIRECT_FILE_FULL_READ_LIMIT,
+        })
+        parsedFiles += 1
+        if (fullRead.text.trim().length > 0) {
+          retrievalLines.push(`Volltext von ${candidate.displayPath}${fullRead.truncated ? ' (gekuerzt)' : ''}:`)
+          retrievalLines.push(fullRead.text)
+        }
+      } else {
+        // Snippet-based retrieval for folder candidates
+        const pass1 = await invoke<ExtractTextLimitedResponse>('fs_extract_text_limited', {
+          path: candidate.readPath,
+          maxChars: ATTACHMENT_TEXT_PASS_1,
+        })
+        parsedFiles += 1
+
+        let snippets = collectSnippets(pass1.text, queryTerms, RETRIEVAL_SNIPPETS_PER_FILE)
+
+        if (snippets.length === 0 && pass1.truncated) {
+          const pass2 = await invoke<ExtractTextLimitedResponse>('fs_extract_text_limited', {
+            path: candidate.readPath,
+            maxChars: ATTACHMENT_TEXT_PASS_2,
+          })
+          deepReads += 1
+          snippets = collectSnippets(pass2.text, queryTerms, RETRIEVAL_SNIPPETS_PER_FILE)
+        }
+
+        if (snippets.length === 0) {
+          continue
+        }
+
+        retrievalLines.push(`Treffer in ${candidate.displayPath}:`)
+        retrievalLines.push(...snippets.map((snippet, idx) => `- Snippet ${idx + 1}: ${snippet}`))
+      }
+    } catch (error) {
+      failedFiles.push({
+        path: candidate.displayPath,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
+  }
+
+  if (retrievalLines.length > 0) {
+    retrievalLines.push(`Iterative Vertiefung aktiv: ${deepReads} Datei(en) mit zweitem Read-Pass.`)
   }
 
   const failedBlock =
@@ -139,9 +337,15 @@ export async function buildAttachmentPromptContext(
         ].join('\n')
       : ''
 
-  const analysisBlock = analyses.length > 0 ? ['Dateiinhalt-Kontext:', ...analyses].join('\n\n') : ''
+  const metadataBlock =
+    metadataLines.length > 0 ? ['Datei-Metadaten (ohne Volltext):', ...metadataLines].join('\n') : ''
 
-  const context = [baseContext, analysisBlock, failedBlock].filter((part) => part.trim().length > 0).join('\n\n')
+  const analysisBlock =
+    retrievalLines.length > 0 ? ['Retrieval-Kontext (selektiv gelesen):', ...retrievalLines].join('\n') : ''
+
+  const context = [baseContext, metadataBlock, analysisBlock, failedBlock]
+    .filter((part) => part.trim().length > 0)
+    .join('\n\n')
 
   return {
     context,

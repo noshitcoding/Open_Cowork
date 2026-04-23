@@ -65,7 +65,9 @@ type PolicyStateResponse = {
     strictPolicyEnforcement: boolean
     allowToolDispatcher: boolean
     allowMcpToolCalls: boolean
+    allowShellExecution: boolean
     allowWebFetch: boolean
+    allowWebSearch: boolean
     allowFileReadExtraction: boolean
     autoCompactLongContext: boolean
   }
@@ -74,6 +76,14 @@ type PolicyStateResponse = {
 
 function randomId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+function parentDir(path: string): string {
+  const normalized = path.replace(/\\/g, '/')
+  const index = normalized.lastIndexOf('/')
+  if (index <= 0) return path
+  const dir = normalized.slice(0, index)
+  return path.includes('\\') ? dir.replace(/\//g, '\\') : dir
 }
 
 export default function CoworkFeaturesPanel() {
@@ -208,17 +218,6 @@ export default function CoworkFeaturesPanel() {
     const matches = raw.match(/"[^"]*"|'[^']*'|\S+/g) ?? []
     return matches.map((part) => part.replace(/^["']|["']$/g, ''))
   }
-
-  useEffect(() => {
-    void invoke<PolicyStateResponse>('policy_set', {
-      request: {
-        flags: policyFlags,
-        denyRules: toolDenyRules,
-      },
-    }).catch((err) => {
-      setError(err instanceof Error ? err.message : String(err))
-    })
-  }, [policyFlags, toolDenyRules])
 
   const addFolderRule = () => {
     if (!folderPath.trim() || !folderInstruction.trim()) return
@@ -417,6 +416,19 @@ export default function CoworkFeaturesPanel() {
           baseName: baseName.trim() || null,
         },
       })
+      // Persist each generated document as an artifact version in the app DB.
+      for (const generatedPath of response.generatedFiles) {
+        try {
+          await invoke('fs_add_allowed_folder', { path: parentDir(generatedPath) })
+          await invoke('fs_save_artifact_version', {
+            path: generatedPath,
+            runId: null,
+            label: `pro-output:${baseName.trim() || 'cowork-export'}`,
+          })
+        } catch {
+          // Artifact persistence is best-effort; generation result remains available.
+        }
+      }
       setProOutput(response)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
@@ -523,12 +535,34 @@ export default function CoworkFeaturesPanel() {
             </label>
           </li>
           <li className="tool-item">
+            <span><strong>allowShellExecution</strong> - Shell-Ausfuehrung erlauben</span>
+            <label>
+              <input
+                type="checkbox"
+                checked={policyFlags.allowShellExecution}
+                onChange={(event) => setPolicyFlag('allowShellExecution', event.target.checked)}
+              />
+              aktiv
+            </label>
+          </li>
+          <li className="tool-item">
             <span><strong>allowWebFetch</strong> - Web Fetch erlauben</span>
             <label>
               <input
                 type="checkbox"
                 checked={policyFlags.allowWebFetch}
                 onChange={(event) => setPolicyFlag('allowWebFetch', event.target.checked)}
+              />
+              aktiv
+            </label>
+          </li>
+          <li className="tool-item">
+            <span><strong>allowWebSearch</strong> - Web Search erlauben</span>
+            <label>
+              <input
+                type="checkbox"
+                checked={policyFlags.allowWebSearch}
+                onChange={(event) => setPolicyFlag('allowWebSearch', event.target.checked)}
               />
               aktiv
             </label>

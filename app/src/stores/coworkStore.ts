@@ -1,3 +1,4 @@
+import { invoke } from '@tauri-apps/api/core'
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
@@ -61,9 +62,16 @@ export type CoworkPolicyFlags = {
   strictPolicyEnforcement: boolean
   allowToolDispatcher: boolean
   allowMcpToolCalls: boolean
+  allowShellExecution: boolean
   allowWebFetch: boolean
+  allowWebSearch: boolean
   allowFileReadExtraction: boolean
   autoCompactLongContext: boolean
+}
+
+type PolicySyncRequest = {
+  flags: CoworkPolicyFlags
+  denyRules: string[]
 }
 
 type CoworkState = {
@@ -113,6 +121,7 @@ const CLAUDE_TOOL_CAPABILITIES: ClaudeToolCapability[] = [
   { id: 'glob', label: 'Dateisuche', description: 'Dateien per Pattern finden' },
   { id: 'grep', label: 'Textsuche', description: 'Regex-/String-Suche ueber Dateien' },
   { id: 'web_fetch', label: 'Web Fetch', description: 'Inhalte einer URL laden' },
+  { id: 'web_search', label: 'Web Search', description: 'Web-Suche ueber Suchanfragen' },
   { id: 'todo', label: 'Task/Todo', description: 'Todo-Liste und Arbeitsplan pflegen' },
   { id: 'ask_user', label: 'Rueckfragen', description: 'Gezielte Rueckfragen fuer Klarheit' },
   { id: 'mcp', label: 'MCP Tools', description: 'MCP-Server und Tools nutzen' },
@@ -122,7 +131,7 @@ const DEFAULT_ENABLED_CLAUDE_TOOLS = CLAUDE_TOOL_CAPABILITIES.map((tool) => tool
 
 const TOOL_PRESET_MAP: Record<ClaudeToolPreset, string[]> = {
   default: DEFAULT_ENABLED_CLAUDE_TOOLS,
-  safe: ['read_file', 'glob', 'grep', 'todo', 'ask_user', 'web_fetch'],
+  safe: ['read_file', 'glob', 'grep', 'todo', 'ask_user', 'web_fetch', 'web_search'],
   extended: DEFAULT_ENABLED_CLAUDE_TOOLS,
 }
 
@@ -130,9 +139,99 @@ const DEFAULT_POLICY_FLAGS: CoworkPolicyFlags = {
   strictPolicyEnforcement: true,
   allowToolDispatcher: true,
   allowMcpToolCalls: true,
+  allowShellExecution: true,
   allowWebFetch: true,
+  allowWebSearch: true,
   allowFileReadExtraction: true,
   autoCompactLongContext: true,
+}
+
+let policySyncReady = false
+let suppressPolicySync = false
+let lastSyncedPolicyKey: string | null = null
+let queuedPolicySync: PolicySyncRequest | null = null
+let queuedPolicySyncKey: string | null = null
+let policySyncInFlight = false
+
+function hasTauriRuntime(): boolean {
+  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
+}
+
+function normalizePolicyDenyRules(denyRules: string[]): string[] {
+  return denyRules
+    .map((rule) => rule.trim())
+    .filter((rule, index, arr) => rule.length > 0 && arr.indexOf(rule) === index)
+    .slice(0, 80)
+}
+
+function buildPolicySyncRequest(
+  policyFlags: CoworkPolicyFlags,
+  toolDenyRules: string[]
+): PolicySyncRequest {
+  return {
+    flags: policyFlags,
+    denyRules: normalizePolicyDenyRules(toolDenyRules),
+  }
+}
+
+function getPolicySyncKey(request: PolicySyncRequest): string {
+  return JSON.stringify(request)
+}
+
+async function flushQueuedPolicySync(): Promise<void> {
+  if (policySyncInFlight || !policySyncReady || !hasTauriRuntime() || !queuedPolicySync || !queuedPolicySyncKey) {
+    return
+  }
+
+  const request = queuedPolicySync
+  const requestKey = queuedPolicySyncKey
+  let queuedDuringFlightKey: string | null = null
+  queuedPolicySync = null
+  queuedPolicySyncKey = null
+  policySyncInFlight = true
+
+  try {
+    await invoke('policy_set', { request })
+    lastSyncedPolicyKey = requestKey
+  } catch (error) {
+    if (!queuedPolicySyncKey) {
+      queuedPolicySync = request
+      queuedPolicySyncKey = requestKey
+    }
+    console.error('Failed to sync cowork policy to backend', error)
+  } finally {
+    queuedDuringFlightKey = queuedPolicySyncKey
+    policySyncInFlight = false
+    if (
+      queuedDuringFlightKey &&
+      queuedDuringFlightKey !== requestKey &&
+      queuedDuringFlightKey !== lastSyncedPolicyKey
+    ) {
+      void flushQueuedPolicySync()
+    }
+  }
+}
+
+function queuePolicySync(request: PolicySyncRequest): void {
+  if (!policySyncReady || !hasTauriRuntime()) return
+
+  const requestKey = getPolicySyncKey(request)
+  if (requestKey === lastSyncedPolicyKey || requestKey === queuedPolicySyncKey) {
+    if (requestKey === queuedPolicySyncKey) {
+      void flushQueuedPolicySync()
+    }
+    return
+  }
+
+  queuedPolicySync = request
+  queuedPolicySyncKey = requestKey
+  void flushQueuedPolicySync()
+}
+
+function markPolicySyncAsCurrent(request: PolicySyncRequest): void {
+  lastSyncedPolicyKey = getPolicySyncKey(request)
+  queuedPolicySync = null
+  queuedPolicySyncKey = null
 }
 
 export const PLUGIN_EXAMPLES: Plugin[] = [
@@ -351,32 +450,49 @@ export const useCoworkStore = create<CoworkState>()(
             [key]: value,
           },
         })),
-      setPolicySnapshot: (flags, denyRules) =>
-        set((state) => ({
-          policyFlags: {
+      setPolicySnapshot: (flags, denyRules) => {
+        suppressPolicySync = true
+        set((state) => {
+          const policyFlags = {
             ...state.policyFlags,
             ...flags,
-          },
-          toolDenyRules: denyRules
-            .map((rule) => rule.trim())
-            .filter((rule, index, arr) => rule.length > 0 && arr.indexOf(rule) === index)
-            .slice(0, 80),
-        })),
+          }
+          const toolDenyRules = normalizePolicyDenyRules(denyRules)
+          markPolicySyncAsCurrent(buildPolicySyncRequest(policyFlags, toolDenyRules))
+          return {
+            policyFlags,
+            toolDenyRules,
+          }
+        })
+        suppressPolicySync = false
+      },
     }),
     {
       name: 'open-cowork-features',
+      onRehydrateStorage: () => () => {
+        policySyncReady = true
+        queuePolicySync(buildPolicySyncRequest(
+          useCoworkStore.getState().policyFlags,
+          useCoworkStore.getState().toolDenyRules
+        ))
+      },
       merge: (persisted, current) => {
         const state = persisted as Partial<CoworkState>
-        const persistedTools = state.enabledClaudeToolIds ?? DEFAULT_ENABLED_CLAUDE_TOOLS
+        const persistedTools = Array.isArray(state.enabledClaudeToolIds)
+          ? state.enabledClaudeToolIds
+          : DEFAULT_ENABLED_CLAUDE_TOOLS
         const knownTools = new Set(CLAUDE_TOOL_CAPABILITIES.map((tool) => tool.id))
         const normalizedTools = persistedTools.filter((id) => knownTools.has(id))
         return {
           ...current,
           ...state,
+          folderInstructions: Array.isArray(state.folderInstructions) ? state.folderInstructions : [],
           connectors: mergeConnectors(state.connectors),
           plugins: normalizePlugins(state.plugins),
+          scheduledTasks: Array.isArray(state.scheduledTasks) ? state.scheduledTasks : [],
           claudeTools: CLAUDE_TOOL_CAPABILITIES,
           enabledClaudeToolIds: normalizedTools.length > 0 ? normalizedTools : DEFAULT_ENABLED_CLAUDE_TOOLS,
+          toolDenyRules: Array.isArray(state.toolDenyRules) ? state.toolDenyRules : [],
           policyFlags: {
             ...DEFAULT_POLICY_FLAGS,
             ...(state.policyFlags ?? {}),
@@ -386,3 +502,16 @@ export const useCoworkStore = create<CoworkState>()(
     }
   )
 )
+
+useCoworkStore.subscribe((state, previousState) => {
+  if (suppressPolicySync) return
+
+  if (
+    state.policyFlags === previousState.policyFlags &&
+    state.toolDenyRules === previousState.toolDenyRules
+  ) {
+    return
+  }
+
+  queuePolicySync(buildPolicySyncRequest(state.policyFlags, state.toolDenyRules))
+})
