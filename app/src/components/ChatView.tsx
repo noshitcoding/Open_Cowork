@@ -1,29 +1,214 @@
 import { useRef, useEffect, useState } from 'react'
-import type { FormEvent } from 'react'
+import type { ClipboardEvent, FormEvent } from 'react'
 import { open } from '@tauri-apps/plugin-dialog'
 import { useChatStore, getActiveThread } from '../stores/chatStore'
+import type { LiveToolCall, LiveToolCallStatus } from '../stores/chatStore'
+import { CheckCircle2, Clock3, Loader2, ShieldAlert, Wrench, XCircle } from 'lucide-react'
 import { useConfigStore } from '../stores/configStore'
 import { useTaskStore } from '../stores/taskStore'
 import { useLogStore } from '../stores/logStore'
 import type { TaskStep } from '../stores/taskStore'
+import type { ContentBlock } from '../engine'
 import {
-  getPathName,
+  createInlineImageAttachment,
+  getAttachmentDisplayName,
+  getAttachmentPreviewSrcForAttachment,
+  hasLocalAttachmentPath,
+  isImageAttachment,
   mergeAttachments,
   normalizeDialogSelection,
+  toImageContentBlocks,
   type ChatAttachment,
 } from '../utils/chatAttachments'
 import { buildAttachmentPromptContext } from '../utils/attachmentPromptContext'
 import { compactHistoryForPrompt } from '../utils/claudeBridge'
-import { resolveAssistantPresentation } from '../utils/messageDisplay'
-import { streamChatTurn } from '../utils/ollamaStreaming'
-import { MessageThinking, MessageVerbose, StreamingPlaceholder } from './MessageThinking'
+import { resolveAssistantPresentation, resolveDisplayedAssistantContent, resolveDisplayedThinkingContent, splitPromptDebugContent } from '../utils/messageDisplay'
+import { appendWebSearchSources, mergeWebSearchSources, parseWebSearchSourcesFromToolResult, type WebSearchSource } from '../utils/webSearchSources'
+import { detectModelCapabilities } from '../engine/api/ollamaClient'
+import { MessageThinking, MessageVerbose } from './MessageThinking'
 import { HighlightedChatText } from './HighlightedChatText'
 import { writeAuditEvent } from '../utils/audit'
 import { buildSystemPromptFromPersonality } from '../utils/defaultSeeds'
-import { useCommandRegistry } from '../stores/commandRegistryStore'
+import { getSlashCommandSuggestions, useCommandRegistry } from '../stores/commandRegistryStore'
 import { usePersonalityStore } from '../stores/personalityStore'
 import { useCoworkStore } from '../stores/coworkStore'
 import { useMemoryStore } from '../stores/memoryStore'
+import { safeInvoke } from '../utils/safeInvoke'
+import { useEngineStore } from '../stores/engineStore'
+
+function getParentDirectory(path: string): string {
+  const normalized = path.trim()
+  const lastSeparatorIndex = Math.max(normalized.lastIndexOf('\\'), normalized.lastIndexOf('/'))
+  if (lastSeparatorIndex < 0) return '.'
+  if (lastSeparatorIndex === 0) return normalized.slice(0, 1)
+  if (lastSeparatorIndex === 2 && /^[a-zA-Z]:[\\/]/.test(normalized)) {
+    return normalized.slice(0, 3)
+  }
+  return normalized.slice(0, lastSeparatorIndex)
+}
+
+function getEffectiveChatCwd(
+  attachments: ChatAttachment[],
+  workspaceDefaultPath: string,
+): string {
+  for (const attachment of attachments) {
+    if (!hasLocalAttachmentPath(attachment)) continue
+    const normalized = attachment.path.trim()
+    if (normalized && attachment.kind === 'folder') {
+      return normalized
+    }
+  }
+
+  for (const attachment of attachments) {
+    if (!hasLocalAttachmentPath(attachment)) continue
+    const normalized = attachment.path.trim()
+    if (normalized && attachment.kind === 'file') {
+      return getParentDirectory(normalized)
+    }
+  }
+
+  return workspaceDefaultPath.trim() || '.'
+}
+
+async function buildEngineUserInput(promptWithAttachments: string, attachments: ChatAttachment[]): Promise<string | ContentBlock[]> {
+  const imageBlocks = await toImageContentBlocks(attachments)
+  if (imageBlocks.length === 0) {
+    return promptWithAttachments
+  }
+
+  return [
+    { type: 'text', text: promptWithAttachments },
+    ...imageBlocks,
+  ]
+}
+
+type LiveToolCallPatch = Partial<Omit<LiveToolCall, 'id' | 'startedAt'>> & {
+  id: string
+  toolName: string
+  input: Record<string, unknown>
+}
+
+function upsertLiveToolCall(calls: LiveToolCall[], patch: LiveToolCallPatch): LiveToolCall[] {
+  const now = Date.now()
+  const existingIndex = calls.findIndex((call) => call.id === patch.id)
+  if (existingIndex < 0) {
+    return [
+      ...calls,
+      {
+        id: patch.id,
+        toolName: patch.toolName,
+        input: patch.input,
+        status: patch.status ?? 'requested',
+        result: patch.result,
+        error: patch.error,
+        startedAt: now,
+        finishedAt: patch.finishedAt,
+      },
+    ]
+  }
+
+  return calls.map((call, index) => {
+    if (index !== existingIndex) return call
+    return {
+      ...call,
+      ...patch,
+      startedAt: call.startedAt,
+      finishedAt: patch.finishedAt ?? call.finishedAt,
+    }
+  })
+}
+
+function findLiveToolCallId(calls: LiveToolCall[], toolName: string, input: Record<string, unknown>): string {
+  const inputJson = JSON.stringify(input ?? {})
+  const exact = calls.find((call) => call.toolName === toolName && JSON.stringify(call.input ?? {}) === inputJson)
+  if (exact) return exact.id
+
+  const active = [...calls].reverse().find((call) =>
+    call.toolName === toolName && (call.status === 'requested' || call.status === 'running' || call.status === 'approval')
+  )
+  if (active) return active.id
+
+  return `approval-${toolName}-${Date.now()}`
+}
+
+function formatToolPayload(value: unknown): string {
+  if (value === undefined || value === null || value === '') return ''
+  if (typeof value === 'string') return value
+  try {
+    return JSON.stringify(value, null, 2)
+  } catch {
+    return String(value)
+  }
+}
+
+function getToolStatusLabel(status: LiveToolCallStatus): string {
+  switch (status) {
+    case 'requested':
+      return 'Tool Call erkannt'
+    case 'running':
+      return 'Tool laeuft'
+    case 'approval':
+      return 'Freigabe erforderlich'
+    case 'completed':
+      return 'Abgeschlossen'
+    case 'failed':
+      return 'Fehlgeschlagen'
+  }
+}
+
+function getToolStatusIcon(status: LiveToolCallStatus) {
+  switch (status) {
+    case 'requested':
+      return <Clock3 size={15} />
+    case 'running':
+      return <Loader2 size={15} className="tool-call-spin" />
+    case 'approval':
+      return <ShieldAlert size={15} />
+    case 'completed':
+      return <CheckCircle2 size={15} />
+    case 'failed':
+      return <XCircle size={15} />
+  }
+}
+
+function LiveToolCalls({ calls }: { calls?: LiveToolCall[] }) {
+  if (!Array.isArray(calls) || calls.length === 0) return null
+
+  return (
+    <div className="live-tool-call-list" aria-label="Live Tool Calls">
+      {calls.map((call) => {
+        const inputPreview = formatToolPayload(call.input)
+        const resultPreview = formatToolPayload(call.error ?? call.result)
+        return (
+          <div key={call.id} className={`live-tool-call ${call.status}`}>
+            <div className="live-tool-call-header">
+              <span className="live-tool-call-icon" aria-hidden="true">
+                {getToolStatusIcon(call.status)}
+              </span>
+              <span className="live-tool-call-name">
+                <Wrench size={14} aria-hidden="true" />
+                {call.toolName}
+              </span>
+              <span className="live-tool-call-status">{getToolStatusLabel(call.status)}</span>
+            </div>
+            {inputPreview && (
+              <details className="live-tool-call-detail" open={call.status === 'requested' || call.status === 'running' || call.status === 'approval'}>
+                <summary>Input</summary>
+                <pre>{inputPreview}</pre>
+              </details>
+            )}
+            {resultPreview && (
+              <details className="live-tool-call-detail" open={call.status === 'failed'}>
+                <summary>{call.error ? 'Fehler' : 'Ergebnis'}</summary>
+                <pre>{resultPreview}</pre>
+              </details>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
 
 export default function ChatView() {
   const ollama = useConfigStore((s) => s.ollama)
@@ -31,7 +216,12 @@ export default function ChatView() {
   const verboseMode = useConfigStore((s) => s.preferences.verboseMode)
   const limitThinkingWindow = useConfigStore((s) => s.preferences.limitThinkingWindow)
   const superVerboseAuditLogging = useConfigStore((s) => s.preferences.superVerboseAuditLogging)
+  const workspaceDefaultPath = useConfigStore((s) => s.preferences.workspaceDefaultPath)
   const setOllama = useConfigStore((s) => s.setOllama)
+  const setAvailableModels = useConfigStore((s) => s.setAvailableModels)
+  const engineSendMessage = useEngineStore((s) => s.sendMessage)
+  const resolveEngineApproval = useEngineStore((s) => s.resolveApproval)
+  const liveThinkingText = useEngineStore((s) => s.thinkingText)
   const {
     activeThreadId,
     pendingApproval,
@@ -51,10 +241,15 @@ export default function ChatView() {
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const logRef = useRef<HTMLDivElement>(null)
   const activeMessages = Array.isArray(activeThread?.messages) ? activeThread.messages : []
+  const lastActiveMessage = activeMessages[activeMessages.length - 1]
   const selectableModels = Array.isArray(availableModels) ? availableModels : []
   const approvalSteps = Array.isArray(pendingApproval) ? pendingApproval : []
+  const visibleMessages = activeMessages.filter((message) => message.role !== 'system' || message.visibleInChat)
+  const modelCapabilities = detectModelCapabilities(ollama.model)
+  const selectedModelAvailable = selectableModels.length === 0 || selectableModels.includes(ollama.model)
   const [attachments, setAttachments] = useState<ChatAttachment[]>([])
   const [attachmentNotice, setAttachmentNotice] = useState<string | null>(null)
+  const [modelNotice, setModelNotice] = useState<string | null>(null)
   const [slashSuggestions, setSlashSuggestions] = useState<string[]>([])
 
   const personalities = usePersonalityStore((s) => s.personalities)
@@ -64,28 +259,78 @@ export default function ChatView() {
   const executeSlashCommand = useCommandRegistry((s) => s.executeCommand)
 
   useEffect(() => {
-    if (logRef.current) {
-      logRef.current.scrollTop = logRef.current.scrollHeight
+    const node = logRef.current
+    if (!node) return
+
+    const frame = window.requestAnimationFrame(() => {
+      node.scrollTop = node.scrollHeight
+    })
+
+    return () => window.cancelAnimationFrame(frame)
+  }, [
+    activeThreadId,
+    activeMessages.length,
+    lastActiveMessage?.id,
+    lastActiveMessage?.streaming,
+    lastActiveMessage?.content,
+    lastActiveMessage?.thinkingContent,
+    lastActiveMessage?.verboseContent,
+  ])
+
+  useEffect(() => {
+    let cancelled = false
+
+    const refreshModels = async () => {
+      try {
+        const health = await safeInvoke<{
+          ok: boolean
+          models: string[]
+        }>('ollama_health_check', { config: ollama }, { ok: false, models: [] })
+
+        if (cancelled) return
+
+        const models = Array.isArray(health.models) ? health.models : []
+        setAvailableModels(models)
+
+        if (!health.ok) {
+          setModelNotice(`Ollama-Endpunkt aktuell nicht erreichbar: ${ollama.baseUrl}`)
+          return
+        }
+
+        if (models.length > 0 && !models.includes(ollama.model)) {
+          const fallbackModel = models[0]
+          setOllama({ model: fallbackModel })
+          setModelNotice(`Modell ${ollama.model} ist auf ${ollama.baseUrl} nicht verfuegbar. Wechsel zu ${fallbackModel}.`)
+          return
+        }
+
+        setModelNotice(null)
+      } catch {
+        if (!cancelled) {
+          setModelNotice(`Modellliste konnte fuer ${ollama.baseUrl} nicht aktualisiert werden.`)
+        }
+      }
     }
-  }, [activeMessages.length])
+
+    void refreshModels()
+
+    return () => {
+      cancelled = true
+    }
+  }, [ollama.baseUrl, ollama.model, setAvailableModels, setOllama])
 
   const handleInputChange = (value: string) => {
-    if (value.startsWith('/')) {
-      const partial = value.toLowerCase()
-      const matches = registryCommands
-        .filter(c => c.command.startsWith(partial))
-        .slice(0, 8)
-        .map(c => c.command)
-      setSlashSuggestions(matches)
-    } else {
-      setSlashSuggestions([])
-    }
+    const matches = getSlashCommandSuggestions(registryCommands, value).map((command) => command.command)
+    setSlashSuggestions(matches)
   }
 
   const handleSend = async (event: FormEvent) => {
     event.preventDefault()
-    const text = inputRef.current?.value?.trim()
-    if (!text || busy || !activeThreadId) return
+    const text = inputRef.current?.value?.trim() ?? ''
+    const hasAttachments = attachments.length > 0
+    if ((!text && !hasAttachments) || busy || !activeThreadId) return
+    const fallbackAttachmentPrompt = 'Bitte analysiere die angehaengten Bilder oder Dateien und fuehre die Aufgabe aus.'
+    const effectiveInput = text || fallbackAttachmentPrompt
 
     // Slash command detection: if input starts with / and matches a registered command
     if (text.startsWith('/')) {
@@ -113,9 +358,10 @@ export default function ChatView() {
     setSlashSuggestions([])
 
     const mergedForSend = mergeAttachments([], attachments)
-    const attachmentBuild = await buildAttachmentPromptContext(mergedForSend.next, text)
+    const attachmentBuild = await buildAttachmentPromptContext(mergedForSend.next, effectiveInput)
     const attachmentContext = attachmentBuild.context
-    const promptWithAttachments = attachmentContext ? `${text}\n\n${attachmentContext}` : text
+    const promptWithAttachments = attachmentContext ? `${effectiveInput}\n\n${attachmentContext}` : effectiveInput
+    const engineUserInput = await buildEngineUserInput(promptWithAttachments, mergedForSend.next)
 
     const userMessage = {
       role: 'user' as const,
@@ -124,6 +370,7 @@ export default function ChatView() {
       attachments: mergedForSend.next,
       debugContent: promptWithAttachments,
     }
+    let userMessageId: string | null = null
     const history = activeMessages
       .filter((m) => m.role !== 'system')
       .map((m) => ({ role: m.role, content: typeof m.content === 'string' ? m.content : '' }))
@@ -151,14 +398,19 @@ export default function ChatView() {
       })
     }
 
-    addMessage(activeThreadId, userMessage)
+    userMessageId = addMessage(activeThreadId, userMessage)
     if (inputRef.current) inputRef.current.value = ''
     setAttachments([])
     setAttachmentNotice(null)
+    const effectiveTimeoutMs = Math.max(ollama.timeoutMs, 600000)
+    if (effectiveTimeoutMs !== ollama.timeoutMs) {
+      setOllama({ timeoutMs: effectiveTimeoutMs })
+    }
     setBusy(true)
     setError(null)
 
     let assistantMessageId: string | null = null
+    let requestPreviewMessageId: string | null = null
 
     try {
       const started = Date.now()
@@ -169,7 +421,7 @@ export default function ChatView() {
         details: {
           endpoint: ollama.baseUrl,
           model: ollama.model,
-          timeoutMs: ollama.timeoutMs,
+          timeoutMs: effectiveTimeoutMs,
           historyItems: history.length,
           compactedHistoryItems: compactedHistory.compacted.length,
           compactedDroppedItems: compactedHistory.droppedCount,
@@ -200,6 +452,13 @@ export default function ChatView() {
         })
       }
       let rawAssistantMessage = ''
+      let rawThinkingMessage = ''
+      let engineErrorMessage = ''
+      let approvalSummary = ''
+      let approvalTaskCreated = false
+      let webSearchSources: WebSearchSource[] = []
+      const usedToolNames = new Set<string>()
+      let liveToolCalls: LiveToolCall[] = []
       const createdAssistantMessageId = addMessage(activeThreadId, {
         role: 'assistant',
         content: '',
@@ -208,36 +467,211 @@ export default function ChatView() {
       })
       assistantMessageId = createdAssistantMessageId
 
-      const response = await streamChatTurn(
-        {
-          prompt: promptWithAttachments,
-          history: compactedHistory.compacted,
-          config: ollama,
-        },
-        (chunk) => {
-          rawAssistantMessage += chunk
-          const presentation = resolveAssistantPresentation(rawAssistantMessage, {
-            verboseMode,
-          })
-          updateMessage(activeThreadId, createdAssistantMessageId, {
-            content: presentation.content,
-            thinkingContent: presentation.thinkingContent,
-          })
-        },
-      )
+      const cwd = getEffectiveChatCwd(mergedForSend.next, workspaceDefaultPath)
+      const updateLiveToolCall = (patch: LiveToolCallPatch) => {
+        liveToolCalls = upsertLiveToolCall(liveToolCalls, patch)
+        updateMessage(activeThreadId, createdAssistantMessageId, {
+          liveToolCalls,
+        })
+      }
 
-      const proposedPlan = Array.isArray(response.proposedPlan) ? response.proposedPlan : []
-      const requiresApproval = Boolean(response.requiresApproval)
+      await engineSendMessage(engineUserInput, cwd, (event) => {
+        switch (event.type) {
+          case 'text_delta': {
+            rawAssistantMessage += event.text
+            const presentation = resolveAssistantPresentation(rawAssistantMessage, {
+              verboseMode,
+              thinkingContent: rawThinkingMessage,
+            })
+            updateMessage(activeThreadId, createdAssistantMessageId, {
+              content: presentation.content,
+              thinkingContent: presentation.thinkingContent,
+            })
+            break
+          }
+          case 'thinking_delta':
+            rawThinkingMessage += event.thinking
+            updateMessage(activeThreadId, createdAssistantMessageId, {
+              thinkingContent: rawThinkingMessage,
+            })
+            break
+          case 'request_debug':
+            if (userMessageId) {
+              updateMessage(activeThreadId, userMessageId, {
+                debugContent: `${promptWithAttachments}\n\n[OLLAMA REQUEST PREVIEW]\n${event.payload}`,
+              })
+            }
+            if (requestPreviewMessageId) {
+              updateMessage(activeThreadId, requestPreviewMessageId, {
+                content: `Ollama Request Preview\n${event.payload}`,
+              })
+            } else {
+              requestPreviewMessageId = addMessage(activeThreadId, {
+                role: 'system',
+                content: `Ollama Request Preview\n${event.payload}`,
+                visibleInChat: true,
+                timestamp: Date.now(),
+              })
+            }
+            break
+          case 'assistant_message': {
+            const blocks = Array.isArray(event.message.content) ? event.message.content : []
+            const textFromEvent = blocks
+              .filter((block): block is { type: 'text'; text: string } => block.type === 'text')
+              .map((block) => block.text)
+              .join('\n')
+              .trim()
+            const thinkingFromEvent = blocks
+              .filter((block): block is { type: 'thinking'; thinking: string } => block.type === 'thinking')
+              .map((block) => block.thinking)
+              .join('\n\n')
+              .trim()
+            const toolUseBlocks = blocks
+              .filter((block): block is { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> } =>
+                block.type === 'tool_use'
+                && typeof block.id === 'string'
+                && typeof block.name === 'string'
+                && typeof block.input === 'object'
+                && block.input !== null,
+              )
 
-      const fallbackText = requiresApproval && proposedPlan.length > 0
-        ? `Plan erstellt. Bitte Freigabe prüfen:\n- ${proposedPlan.join('\n- ')}`
-        : 'Das Modell hat keine sichtbare Antwort geliefert. Bitte erneut versuchen oder Modell/Prompt prüfen.'
-      const presentation = resolveAssistantPresentation(response.assistantMessage, {
+            if (!rawAssistantMessage && textFromEvent) {
+              rawAssistantMessage = textFromEvent
+            }
+            if (!rawThinkingMessage && thinkingFromEvent) {
+              rawThinkingMessage = thinkingFromEvent
+            }
+            for (const block of toolUseBlocks) {
+              updateLiveToolCall({
+                id: block.id,
+                toolName: block.name,
+                input: block.input,
+                status: 'requested',
+              })
+            }
+
+            const presentation = resolveAssistantPresentation(rawAssistantMessage, {
+              verboseMode,
+              thinkingContent: rawThinkingMessage,
+            })
+            updateMessage(activeThreadId, createdAssistantMessageId, {
+              content: presentation.content,
+              thinkingContent: presentation.thinkingContent,
+            })
+            break
+          }
+          case 'tool_call_delta':
+            updateLiveToolCall({
+              id: event.toolUseId,
+              toolName: event.toolName,
+              input: event.input,
+              status: 'requested',
+            })
+            break
+          case 'approval_required': {
+            approvalSummary = `${event.request.toolName}: ${event.request.description}`
+            setPendingApproval([approvalSummary])
+            setBusy(false)
+            updateLiveToolCall({
+              id: findLiveToolCallId(liveToolCalls, event.request.toolName, event.request.input),
+              toolName: event.request.toolName,
+              input: event.request.input,
+              status: 'approval',
+              result: event.request.description,
+            })
+
+            if (!approvalTaskCreated) {
+              const taskId = createTask(text, text.slice(0, 60), activeThreadId)
+              const steps: TaskStep[] = [{
+                id: `${taskId}-step-0`,
+                index: 0,
+                title: approvalSummary,
+                state: 'pending',
+                requiresApproval: true,
+                riskLevel: event.request.riskLevel,
+                output: null,
+              }]
+              setTaskSteps(taskId, steps)
+              updateTaskStatus(taskId, 'waiting_approval')
+              approvalTaskCreated = true
+            }
+
+            addLog({
+              level: 'warn',
+              area: 'llm',
+              message: `Freigabe erforderlich: ${event.request.toolName}`,
+              details: event.request,
+            })
+            break
+          }
+          case 'tool_use_start':
+            usedToolNames.add(event.toolName)
+            updateLiveToolCall({
+              id: event.toolUseId,
+              toolName: event.toolName,
+              input: event.input,
+              status: 'running',
+            })
+            addLog({
+              level: 'info',
+              area: 'llm',
+              message: `Tool gestartet: ${event.toolName}`,
+              details: { toolName: event.toolName, input: event.input },
+            })
+            break
+          case 'tool_use_complete':
+            usedToolNames.add(event.toolName)
+            updateLiveToolCall({
+              id: event.toolUseId,
+              toolName: event.toolName,
+              input: liveToolCalls.find((call) => call.id === event.toolUseId)?.input ?? {},
+              status: event.result.trim().toLowerCase().startsWith('fehler:') ? 'failed' : 'completed',
+              result: event.result,
+              error: event.result.trim().toLowerCase().startsWith('fehler:') ? event.result : undefined,
+              finishedAt: Date.now(),
+            })
+            if (event.toolName === 'WebSearch') {
+              webSearchSources = mergeWebSearchSources(
+                webSearchSources,
+                parseWebSearchSourcesFromToolResult(event.result),
+              )
+            }
+            addLog({
+              level: 'info',
+              area: 'llm',
+              message: `Tool fertig: ${event.toolName}`,
+              details: { toolName: event.toolName, result: event.result.slice(0, 500) },
+            })
+            break
+          case 'error':
+            engineErrorMessage = event.error
+            addLog({ level: 'error', area: 'llm', message: event.error })
+            break
+        }
+      }, {
+        threadId: activeThreadId,
+        messages: activeMessages.map((message) => ({
+          role: message.role,
+          content: typeof message.content === 'string' ? message.content : '',
+          debugContent: message.debugContent,
+        })),
+      })
+
+      const fallbackText = engineErrorMessage
+        ? `LLM-Anfrage fehlgeschlagen: ${engineErrorMessage}\n\nPrüfe unter Einstellungen den Ollama-Endpoint, das Modell und den Timeout.`
+        : approvalSummary
+          ? `Freigabe erforderlich: ${approvalSummary}`
+          : usedToolNames.size > 0
+            ? `Die Engine hat Tools verwendet (${Array.from(usedToolNames).join(', ')}), aber keinen sichtbaren Abschlusstext geliefert.`
+            : 'Das Modell hat keine sichtbare Antwort geliefert. Bitte erneut versuchen oder Modell/Prompt prüfen.'
+      const presentation = resolveAssistantPresentation(rawAssistantMessage, {
         verboseMode,
+        thinkingContent: rawThinkingMessage,
         fallbackText,
       })
+      const finalContent = appendWebSearchSources(presentation.content, webSearchSources)
       updateMessage(activeThreadId, createdAssistantMessageId, {
-        content: presentation.content,
+        content: finalContent,
         debugContent: presentation.debugContent,
         thinkingContent: presentation.thinkingContent,
         streaming: false,
@@ -249,10 +683,12 @@ export default function ChatView() {
         area: 'llm',
         message: 'LLM-Anfrage erfolgreich',
         details: {
-          endpoint: response.endpoint,
-          model: response.model,
+          endpoint: ollama.baseUrl,
+          model: ollama.model,
+          cwd,
           durationMs: Date.now() - started,
-          responseChars: response.assistantMessage.length,
+          responseChars: rawAssistantMessage.length,
+          usedTools: Array.from(usedToolNames),
         },
       })
       if (superVerboseAuditLogging) {
@@ -261,29 +697,14 @@ export default function ChatView() {
           threadId: activeThreadId,
           prompt: text,
           promptWithAttachments,
-          assistantRawResponse: response.assistantMessage,
+          assistantRawResponse: rawAssistantMessage,
           assistantVisibleResponse: presentation.content,
-          endpoint: response.endpoint,
-          model: response.model,
-          requiresApproval,
-          proposedPlan,
+          endpoint: ollama.baseUrl,
+          model: ollama.model,
+          cwd,
+          usedTools: Array.from(usedToolNames),
+          approvalSummary,
         })
-      }
-
-      if (requiresApproval) {
-        setPendingApproval(proposedPlan)
-        const taskId = createTask(text, text.slice(0, 60), activeThreadId)
-        const steps: TaskStep[] = proposedPlan.map((title, i) => ({
-          id: `${taskId}-step-${i}`,
-          index: i,
-          title,
-          state: 'pending',
-          requiresApproval: true,
-          riskLevel: 'medium',
-          output: null,
-        }))
-        setTaskSteps(taskId, steps)
-        updateTaskStatus(taskId, 'waiting_approval')
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
@@ -295,7 +716,7 @@ export default function ChatView() {
         details: {
           endpoint: ollama.baseUrl,
           model: ollama.model,
-          timeoutMs: ollama.timeoutMs,
+          timeoutMs: effectiveTimeoutMs,
           error: message,
           source: 'chat',
         },
@@ -327,12 +748,26 @@ export default function ChatView() {
 
   const handleApprove = () => {
     if (approvalSteps.length === 0 || !activeThreadId) return
+    setBusy(true)
+    resolveEngineApproval({ allowed: true })
     addMessage(activeThreadId, {
       role: 'system',
       content: `Plan freigegeben: ${approvalSteps.join(' | ')}`,
       timestamp: Date.now(),
     })
     clearApproval()
+  }
+
+  const handleReject = () => {
+    if (approvalSteps.length === 0 || !activeThreadId) return
+    resolveEngineApproval({ allowed: false, reason: 'Vom Benutzer abgelehnt.' })
+    addMessage(activeThreadId, {
+      role: 'system',
+      content: `Plan abgelehnt: ${approvalSteps.join(' | ')}`,
+      timestamp: Date.now(),
+    })
+    clearApproval()
+    setBusy(false)
   }
 
   const handleModelChange = (model: string) => {
@@ -376,6 +811,27 @@ export default function ChatView() {
     addNewAttachments(selectedPaths.map((path) => ({ path, kind: 'file' })))
   }
 
+  const handleInputPaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
+    const imageFiles = Array.from(event.clipboardData.items)
+      .filter((item) => item.type.startsWith('image/'))
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => file !== null)
+
+    if (imageFiles.length === 0) {
+      return
+    }
+
+    event.preventDefault()
+    void Promise.all(imageFiles.map((file) => createInlineImageAttachment(file)))
+      .then((inlineAttachments) => {
+        addNewAttachments(inlineAttachments)
+        setAttachmentNotice(null)
+      })
+      .catch(() => {
+        setAttachmentNotice('Bild aus Zwischenablage konnte nicht gelesen werden.')
+      })
+  }
+
   const handleRemoveAttachment = (target: ChatAttachment) => {
     setAttachments((prev) => prev.filter((item) => !(item.path === target.path && item.kind === target.kind)))
     setAttachmentNotice(null)
@@ -386,11 +842,20 @@ export default function ChatView() {
   return (
     <div className="chat-view">
       <div className="chat-log" ref={logRef}>
-        {activeMessages.map((msg, index) => {
+        {visibleMessages.map((msg, index) => {
           const content = typeof msg.content === 'string' ? msg.content : ''
-          const hasLiveVerbose = verboseMode && !!msg.verboseContent?.trim()
-          const hasLiveThinking = verboseMode && !!msg.thinkingContent?.trim()
+          const { promptDebug, ollamaRequestPreview } = splitPromptDebugContent(msg.debugContent)
           const attachmentsForMessage = Array.isArray(msg.attachments) ? msg.attachments : []
+          const imageAttachments = attachmentsForMessage.filter((item) => item.kind === 'file' && isImageAttachment(item))
+          const displayedThinkingContent = resolveDisplayedThinkingContent(
+            msg.thinkingContent,
+            liveThinkingText,
+            {
+              streaming: msg.streaming,
+              preferLive: msg.streaming && index === visibleMessages.length - 1,
+            },
+          )
+          const displayedContent = resolveDisplayedAssistantContent(content, displayedThinkingContent)
           return (
           <div key={`${msg.timestamp}-${index}`} className={`cowork-msg ${msg.role}`}>
             <div className="msg-avatar">
@@ -401,14 +866,14 @@ export default function ChatView() {
                 {msg.role === 'user' ? 'Du' : msg.role === 'assistant' ? 'Open_Cowork' : 'System'}
               </div>
               <div className="msg-content">
-                {content ? <HighlightedChatText content={content} /> : (msg.streaming && !hasLiveVerbose && !hasLiveThinking ? <StreamingPlaceholder /> : null)}
+                {displayedContent ? <HighlightedChatText content={displayedContent} /> : null}
               </div>
-              {verboseMode && (
-                <MessageThinking
-                  content={msg.thinkingContent}
-                  limitToRollingWindow={limitThinkingWindow}
-                />
-              )}
+              <MessageThinking
+                content={displayedThinkingContent}
+                limitToRollingWindow={limitThinkingWindow}
+                streaming={msg.streaming}
+              />
+              <LiveToolCalls calls={msg.liveToolCalls} />
               {verboseMode && (
                 <MessageVerbose
                   content={msg.verboseContent}
@@ -416,18 +881,40 @@ export default function ChatView() {
                 />
               )}
               {attachmentsForMessage.length > 0 && (
-                <div className="message-attachments">
-                  {attachmentsForMessage.map((item) => (
-                    <span key={`${item.kind}-${item.path}`} className="message-attachment-chip" title={item.path}>
-                      {item.kind === 'folder' ? '📁' : '📄'} {getPathName(item.path)}
-                    </span>
-                  ))}
-                </div>
+                <>
+                  {imageAttachments.length > 0 && (
+                    <div className="message-attachment-previews">
+                      {imageAttachments.map((item) => (
+                        <div key={`preview-${item.kind}-${item.path}`} className="message-attachment-preview" title={item.label ?? item.path}>
+                          <img
+                            src={getAttachmentPreviewSrcForAttachment(item)}
+                            alt={getAttachmentDisplayName(item)}
+                            className="message-attachment-image"
+                            loading="lazy"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div className="message-attachments">
+                    {attachmentsForMessage.map((item) => (
+                      <span key={`${item.kind}-${item.path}`} className="message-attachment-chip" title={item.label ?? item.path}>
+                        {item.kind === 'folder' ? '📁' : isImageAttachment(item) ? '🖼️' : '📄'} {getAttachmentDisplayName(item)}
+                      </span>
+                    ))}
+                  </div>
+                </>
               )}
-              {verboseMode && msg.debugContent && msg.debugContent !== content && (
+              {ollamaRequestPreview && (
+                <details className="message-debug">
+                  <summary>Ollama Request Preview</summary>
+                  <pre>{ollamaRequestPreview}</pre>
+                </details>
+              )}
+              {verboseMode && promptDebug && promptDebug !== content && (
                 <details className="message-debug">
                   <summary>Verbose: interner Prompt</summary>
-                  <pre>{msg.debugContent}</pre>
+                  <pre>{promptDebug}</pre>
                 </details>
               )}
             </div>
@@ -464,7 +951,7 @@ export default function ChatView() {
             <button type="button" className="btn-approve" onClick={handleApprove} disabled={busy}>
               ✓ Freigeben
             </button>
-            <button type="button" className="btn-reject" onClick={clearApproval} disabled={busy}>
+            <button type="button" className="btn-reject" onClick={handleReject} disabled={busy}>
               ✗ Ablehnen
             </button>
           </div>
@@ -492,7 +979,21 @@ export default function ChatView() {
               ) : (
                 <option value={ollama.model}>{ollama.model}</option>
               )}
+              {selectableModels.length > 0 && !selectableModels.includes(ollama.model) && (
+                <option value={ollama.model}>{ollama.model}</option>
+              )}
             </select>
+            <p
+              className="hint-text"
+              style={{
+                marginTop: 6,
+                maxWidth: 460,
+                color: (modelNotice || !selectedModelAvailable) ? 'var(--danger)' : 'var(--text-muted)',
+              }}
+            >
+              {modelNotice
+                ?? `Endpoint: ${ollama.baseUrl} | Modellfamilie: ${modelCapabilities.family} | ${modelCapabilities.supportsTools ? 'Tool-Calls aktiviert' : 'Tool-Calls deaktiviert'}`}
+            </p>
           </label>
           <div className="attachment-actions">
             <button type="button" className="btn-attach" onClick={handleAttachFiles} disabled={busy}>
@@ -505,15 +1006,15 @@ export default function ChatView() {
           {attachments.length > 0 && (
             <div className="attachment-list" aria-label="Verbundene Elemente">
               {attachments.map((item) => (
-                <span key={`${item.kind}-${item.path}`} className="attachment-chip" title={item.path}>
+                  <span key={`${item.kind}-${item.path}`} className="attachment-chip" title={item.label ?? item.path}>
                   <span className="attachment-chip-label">
-                    {item.kind === 'folder' ? 'Ordner' : 'Datei'}: {getPathName(item.path)}
+                      {item.kind === 'folder' ? 'Ordner' : isImageAttachment(item) ? 'Bild' : 'Datei'}: {getAttachmentDisplayName(item)}
                   </span>
                   <button
                     type="button"
                     className="attachment-remove"
                     onClick={() => handleRemoveAttachment(item)}
-                    aria-label={`Anhang entfernen: ${item.path}`}
+                      aria-label={`Anhang entfernen: ${getAttachmentDisplayName(item)}`}
                     disabled={busy}
                   >
                     ×
@@ -559,6 +1060,7 @@ export default function ChatView() {
             placeholder="Nachricht senden oder /command..."
             disabled={busy}
             onChange={(e) => handleInputChange(e.target.value)}
+            onPaste={handleInputPaste}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault()

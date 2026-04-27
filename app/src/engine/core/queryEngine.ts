@@ -50,6 +50,7 @@ import {
 } from '../api/anthropicClient'
 import {
   streamOllamaMessages,
+  buildOllamaChatRequest,
   type OllamaEngineConfig,
 } from '../api/ollamaClient'
 import { getAllTools, getToolDefinitions, registerAllBuiltinTools } from '../tools/registry'
@@ -95,6 +96,8 @@ export type EngineConfig = {
 export type EngineEvent =
   | { type: 'text_delta'; text: string }
   | { type: 'thinking_delta'; thinking: string }
+  | { type: 'request_debug'; provider: 'ollama'; payload: string }
+  | { type: 'tool_call_delta'; toolUseId: string; toolName: string; input: Record<string, unknown> }
   | { type: 'tool_use_start'; toolUseId: string; toolName: string; input: Record<string, unknown> }
   | { type: 'tool_use_complete'; toolUseId: string; toolName: string; result: string }
   | { type: 'tool_progress'; toolUseId: string; data: ToolProgressData }
@@ -107,6 +110,11 @@ export type EngineEvent =
   | { type: 'retry'; reason: string; attempt: number }
   | { type: 'error'; error: string }
   | { type: 'done'; messages: Message[]; totalUsage: TokenUsage; totalCostUsd: number }
+
+type PermissionDecision =
+  | { kind: 'allow' }
+  | { kind: 'deny'; reason: string }
+  | { kind: 'ask'; request: ApprovalRequest }
 
 // ── Query Engine Class ─────────────────────────────────────────────────────
 
@@ -212,11 +220,14 @@ export class QueryEngine {
 
   async *query(
     messages: Message[],
-    userInput?: string,
+    userInput?: string | ContentBlock[],
   ): AsyncGenerator<EngineEvent> {
     // Prepare conversation
     let conversation = [...messages]
-    if (userInput) {
+    const hasUserInput = typeof userInput === 'string'
+      ? userInput.trim().length > 0
+      : Array.isArray(userInput) && userInput.length > 0
+    if (hasUserInput && userInput !== undefined) {
       conversation.push(createUserMessage(userInput))
     }
 
@@ -224,6 +235,8 @@ export class QueryEngine {
     let turnCount = 0
     let totalUsage: TokenUsage = { ...EMPTY_USAGE }
     let totalCostUsd = 0
+    let textExecutionRecoveryCount = 0
+    const maxTextExecutionRecoveries = 3
 
     // Build system prompt
     const fullSystemPrompt = this.buildSystemPrompt()
@@ -286,6 +299,11 @@ export class QueryEngine {
         try {
           let currentUsage: TokenUsage = { ...EMPTY_USAGE }
 
+          if (this.config.backend === 'ollama' && this.config.ollama) {
+            const { debugPreview } = buildOllamaChatRequest(this.config.ollama, apiMessages, fullSystemPrompt, toolDefs)
+            yield { type: 'request_debug', provider: 'ollama', payload: debugPreview }
+          }
+
           const stream = this.createStream(apiMessages, fullSystemPrompt, toolDefs)
 
           let streamResult: IteratorResult<StreamEvent, SampleResult>
@@ -302,6 +320,17 @@ export class QueryEngine {
 
             // Forward stream events
             switch (event.type) {
+              case 'content_block_start': {
+                if (event.content_block.type === 'tool_use') {
+                  yield {
+                    type: 'tool_call_delta',
+                    toolUseId: event.content_block.id,
+                    toolName: event.content_block.name,
+                    input: event.content_block.input,
+                  }
+                }
+                break
+              }
               case 'content_block_delta': {
                 if (event.delta.type === 'text_delta') {
                   yield { type: 'text_delta', text: event.delta.text }
@@ -402,6 +431,44 @@ export class QueryEngine {
       const toolUseBlocks = getToolUseBlocks(assistantMsg)
 
       if (toolUseBlocks.length === 0) {
+        const assistantText = extractTextContent(assistantMsg)
+        const latestUserText = this.getLatestUserText(conversation)
+
+        if (textExecutionRecoveryCount < maxTextExecutionRecoveries && this.config.permissionMode !== 'plan') {
+          const executionRecoveryMessage = this.buildNarratedExecutionRecoveryMessage(assistantText, latestUserText)
+          if (executionRecoveryMessage) {
+            textExecutionRecoveryCount += 1
+            conversation.push(createUserMessage(executionRecoveryMessage))
+            continue
+          }
+
+          const desktopRecoveryMessage = this.buildDesktopExecutionRecoveryMessage(assistantText, latestUserText)
+          if (desktopRecoveryMessage) {
+            textExecutionRecoveryCount += 1
+            conversation.push(createUserMessage(desktopRecoveryMessage))
+            continue
+          }
+
+          const fallbackApproval = this.buildTextPlanApprovalRequest(assistantText, latestUserText)
+          if (fallbackApproval) {
+            textExecutionRecoveryCount += 1
+            const approvalPromise = this.beginApprovalRequest(fallbackApproval)
+            yield { type: 'approval_required', request: fallbackApproval }
+            const approved = await approvalPromise
+
+            if (!approved.allowed) {
+              yield { type: 'turn_complete', turnCount, stopReason: 'approval_denied' }
+              break
+            }
+
+            conversation.push(createUserMessage(
+              'Freigabe erteilt. Fuehre den zuletzt beschriebenen Plan jetzt direkt mit den verfuegbaren Tools aus. '
+              + 'Antworte nicht erneut mit einem Plan. Nutze Tool-Calls fuer die Ausfuehrung und gib danach nur das Ergebnis aus.',
+            ))
+            continue
+          }
+        }
+
         // No tool calls, turn is complete
         yield { type: 'turn_complete', turnCount, stopReason: sampleResult.stopReason }
         break
@@ -440,7 +507,19 @@ export class QueryEngine {
 
         // Permission check
         if (this.config.permissionMode !== 'bypass') {
-          const approved = await this.checkPermission(tool, block.input, context)
+          const decision = this.evaluatePermission(tool, block.input, context)
+          let approved: ApprovalResult
+
+          if (decision.kind === 'ask') {
+            const approvalPromise = this.beginApprovalRequest(decision.request)
+            yield { type: 'approval_required', request: decision.request }
+            approved = await approvalPromise
+          } else if (decision.kind === 'deny') {
+            approved = { allowed: false, reason: decision.reason }
+          } else {
+            approved = { allowed: true }
+          }
+
           if (!approved.allowed) {
             toolResults.push({
               type: 'tool_result',
@@ -585,10 +664,25 @@ export class QueryEngine {
     }
 
     // Available tools description
-    const tools = getAllTools()
+    const tools = this.tools
     if (tools.length > 0) {
-      const toolList = tools.map(t => `- ${t.name}: ${t.description}`).join('\n')
+      const toolList = tools
+        .map((t) => {
+          const aliasInfo = t.aliases && t.aliases.length > 0
+            ? ` (Aliases: ${t.aliases.join(', ')})`
+            : ''
+          return `- ${t.name}${aliasInfo}: ${t.description}`
+        })
+        .join('\n')
       parts.push(`\n\nVerfuegbare Tools:\n${toolList}`)
+      parts.push(
+        '\n\nTool-Nutzung:\n'
+        + '- Wenn eine Aufgabe Dateioperationen verlangt, fuehre sie mit Tools direkt aus statt nur Schritte zu beschreiben.\n'
+        + '- Fuer Strukturarbeit nutze bevorzugt ListDir/Glob zum Verstehen und danach CreateDirectory, MovePath, CopyPath, Write oder Edit.\n'
+        + '- Bei Desktop-Aufgaben arbeite im Loop Beobachten -> Aktion -> Verifikation. Wenn ein Verifikations-Screenshot zeigt, dass das Ziel noch nicht erreicht ist, fuehre direkt den naechsten Tool-Call aus statt nur die Absicht zu beschreiben.\n'
+        + '- Behaupte bei Desktop-Steuerung nie, dass ein Klick, Schliessen, Fokuswechsel oder eine Eingabe erfolgreich war, bevor der aktuelle Verifikations-Screenshot das bestaetigt.\n'
+        + '- Wenn dein lokales Modell keine nativen Tool-Calls sendet, gib Tool-Aufrufe notfalls exakt als eigene Zeile im Format ToolName({"arg":"wert"}) aus.',
+      )
     }
 
     // Plan mode notice
@@ -602,6 +696,97 @@ export class QueryEngine {
     }
 
     return parts.join('')
+  }
+
+  private getLatestUserText(messages: Message[]): string {
+    for (let index = messages.length - 1; index >= 0; index--) {
+      const message = messages[index]
+      if (message.type !== 'user') continue
+      const text = extractTextContent(message).trim()
+      if (text) return text
+    }
+    return ''
+  }
+
+  private buildTextPlanApprovalRequest(
+    assistantText: string,
+    latestUserText: string,
+  ): ApprovalRequest | null {
+    const normalizedAssistant = assistantText.trim()
+    const normalizedUser = latestUserText.trim()
+    if (!normalizedAssistant || !normalizedUser) return null
+
+    const looksExecutable = /(sortier|verschieb|bewege|kopier|organisier|erstelle|schreibe|loesch|lösch|umbenenn|move|copy|organize|sort|create|write|delete|rename)/i.test(normalizedUser)
+    if (!looksExecutable) return null
+
+    const lines = normalizedAssistant
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+    const structuredPlanLines = lines.filter((line) => /^\d+[.)]\s+/.test(line) || /^[-*]\s+/.test(line)).length
+    const mentionsApproval = /(approval|freigabe|destruktiv|riskant|vorsicht|plan:|dateiverschiebung)/i.test(normalizedAssistant)
+
+    if (!mentionsApproval && structuredPlanLines < 2) return null
+
+    const summary = lines.slice(0, 4).join(' | ').slice(0, 260)
+    return {
+      toolName: 'PlannedExecution',
+      input: {
+        task: normalizedUser.slice(0, 500),
+        plan: normalizedAssistant.slice(0, 2000),
+      },
+      description: summary || normalizedAssistant.slice(0, 260),
+      riskLevel: 'medium',
+      suggestedAction: 'ask',
+    }
+  }
+
+  private buildDesktopExecutionRecoveryMessage(
+    assistantText: string,
+    latestUserText: string,
+  ): string | null {
+    const normalizedAssistant = assistantText.trim()
+    const normalizedUser = latestUserText.trim()
+    if (!normalizedAssistant || !normalizedUser) return null
+
+    const hasDesktopTools = this.tools.some((tool) => tool.category === 'desktop')
+    if (!hasDesktopTools) return null
+
+    const desktopIntent = /(desktop|bildschirm|screen|screenshot|fenster|window|dialog|papierkorb|kicad|click|klick|taste|keypress|tippe|type|scroll|focus|fokus|schlie(?:ss|ß)|close|oeffne|öffne|starte|launch)/i
+    const planLanguage = /(ich werde|werde ich|ich versuche|ich probiere|nun werde ich|als naechstes|als nächstes|sobald|danach werde ich|ich ziele|ich starte jetzt|werde nun)/i
+    const explicitToolCall = /[A-Za-z][A-Za-z0-9_]*\s*\(\s*\{/.test(normalizedAssistant)
+
+    if ((!desktopIntent.test(normalizedUser) && !desktopIntent.test(normalizedAssistant)) || !planLanguage.test(normalizedAssistant) || explicitToolCall) {
+      return null
+    }
+
+    return 'Fuehre den naechsten Desktop-Schritt jetzt direkt mit den verfuegbaren Desktop-Tools aus. Bleibe im Loop Beobachten -> Aktion -> Verifikation: nutze den aktuellen Verifikations-Screenshot, pruefe ob das Ziel erreicht wurde, und wenn nicht, fuehre sofort den naechsten plausiblen Tool-Call aus. Antworte nicht erneut nur mit einer Absichtserklaerung.'
+  }
+
+  private buildNarratedExecutionRecoveryMessage(
+    assistantText: string,
+    latestUserText: string,
+  ): string | null {
+    const normalizedAssistant = assistantText.trim()
+    const normalizedUser = latestUserText.trim()
+    if (!normalizedAssistant) return null
+
+    const hasActionTools = this.tools.some((tool) => tool.category === 'desktop' || tool.category === 'shell' || tool.category === 'filesystem')
+    if (!hasActionTools) return null
+
+    const planLanguage = /(ich werde|werde ich|ich versuche|ich probiere|nun werde ich|als naechstes|als nächstes|sobald|danach werde ich|ich starte jetzt|ich beginne jetzt|werde nun|ich werde nun)/i
+    const shellOrFilesystemIntent = /(powershell|shell|bash|cmd|prozess|stop-process|taskkill|dateisystem|filesystem|explorer|terminal|konsole|verzeichnis|directory|folder|path:|^[A-Z]:\\)/i
+    const explicitToolCall = /[A-Za-z][A-Za-z0-9_]*\s*\(\s*\{/.test(normalizedAssistant)
+
+    if (explicitToolCall || !planLanguage.test(normalizedAssistant)) {
+      return null
+    }
+
+    if (!shellOrFilesystemIntent.test(normalizedAssistant) && !shellOrFilesystemIntent.test(normalizedUser)) {
+      return null
+    }
+
+    return 'Fuehre den zuletzt beschriebenen naechsten Schritt jetzt direkt mit den verfuegbaren Tools aus. Nutze Shell-, Datei- oder Desktop-Tools sofort statt den Plan weiter zu beschreiben. Wenn ein Schritt scheitert, probiere den naechsten plausiblen Tool-Call und verifiziere das Ergebnis, anstatt nur Absichten zu formulieren.'
   }
 
   private toAPIConversation(messages: Message[]): Array<{ role: 'user' | 'assistant'; content: string | ContentBlock[] }> {
@@ -671,7 +856,7 @@ export class QueryEngine {
       : { ...getEmptyToolPermissionContext(), mode: this.config.permissionMode ?? 'default' }
 
     return {
-      cwd: this.config.cwd,
+      cwd: this.appState.cwd || this.config.cwd,
       abortController: this.abortController,
       debug: this.config.debug ?? false,
       model: this.getModel(),
@@ -859,52 +1044,80 @@ export class QueryEngine {
     input: Record<string, unknown>,
     context: ToolUseContext,
   ): Promise<ApprovalResult> {
+    const decision = this.evaluatePermission(tool, input, context)
+
+    if (decision.kind === 'allow') {
+      return { allowed: true }
+    }
+
+    if (decision.kind === 'deny') {
+      return { allowed: false, reason: decision.reason }
+    }
+
+    return this.requestApproval(decision.request)
+  }
+
+  private evaluatePermission(
+    tool: Tool,
+    input: Record<string, unknown>,
+    context: ToolUseContext,
+  ): PermissionDecision {
     const mode = context.permissionContext.mode
 
     // Bypass mode: always allow
-    if (mode === 'bypass') return { allowed: true }
+    if (mode === 'bypass') return { kind: 'allow' }
 
     // Read-only tools in default mode: allow
-    if (mode === 'default' && tool.isReadOnly?.(input)) return { allowed: true }
+    if (mode === 'default' && tool.isReadOnly?.(input)) return { kind: 'allow' }
 
     // Check deny rules
     for (const rule of context.permissionContext.denyRules) {
       if (tool.name.match(new RegExp(rule.pattern, 'i'))) {
-        return { allowed: false, reason: `Blockiert durch Regel: ${rule.source}` }
+        return { kind: 'deny', reason: `Blockiert durch Regel: ${rule.source}` }
       }
     }
 
     // Check allow rules
     for (const rule of context.permissionContext.allowRules) {
       if (tool.name.match(new RegExp(rule.pattern, 'i'))) {
-        return { allowed: true }
+        return { kind: 'allow' }
       }
     }
 
     // Strict mode and plan mode: ask for everything writeable
     if (mode === 'strict' || mode === 'plan' || tool.riskLevel === 'high') {
-      return this.requestApproval({
+      return {
+        kind: 'ask',
+        request: {
+          toolName: tool.name,
+          input: input,
+          description: `${tool.name}: ${JSON.stringify(input).slice(0, 200)}`,
+          riskLevel: tool.riskLevel ?? 'medium',
+          suggestedAction: 'ask',
+        },
+      }
+    }
+
+    // Default: allow read-only and low-risk, ask for medium+
+    if (tool.riskLevel === 'low') return { kind: 'allow' }
+
+    return {
+      kind: 'ask',
+      request: {
         toolName: tool.name,
         input: input,
         description: `${tool.name}: ${JSON.stringify(input).slice(0, 200)}`,
         riskLevel: tool.riskLevel ?? 'medium',
         suggestedAction: 'ask',
-      })
+      },
     }
-
-    // Default: allow read-only and low-risk, ask for medium+
-    if (tool.riskLevel === 'low') return { allowed: true }
-
-    return this.requestApproval({
-      toolName: tool.name,
-      input: input,
-      description: `${tool.name}: ${JSON.stringify(input).slice(0, 200)}`,
-      riskLevel: tool.riskLevel ?? 'medium',
-      suggestedAction: 'ask',
-    })
   }
 
   private requestApproval(request: ApprovalRequest): Promise<ApprovalResult> {
+    return this.beginApprovalRequest(request)
+  }
+
+  private beginApprovalRequest(request: ApprovalRequest): Promise<ApprovalResult> {
     // Show approval UI
     if (this.toolUICallback) {
       this.toolUICallback({

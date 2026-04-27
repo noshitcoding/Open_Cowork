@@ -1,16 +1,33 @@
 import { create } from 'zustand'
 import { invoke } from '@tauri-apps/api/core'
+import { hydrateStoredMessage } from '../utils/sessionThreads'
+import type { ChatAttachment } from '../utils/chatAttachments'
 
 export type ChatMessage = {
   id: string
   role: 'user' | 'assistant' | 'system'
   content: string
   timestamp: number
-  attachments?: Array<{ path: string; kind: 'file' | 'folder' }>
+  attachments?: ChatAttachment[]
+  visibleInChat?: boolean
   debugContent?: string
   thinkingContent?: string
   verboseContent?: string
+  liveToolCalls?: LiveToolCall[]
   streaming?: boolean
+}
+
+export type LiveToolCallStatus = 'requested' | 'running' | 'completed' | 'failed' | 'approval'
+
+export type LiveToolCall = {
+  id: string
+  toolName: string
+  input: Record<string, unknown>
+  status: LiveToolCallStatus
+  result?: string
+  error?: string
+  startedAt: number
+  finishedAt?: number
 }
 
 export type ChatThread = {
@@ -35,7 +52,7 @@ type ChatState = {
   updateMessage: (
     threadId: string,
     messageId: string,
-    patch: Partial<Pick<ChatMessage, 'content' | 'debugContent' | 'thinkingContent' | 'verboseContent' | 'streaming'>>,
+    patch: Partial<Pick<ChatMessage, 'content' | 'debugContent' | 'thinkingContent' | 'verboseContent' | 'liveToolCalls' | 'streaming'>>,
     options?: { persist?: boolean },
   ) => void
   setPendingApproval: (steps: string[]) => void
@@ -43,7 +60,7 @@ type ChatState = {
   setBusy: (busy: boolean) => void
   setError: (error: string | null) => void
   deleteThread: (id: string) => void
-  removeLastMessages: (threadId: string, count: number) => number
+  removeLastMessagePairs: (threadId: string, pairCount: number) => { pairsRemoved: number; messagesRemoved: number }
 }
 
 function generateId(): string {
@@ -84,12 +101,7 @@ export const useChatStore = create<ChatState>()((set) => ({
         threads.push({
           id: dt.id,
           title: dt.title,
-          messages: messages.map((m) => ({
-            id: m.id,
-            role: m.role as ChatMessage['role'],
-            content: typeof m.content === 'string' ? m.content : '',
-            timestamp: m.timestamp,
-          })),
+          messages: messages.map((m) => hydrateStoredMessage(m)),
           createdAt: new Date(dt.created_at).getTime(),
           updatedAt: new Date(dt.updated_at).getTime(),
         })
@@ -207,33 +219,67 @@ export const useChatStore = create<ChatState>()((set) => ({
     void persistInvoke('db_delete_thread', { id }, 'db_delete_thread')
   },
 
-  removeLastMessages: (threadId, count) => {
-    let removed = 0
+  removeLastMessagePairs: (threadId, pairCount) => {
+    let pairsRemoved = 0
+    let messagesRemoved = 0
+    let removedIds: string[] = []
+
     set((state) => ({
       threads: state.threads.map((t) => {
         if (t.id !== threadId) return t
-        // Remove last `count` non-system messages (user+assistant pairs)
-        const keep: ChatMessage[] = []
-        const removable = [...t.messages].reverse()
-        let toRemove = count * 2 // Remove pairs of user+assistant
-        const removedIds: string[] = []
-        for (const msg of removable) {
-          if (toRemove > 0 && msg.role !== 'system') {
-            removedIds.push(msg.id)
-            toRemove--
-            removed++
-          } else {
-            keep.unshift(msg)
+
+        const idsToRemove = new Set<string>()
+        let cursor = t.messages.length - 1
+
+        while (cursor >= 0 && pairsRemoved < pairCount) {
+          while (cursor >= 0 && t.messages[cursor]?.role === 'system') {
+            cursor--
           }
+
+          if (cursor < 0) break
+          if (t.messages[cursor]?.role !== 'assistant') {
+            cursor--
+            continue
+          }
+
+          const assistantMessage = t.messages[cursor]
+          cursor--
+
+          while (cursor >= 0 && t.messages[cursor]?.role === 'system') {
+            cursor--
+          }
+
+          if (cursor < 0 || t.messages[cursor]?.role !== 'user') {
+            continue
+          }
+
+          const userMessage = t.messages[cursor]
+          idsToRemove.add(assistantMessage.id)
+          idsToRemove.add(userMessage.id)
+          pairsRemoved++
+          cursor--
         }
-        // Persist deletions
-        for (const msgId of removedIds) {
-          void persistInvoke('db_delete_message', { id: msgId }, 'db_delete_message rewind')
+
+        removedIds = Array.from(idsToRemove)
+        messagesRemoved = removedIds.length
+
+        if (removedIds.length === 0) {
+          return t
         }
-        return { ...t, messages: keep, updatedAt: Date.now() }
+
+        return {
+          ...t,
+          messages: t.messages.filter((message) => !idsToRemove.has(message.id)),
+          updatedAt: Date.now(),
+        }
       }),
     }))
-    return removed
+
+    if (removedIds.length > 0) {
+      void persistInvoke('db_delete_messages', { ids: removedIds }, 'db_delete_messages rewind')
+    }
+
+    return { pairsRemoved, messagesRemoved }
   },
 }))
 

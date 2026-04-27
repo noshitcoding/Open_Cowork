@@ -11,6 +11,7 @@
 
 import type {
   ContentBlock,
+  ContentBlockToolUse,
   StreamEvent,
   TokenUsage,
   ToolInputSchema,
@@ -49,7 +50,7 @@ const MODEL_CAPABILITIES: Record<string, Partial<OllamaModelCapabilities>> = {
   'mistral': { supportsTools: true, supportsThinking: false },
   'deepseek': { supportsTools: true, supportsThinking: true },
   'command-r': { supportsTools: true, supportsThinking: false },
-  'gemma': { supportsTools: false, supportsThinking: false },
+  'gemma': { supportsTools: true, supportsThinking: false },
   'phi': { supportsTools: true, supportsThinking: false },
   'codellama': { supportsTools: false, supportsThinking: false },
 }
@@ -85,6 +86,7 @@ export function detectModelCapabilities(model: string): OllamaModelCapabilities 
 type OllamaMessage = {
   role: 'system' | 'user' | 'assistant' | 'tool'
   content: string
+  images?: string[]
   tool_calls?: OllamaToolCall[]
 }
 
@@ -120,6 +122,39 @@ type OllamaStreamChunk = {
   prompt_eval_count?: number
 }
 
+function convertContentBlocksToOllamaPayload(
+  blocks: ContentBlock[],
+): {
+  text: string
+  images: string[]
+  toolResults: Array<{ content: string }>
+} {
+  const textParts: string[] = []
+  const images: string[] = []
+  const toolResults: Array<{ content: string }> = []
+
+  for (const block of blocks) {
+    if (block.type === 'text') {
+      textParts.push(block.text)
+      continue
+    }
+    if (block.type === 'image' && block.source.type === 'base64') {
+      images.push(block.source.data)
+      continue
+    }
+    if (block.type === 'tool_result') {
+      toolResults.push({ content: block.content })
+      continue
+    }
+  }
+
+  return {
+    text: textParts.join('\n').trim(),
+    images,
+    toolResults,
+  }
+}
+
 // ── Re-export SampleResult for compatibility ───────────────────────────────
 
 export type SampleResult = {
@@ -136,6 +171,7 @@ type TauriChatTurnResponse = {
   assistantMessage: string
   requiresApproval: boolean
   proposedPlan: string[]
+  toolCalls?: OllamaToolCall[]
 }
 
 type TauriOllamaHealthResponse = {
@@ -150,296 +186,77 @@ type TauriOllamaHealthResponse = {
 
 type TauriChatHistoryItem = {
   role: string
+
   content: string
 }
 
-type EngineToolDef = {
+export type EngineToolDef = {
   name: string
   description: string
   input_schema: ToolInputSchema
+  aliases?: string[]
 }
 
-type TauriWindow = Window & {
-  __TAURI_INTERNALS__?: {
-    invoke?: unknown
-  }
-  __TAURI_IPC__?: unknown
+type OllamaChatRequestBuild = {
+  body: Record<string, unknown>
+  debugPreview: string
 }
 
-function canUseTauriInvoke(): boolean {
-  if (typeof window === 'undefined') {
-    return true
-  }
-
-  const tauriWindow = window as TauriWindow
-  return typeof tauriWindow.__TAURI_INTERNALS__?.invoke === 'function'
-    || typeof tauriWindow.__TAURI_IPC__ === 'function'
+function clipOllamaDebugText(value: string, maxChars: number): string {
+  if (value.length <= maxChars) return value
+  const hiddenChars = value.length - maxChars
+  return `${value.slice(0, maxChars)}\n...[truncated ${hiddenChars} chars]`
 }
 
-function normalizeTauriInvokeError(error: unknown): Error {
-  const message = error instanceof Error ? error.message : String(error)
-  const lower = message.toLowerCase()
-  const isBridgeMissing = lower.includes('__tauri_internals__')
-    || lower.includes('is undefined')
-    || lower.includes('tauri')
-
-  if (isBridgeMissing) {
-    return new Error(
-      'Tauri-Bridge nicht verfuegbar. Die App laeuft vermutlich nicht als Tauri-Desktop-App. Starte Open_Cowork mit "npm run tauri dev" (oder als gebaute Desktop-App).',
-    )
-  }
-
-  return error instanceof Error ? error : new Error(message)
+function summarizeOllamaMessagesForDebug(messages: OllamaMessage[]): Array<Record<string, unknown>> {
+  return messages.map((message) => ({
+    role: message.role,
+    content: clipOllamaDebugText(message.content, message.role === 'system' ? 2500 : 1200),
+    contentLength: message.content.length,
+    images: Array.isArray(message.images)
+      ? message.images.map((image, index) => `[base64 image ${index + 1}, ${image.length} chars]`)
+      : undefined,
+    tool_calls: message.tool_calls,
+  }))
 }
 
-const TEXTUAL_TOOL_NAME_ALIASES: Record<string, string> = {
-  webfetch: 'WebFetch',
-  web_fetch: 'WebFetch',
-  websearch: 'WebSearch',
-  web_search: 'WebSearch',
-  read_file: 'Read',
-  write_file: 'Write',
-  edit_file: 'Edit',
-  listdir: 'ListDir',
-  list_dir: 'ListDir',
-  askuser: 'AskUser',
-  ask_user: 'AskUser',
-  enterplanmode: 'EnterPlanMode',
-  enter_plan_mode: 'EnterPlanMode',
-  exitplanmode: 'ExitPlanMode',
-  exit_plan_mode: 'ExitPlanMode',
-  mcptool: 'MCPTool',
-}
-
-function getPrimaryToolInputKey(tool: EngineToolDef): string | null {
-  const required = Array.isArray(tool.input_schema.required)
-    ? tool.input_schema.required.find((key) => typeof key === 'string' && key.trim().length > 0)
-    : null
-
-  if (required) return required
-
-  const properties = tool.input_schema.properties ?? {}
-  const [firstKey] = Object.keys(properties)
-  return firstKey ?? null
-}
-
-function stripWrappingQuotes(value: string): string | null {
-  const trimmed = value.trim()
-  if (trimmed.length < 2) return null
-
-  const first = trimmed[0]
-  const last = trimmed[trimmed.length - 1]
-  if (!((first === '"' && last === '"') || (first === '\'' && last === '\''))) {
-    return null
-  }
-
-  const inner = trimmed.slice(1, -1)
-  if (first === '"') {
-    try {
-      return JSON.parse(trimmed) as string
-    } catch {
-      return inner
-    }
-  }
-
-  return inner.replace(/\\'/g, '\'').replace(/\\"/g, '"')
-}
-
-function buildToolLookup(tools?: EngineToolDef[]): Map<string, EngineToolDef> {
-  const lookup = new Map<string, EngineToolDef>()
-
-  for (const tool of tools ?? []) {
-    lookup.set(tool.name.toLowerCase(), tool)
-    lookup.set(tool.name.replace(/[^a-z0-9]/gi, '').toLowerCase(), tool)
-  }
-
-  for (const [alias, canonical] of Object.entries(TEXTUAL_TOOL_NAME_ALIASES)) {
-    const tool = lookup.get(canonical.toLowerCase())
-      ?? lookup.get(canonical.replace(/[^a-z0-9]/gi, '').toLowerCase())
-    if (tool) {
-      lookup.set(alias.toLowerCase(), tool)
-    }
-  }
-
-  return lookup
-}
-
-function parseTextualToolCallLine(
-  line: string,
-  toolLookup: Map<string, EngineToolDef>,
-): OllamaToolCall | null {
-  const normalized = line
-    .trim()
-    .replace(/^[-*]\s+/, '')
-    .replace(/^\d+\.\s+/, '')
-    .replace(/^`(.+)`$/u, '$1')
-
-  const match = normalized.match(/^([A-Za-z][A-Za-z0-9_]*)\s*\(([\s\S]*)\)$/)
-  if (!match) return null
-
-  const rawToolName = match[1]
-  const rawArgs = match[2].trim()
-  const tool = toolLookup.get(rawToolName.toLowerCase())
-    ?? toolLookup.get(rawToolName.replace(/[^a-z0-9]/gi, '').toLowerCase())
-  if (!tool) return null
-
-  if (rawArgs.length === 0) {
-    return {
-      function: {
-        name: tool.name,
-        arguments: {},
-      },
-    }
-  }
-
-  if (rawArgs.startsWith('{') && rawArgs.endsWith('}')) {
-    try {
-      const parsed = JSON.parse(rawArgs) as Record<string, unknown>
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        return {
-          function: {
-            name: tool.name,
-            arguments: parsed,
-          },
-        }
-      }
-    } catch {
-      // Fall through to simpler parsers.
-    }
-  }
-
-  const primaryKey = getPrimaryToolInputKey(tool)
-  if (!primaryKey) return null
-
-  const quotedValue = stripWrappingQuotes(rawArgs)
-  if (quotedValue !== null) {
-    return {
-      function: {
-        name: tool.name,
-        arguments: { [primaryKey]: quotedValue },
-      },
-    }
-  }
-
-  const namedMatch = rawArgs.match(/^([A-Za-z][A-Za-z0-9_]*)\s*[:=]\s*(.+)$/)
-  if (namedMatch) {
-    return {
-      function: {
-        name: tool.name,
-        arguments: {
-          [namedMatch[1]]: stripWrappingQuotes(namedMatch[2]) ?? namedMatch[2].trim(),
-        },
-      },
-    }
-  }
-
-  return {
-    function: {
-      name: tool.name,
-      arguments: { [primaryKey]: rawArgs },
-    },
-  }
-}
-
-function extractTextualToolCalls(
-  fullText: string,
-  tools?: EngineToolDef[],
-): { text: string; toolCalls: OllamaToolCall[] } {
-  if (!fullText.trim() || !tools || tools.length === 0) {
-    return { text: fullText, toolCalls: [] }
-  }
-
-  const toolLookup = buildToolLookup(tools)
-  const lines = fullText.split(/\r?\n/)
-  const toolCalls: OllamaToolCall[] = []
-  const keptLines: string[] = []
-
-  for (const line of lines) {
-    const parsed = parseTextualToolCallLine(line, toolLookup)
-    if (parsed) {
-      toolCalls.push(parsed)
-      continue
-    }
-    keptLines.push(line)
-  }
-
-  if (toolCalls.length === 0) {
-    const singleLineCall = parseTextualToolCallLine(fullText.trim(), toolLookup)
-    if (!singleLineCall) {
-      return { text: fullText, toolCalls: [] }
-    }
-    return { text: '', toolCalls: [singleLineCall] }
-  }
-
-  return {
-    text: keptLines.join('\n').trim(),
-    toolCalls,
-  }
-}
-
-// ── Streaming API ──────────────────────────────────────────────────────────
-
-/**
- * Stream a message from Ollama's /api/chat endpoint.
- * Returns the same async generator interface as anthropicClient.streamMessages()
- *
- * Enhanced with:
- * - Connection retry logic
- * - Better tool call parsing (handles edge cases)
- * - Thinking/reasoning content support
- */
-export async function* streamOllamaMessages(
+export function buildOllamaChatRequest(
   config: OllamaEngineConfig,
   messages: Array<{ role: 'user' | 'assistant'; content: string | ContentBlock[] }>,
   systemPrompt: string,
   tools?: EngineToolDef[],
-  signal?: AbortSignal,
-): AsyncGenerator<StreamEvent, SampleResult> {
-  const baseUrl = config.baseUrl.replace(/\/$/, '')
-
-  // Detect model capabilities
+): OllamaChatRequestBuild {
   const capabilities = detectModelCapabilities(config.model)
 
-  // Convert messages to Ollama format
   const ollamaMessages: OllamaMessage[] = [
     { role: 'system', content: systemPrompt },
   ]
 
   for (const msg of messages) {
-    const content = typeof msg.content === 'string'
-      ? msg.content
-      : msg.content
-          .map((block) => {
-            if (block.type === 'text') return block.text
-            if (block.type === 'tool_result') return `[Tool Result ${block.tool_use_id}]: ${block.content}`
-            if (block.type === 'thinking') return '' // skip thinking blocks in history
-            return ''
-          })
-          .filter(Boolean)
-          .join('\n')
+    if (typeof msg.content === 'string') {
+      ollamaMessages.push({ role: msg.role, content: msg.content })
+      continue
+    }
 
-    // Check if this message contains tool results
-    if (typeof msg.content !== 'string') {
-      const toolResults = msg.content.filter(
-        (b): b is { type: 'tool_result'; tool_use_id: string; content: string; is_error?: boolean } =>
-          b.type === 'tool_result',
-      )
-      if (toolResults.length > 0) {
-        // Insert tool results as tool role messages
-        for (const tr of toolResults) {
-          ollamaMessages.push({
-            role: 'tool',
-            content: tr.content,
-          })
-        }
-        continue
+    const payload = convertContentBlocksToOllamaPayload(msg.content)
+    if (payload.toolResults.length > 0) {
+      for (const tr of payload.toolResults) {
+        ollamaMessages.push({
+          role: 'tool',
+          content: tr.content,
+        })
       }
     }
 
-    ollamaMessages.push({ role: msg.role, content })
+    if (payload.text || payload.images.length > 0) {
+      ollamaMessages.push({
+        role: msg.role,
+        content: payload.text || '[image attachment]',
+        images: payload.images.length > 0 ? payload.images : undefined,
+      })
+    }
   }
 
-  // Convert tools to Ollama format (only if model supports tools)
   const ollamaTools: OllamaToolDef[] | undefined = (tools && capabilities.supportsTools)
     ? tools.map((t) => ({
         type: 'function' as const,
@@ -482,6 +299,497 @@ export async function* streamOllamaMessages(
   if (config.keepAlive) {
     body.keep_alive = config.keepAlive
   }
+
+  const debugPreview = JSON.stringify({
+    model: config.model,
+    stream: true,
+    think: body.think,
+    keep_alive: body.keep_alive,
+    options: body.options,
+    messageCount: ollamaMessages.length,
+    messages: summarizeOllamaMessagesForDebug(ollamaMessages),
+    toolCount: ollamaTools?.length ?? 0,
+    tools: ollamaTools?.map((tool) => tool.function.name),
+  }, null, 2)
+
+  return {
+    body,
+    debugPreview,
+  }
+}
+
+type TauriWindow = Window & {
+  __TAURI_INTERNALS__?: {
+    invoke?: unknown
+  }
+  __TAURI_IPC__?: unknown
+}
+
+function canUseTauriInvoke(): boolean {
+  if (typeof window === 'undefined') {
+    return true
+  }
+
+  const tauriWindow = window as TauriWindow
+  return typeof tauriWindow.__TAURI_INTERNALS__?.invoke === 'function'
+    || typeof tauriWindow.__TAURI_IPC__ === 'function'
+}
+
+function normalizeTauriInvokeError(error: unknown): Error {
+  const message = error instanceof Error ? error.message : String(error)
+  const lower = message.toLowerCase()
+  const isBridgeMissing = lower.includes('__tauri_internals__')
+    || lower.includes('is undefined')
+    || lower.includes('tauri')
+
+  if (isBridgeMissing) {
+    return new Error(
+      'Tauri-Bridge nicht verfuegbar. Die App laeuft vermutlich nicht als Tauri-Desktop-App. Starte Open_Cowork mit "npm run tauri dev" (oder als gebaute Desktop-App).',
+    )
+  }
+
+  return error instanceof Error ? error : new Error(message)
+}
+
+const TEXTUAL_TOOL_NAME_ALIASES: Record<string, string> = {
+  // Web
+  webfetch: 'WebFetch',
+  web_fetch: 'WebFetch',
+  websearch: 'WebSearch',
+  web_search: 'WebSearch',
+  // File read/write/edit
+  read_file: 'Read',
+  read: 'Read',
+  write_file: 'Write',
+  write: 'Write',
+  edit_file: 'Edit',
+  edit: 'Edit',
+  // File append
+  append: 'Append',
+  append_file: 'Append',
+  file_append: 'Append',
+  // Multi edit
+  multiedit: 'MultiEdit',
+  multi_edit: 'MultiEdit',
+  batch_edit: 'MultiEdit',
+  // ListDir
+  listdir: 'ListDir',
+  list_dir: 'ListDir',
+  list_directory: 'ListDir',
+  ls: 'ListDir',
+  dir: 'ListDir',
+  // Move
+  movepath: 'MovePath',
+  move_path: 'MovePath',
+  move_file: 'MovePath',
+  move_directory: 'MovePath',
+  rename_path: 'MovePath',
+  // Copy
+  copypath: 'CopyPath',
+  copy_path: 'CopyPath',
+  copy_file: 'CopyPath',
+  copy_directory: 'CopyPath',
+  // CreateDirectory
+  createdirectory: 'CreateDirectory',
+  create_directory: 'CreateDirectory',
+  mkdir: 'CreateDirectory',
+  make_dir: 'CreateDirectory',
+  // Delete
+  deletefile: 'DeleteFile',
+  delete_file: 'DeleteFile',
+  remove_file: 'DeleteFile',
+  rm: 'DeleteFile',
+  // FileInfo
+  fileinfo: 'FileInfo',
+  file_info: 'FileInfo',
+  stat: 'FileInfo',
+  file_metadata: 'FileInfo',
+  // Rename
+  renamefile: 'RenameFile',
+  rename_file: 'RenameFile',
+  rename: 'RenameFile',
+  // Search
+  glob: 'Glob',
+  grep: 'Grep',
+  search: 'Grep',
+  // Shell
+  bash: 'Bash',
+  shell: 'Bash',
+  execute: 'Bash',
+  // User interaction
+  askuser: 'AskUser',
+  ask_user: 'AskUser',
+  // Plan mode
+  enterplanmode: 'EnterPlanMode',
+  enter_plan_mode: 'EnterPlanMode',
+  plan: 'EnterPlanMode',
+  exitplanmode: 'ExitPlanMode',
+  exit_plan_mode: 'ExitPlanMode',
+  // MCP
+  mcptool: 'MCPTool',
+  mcp_call: 'MCPTool',
+  mcp: 'MCPTool',
+  // Tasks
+  taskcreate: 'TaskCreate',
+  task_create: 'TaskCreate',
+  todo_add: 'TaskCreate',
+  tasklist: 'TaskList',
+  task_list: 'TaskList',
+  todo_list: 'TaskList',
+  taskupdate: 'TaskUpdate',
+  task_update: 'TaskUpdate',
+  todo_update: 'TaskUpdate',
+  // Memory
+  memoryread: 'MemoryRead',
+  memory_read: 'MemoryRead',
+  recall: 'MemoryRead',
+  memorywrite: 'MemoryWrite',
+  memory_write: 'MemoryWrite',
+  remember: 'MemoryWrite',
+  // Thinking
+  think: 'Think',
+  reasoning: 'Think',
+  // Skill
+  skill: 'Skill',
+  run_skill: 'Skill',
+  // Agent
+  agent: 'Agent',
+  subagent: 'Agent',
+}
+
+function getPrimaryToolInputKey(tool: EngineToolDef): string | null {
+  const required = Array.isArray(tool.input_schema.required)
+    ? tool.input_schema.required.find((key) => typeof key === 'string' && key.trim().length > 0)
+    : null
+
+  if (required) return required
+
+  const properties = tool.input_schema.properties ?? {}
+  const [firstKey] = Object.keys(properties)
+  return firstKey ?? null
+}
+
+function stripWrappingQuotes(value: string): string | null {
+  const trimmed = value.trim()
+  if (trimmed.length < 2) return null
+
+  const first = trimmed[0]
+  const last = trimmed[trimmed.length - 1]
+  if (!((first === '"' && last === '"') || (first === '\'' && last === '\''))) {
+    return null
+  }
+
+  const inner = trimmed.slice(1, -1)
+  if (first === '"') {
+    try {
+      return JSON.parse(trimmed) as string
+    } catch {
+      return inner
+    }
+  }
+
+  return inner.replace(/\\'/g, '\'').replace(/\\"/g, '"')
+}
+
+function buildToolLookup(tools?: EngineToolDef[]): Map<string, EngineToolDef> {
+  const lookup = new Map<string, EngineToolDef>()
+
+  for (const tool of tools ?? []) {
+    lookup.set(tool.name.toLowerCase(), tool)
+    lookup.set(tool.name.replace(/[^a-z0-9]/gi, '').toLowerCase(), tool)
+    for (const alias of tool.aliases ?? []) {
+      lookup.set(alias.toLowerCase(), tool)
+      lookup.set(alias.replace(/[^a-z0-9]/gi, '').toLowerCase(), tool)
+    }
+  }
+
+  for (const [alias, canonical] of Object.entries(TEXTUAL_TOOL_NAME_ALIASES)) {
+    const tool = lookup.get(canonical.toLowerCase())
+      ?? lookup.get(canonical.replace(/[^a-z0-9]/gi, '').toLowerCase())
+    if (tool) {
+      lookup.set(alias.toLowerCase(), tool)
+    }
+  }
+
+  return lookup
+}
+
+const TOOL_ARGUMENT_NAME_ALIASES: Record<string, string[]> = {
+  file_path: ['filepath', 'filePath', 'filename', 'fileName', 'file', 'path', 'targetFile'],
+  source_path: ['source', 'sourcePath', 'from', 'fromPath', 'src', 'srcPath'],
+  destination_path: ['destination', 'destinationPath', 'target', 'targetPath', 'to', 'toPath', 'dest', 'destPath'],
+  new_name: ['newName', 'name', 'filename', 'fileName'],
+  content: ['text', 'contents', 'body', 'value'],
+  old_string: ['old', 'oldText', 'find', 'search', 'match'],
+  new_string: ['new', 'newText', 'replace', 'replacement'],
+  path: ['dir', 'directory', 'folder', 'filename', 'fileName', 'file'],
+}
+
+function canonicalizeArgumentKey(value: string): string {
+  return value.replace(/[^a-z0-9]/gi, '').toLowerCase()
+}
+
+function normalizeToolArguments(
+  args: Record<string, unknown>,
+  tool: EngineToolDef,
+): Record<string, unknown> {
+  const properties = tool.input_schema.properties ?? {}
+  const propertyKeys = Object.keys(properties)
+  if (propertyKeys.length === 0) return args
+
+  const normalized: Record<string, unknown> = { ...args }
+  const consumed = new Set<string>()
+
+  for (const key of propertyKeys) {
+    const existingKey = Object.keys(args).find((candidate) => canonicalizeArgumentKey(candidate) === canonicalizeArgumentKey(key))
+    if (existingKey) {
+      normalized[key] = args[existingKey]
+      consumed.add(existingKey)
+    }
+  }
+
+  for (const key of propertyKeys) {
+    if (normalized[key] !== undefined) continue
+
+    const aliases = TOOL_ARGUMENT_NAME_ALIASES[key] ?? []
+    const aliasMatch = Object.keys(args).find((candidate) => {
+      if (consumed.has(candidate)) return false
+      const normalizedCandidate = canonicalizeArgumentKey(candidate)
+      return aliases.some((alias) => canonicalizeArgumentKey(alias) === normalizedCandidate)
+    })
+
+    if (aliasMatch) {
+      normalized[key] = args[aliasMatch]
+      consumed.add(aliasMatch)
+    }
+  }
+
+  const primaryKey = getPrimaryToolInputKey(tool)
+  const remainingKeys = Object.keys(args).filter((key) => !consumed.has(key))
+  if (primaryKey && normalized[primaryKey] === undefined && remainingKeys.length === 1) {
+    normalized[primaryKey] = args[remainingKeys[0]]
+  }
+
+  return normalized
+}
+
+function normalizeToolCall(
+  toolCall: OllamaToolCall,
+  toolLookup: Map<string, EngineToolDef>,
+): OllamaToolCall {
+  const rawName = toolCall.function.name
+  const tool = toolLookup.get(rawName.toLowerCase())
+    ?? toolLookup.get(rawName.replace(/[^a-z0-9]/gi, '').toLowerCase())
+
+  if (!tool) return toolCall
+
+  return {
+    function: {
+      name: tool.name,
+      arguments: normalizeToolArguments(toolCall.function.arguments ?? {}, tool),
+    },
+  }
+}
+
+function normalizeToolCalls(
+  toolCalls: OllamaToolCall[],
+  tools?: EngineToolDef[],
+): OllamaToolCall[] {
+  if (!tools || tools.length === 0 || toolCalls.length === 0) return toolCalls
+  const toolLookup = buildToolLookup(tools)
+  return toolCalls.map((toolCall) => normalizeToolCall(toolCall, toolLookup))
+}
+
+function parseTextualToolCallLine(
+  line: string,
+  toolLookup: Map<string, EngineToolDef>,
+): OllamaToolCall | null {
+  const normalized = line
+    .trim()
+    .replace(/^[-*]\s+/, '')
+    .replace(/^\d+\.\s+/, '')
+    .replace(/^`(.+)`$/u, '$1')
+
+  const match = normalized.match(/^([A-Za-z][A-Za-z0-9_]*)\s*\(([\s\S]*)\)$/)
+  if (!match) return null
+
+  const rawToolName = match[1]
+  const rawArgs = match[2].trim()
+  const tool = toolLookup.get(rawToolName.toLowerCase())
+    ?? toolLookup.get(rawToolName.replace(/[^a-z0-9]/gi, '').toLowerCase())
+  if (!tool) return null
+
+  if (rawArgs.length === 0) {
+    return {
+      function: {
+        name: tool.name,
+        arguments: {},
+      },
+    }
+  }
+
+  if (rawArgs.startsWith('{') && rawArgs.endsWith('}')) {
+    try {
+      const parsed = JSON.parse(rawArgs) as Record<string, unknown>
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return normalizeToolCall({
+          function: {
+            name: tool.name,
+            arguments: parsed,
+          },
+        }, toolLookup)
+      }
+    } catch {
+      // Fall through to simpler parsers.
+    }
+  }
+
+  const primaryKey = getPrimaryToolInputKey(tool)
+  if (!primaryKey) return null
+
+  const quotedValue = stripWrappingQuotes(rawArgs)
+  if (quotedValue !== null) {
+    return normalizeToolCall({
+      function: {
+        name: tool.name,
+        arguments: { [primaryKey]: quotedValue },
+      },
+    }, toolLookup)
+  }
+
+  const namedMatch = rawArgs.match(/^([A-Za-z][A-Za-z0-9_]*)\s*[:=]\s*(.+)$/)
+  if (namedMatch) {
+    return normalizeToolCall({
+      function: {
+        name: tool.name,
+        arguments: {
+          [namedMatch[1]]: stripWrappingQuotes(namedMatch[2]) ?? namedMatch[2].trim(),
+        },
+      },
+    }, toolLookup)
+  }
+
+  return normalizeToolCall({
+    function: {
+      name: tool.name,
+      arguments: { [primaryKey]: rawArgs },
+    },
+  }, toolLookup)
+}
+
+function extractTextualToolCalls(
+  fullText: string,
+  tools?: EngineToolDef[],
+): { text: string; toolCalls: OllamaToolCall[] } {
+  if (!fullText.trim() || !tools || tools.length === 0) {
+    return { text: fullText, toolCalls: [] }
+  }
+
+  const toolLookup = buildToolLookup(tools)
+  const lines = fullText.split(/\r?\n/)
+  const toolCalls: OllamaToolCall[] = []
+  const keptLines: string[] = []
+
+  for (const line of lines) {
+    const parsed = parseTextualToolCallLine(line, toolLookup)
+    if (parsed) {
+      toolCalls.push(parsed)
+      continue
+    }
+    keptLines.push(line)
+  }
+
+  if (toolCalls.length === 0) {
+    const singleLineCall = parseTextualToolCallLine(fullText.trim(), toolLookup)
+    if (!singleLineCall) {
+      return { text: fullText, toolCalls: [] }
+    }
+    return { text: '', toolCalls: normalizeToolCalls([singleLineCall], tools) }
+  }
+
+  return {
+    text: keptLines.join('\n').trim(),
+    toolCalls: normalizeToolCalls(toolCalls, tools),
+  }
+}
+
+const OPEN_WEBUI_LARGE_DELTA_THRESHOLD = 5
+const OPEN_WEBUI_CHUNK_DELAY_MS = 5
+
+function canDelayVisibleStream(): boolean {
+  return typeof document === 'undefined' || document.visibilityState !== 'hidden'
+}
+
+function nextOpenWebUIChunkSize(remaining: number): number {
+  return Math.min(Math.floor(Math.random() * 3) + 1, remaining)
+}
+
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function* streamSmoothedDelta(
+  text: string,
+  deltaType: 'text_delta' | 'thinking_delta',
+): AsyncGenerator<StreamEvent> {
+  if (text.length <= OPEN_WEBUI_LARGE_DELTA_THRESHOLD) {
+    yield {
+      type: 'content_block_delta',
+      index: 0,
+      delta: deltaType === 'text_delta'
+        ? { type: 'text_delta', text }
+        : { type: 'thinking_delta', thinking: text },
+    }
+    return
+  }
+
+  let remaining = text
+  while (remaining.length > 0) {
+    const chunkSize = nextOpenWebUIChunkSize(remaining.length)
+    const chunk = remaining.slice(0, chunkSize)
+    remaining = remaining.slice(chunkSize)
+    yield {
+      type: 'content_block_delta',
+      index: 0,
+      delta: deltaType === 'text_delta'
+        ? { type: 'text_delta', text: chunk }
+        : { type: 'thinking_delta', thinking: chunk },
+    }
+    if (remaining.length > 0 && canDelayVisibleStream()) {
+      await sleep(OPEN_WEBUI_CHUNK_DELAY_MS)
+    }
+  }
+}
+
+function toolCallSignature(toolCall: OllamaToolCall): string {
+  return JSON.stringify({
+    name: toolCall.function.name,
+    arguments: toolCall.function.arguments ?? {},
+  })
+}
+
+// ── Streaming API ──────────────────────────────────────────────────────────
+
+/**
+ * Stream a message from Ollama's /api/chat endpoint.
+ * Returns the same async generator interface as anthropicClient.streamMessages()
+ *
+ * Enhanced with:
+ * - Connection retry logic
+ * - Better tool call parsing (handles edge cases)
+ * - Thinking/reasoning content support
+ */
+export async function* streamOllamaMessages(
+  config: OllamaEngineConfig,
+  messages: Array<{ role: 'user' | 'assistant'; content: string | ContentBlock[] }>,
+  systemPrompt: string,
+  tools?: EngineToolDef[],
+  signal?: AbortSignal,
+): AsyncGenerator<StreamEvent, SampleResult> {
+  const baseUrl = config.baseUrl.replace(/\/$/, '')
+  const capabilities = detectModelCapabilities(config.model)
+  const requestedThinking = config.thinkingEnabled ?? capabilities.supportsThinking
+  const { body } = buildOllamaChatRequest(config, messages, systemPrompt, tools)
 
   const controller = new AbortController()
   if (signal) {
@@ -546,6 +854,8 @@ export async function* streamOllamaMessages(
   let thinkingText = ''
   let isInThinkingBlock = false
   const toolCalls: OllamaToolCall[] = []
+  const streamedToolBlocks: ContentBlockToolUse[] = []
+  const streamedToolSignatures = new Set<string>()
   let modelId = config.model
   let promptTokens = 0
   let completionTokens = 0
@@ -590,11 +900,7 @@ export async function* streamOllamaMessages(
         const thinkingChunk = chunk.message?.thinking ?? chunk.message?.reasoning_content
         if (thinkingChunk) {
           thinkingText += thinkingChunk
-          yield {
-            type: 'content_block_delta',
-            index: 0,
-            delta: { type: 'thinking_delta', thinking: thinkingChunk },
-          }
+          yield* streamSmoothedDelta(thinkingChunk, 'thinking_delta')
         }
 
         // Text content — with fallback <think> tag detection for older models
@@ -611,40 +917,49 @@ export async function* streamOllamaMessages(
               isInThinkingBlock = false
               const parts = text.split('</think>')
               thinkingText += parts[0]
-              // Emit thinking block
-              yield {
-                type: 'content_block_delta',
-                index: 0,
-                delta: { type: 'thinking_delta', thinking: parts[0] },
-              }
+              yield* streamSmoothedDelta(parts[0], 'thinking_delta')
               // Remaining text after </think> is normal content
               text = parts.slice(1).join('')
             }
 
             if (isInThinkingBlock) {
               thinkingText += text
-              yield {
-                type: 'content_block_delta',
-                index: 0,
-                delta: { type: 'thinking_delta', thinking: text },
-              }
+              yield* streamSmoothedDelta(text, 'thinking_delta')
               continue
             }
           }
 
           if (text) {
             fullText += text
-            yield {
-              type: 'content_block_delta',
-              index: 0,
-              delta: { type: 'text_delta', text },
-            }
+            yield* streamSmoothedDelta(text, 'text_delta')
           }
         }
 
         // Tool calls
         if (chunk.message?.tool_calls) {
-          toolCalls.push(...chunk.message.tool_calls)
+          const normalizedChunkToolCalls = normalizeToolCalls(chunk.message.tool_calls, tools)
+          for (const toolCall of normalizedChunkToolCalls) {
+            const signature = toolCallSignature(toolCall)
+            if (streamedToolSignatures.has(signature)) {
+              continue
+            }
+            streamedToolSignatures.add(signature)
+            toolCalls.push(toolCall)
+            blockIndex++
+            const toolBlock: ContentBlockToolUse = {
+              type: 'tool_use',
+              id: `ollama-tool-${Date.now()}-${blockIndex}`,
+              name: toolCall.function.name,
+              input: toolCall.function.arguments,
+            }
+            streamedToolBlocks.push(toolBlock)
+            yield {
+              type: 'content_block_start',
+              index: blockIndex,
+              content_block: toolBlock,
+            }
+            yield { type: 'content_block_stop', index: blockIndex }
+          }
         }
 
         // Final chunk
@@ -683,17 +998,29 @@ export async function* streamOllamaMessages(
     }
   }
 
+  const normalizedToolCalls = normalizeToolCalls(toolCalls, tools)
+
   if (fullText) {
     resultContent.push({ type: 'text', text: fullText })
   }
 
-  // Convert tool calls to ContentBlock tool_use format
-  if (toolCalls.length > 0) {
+  if (streamedToolBlocks.length > 0) {
     stopReason = 'tool_use'
-    for (const tc of toolCalls) {
+    resultContent.push(...streamedToolBlocks)
+  }
+
+  const streamedSignatures = new Set(streamedToolSignatures)
+  const unstreamedToolCalls = normalizedToolCalls.filter(
+    (toolCall) => !streamedSignatures.has(toolCallSignature(toolCall)),
+  )
+
+  // Convert tool calls to ContentBlock tool_use format
+  if (unstreamedToolCalls.length > 0) {
+    stopReason = 'tool_use'
+    for (const tc of unstreamedToolCalls) {
       blockIndex++
       const toolUseId = `ollama-tool-${Date.now()}-${blockIndex}`
-      const toolBlock: ContentBlock = {
+      const toolBlock: ContentBlockToolUse = {
         type: 'tool_use',
         id: toolUseId,
         name: tc.function.name,
@@ -776,6 +1103,7 @@ async function invokeTauriChatFallback(
       request: {
         prompt: promptWithSystem,
         history: priorHistory,
+        tools: tools ? toOllamaToolDefs(tools) : undefined,
         config: {
           baseUrl: config.baseUrl,
           model: config.model,
@@ -789,12 +1117,17 @@ async function invokeTauriChatFallback(
 
   const extracted = extractTextualToolCalls(fallback.assistantMessage, tools)
   const content: ContentBlock[] = []
+  const structuredToolCalls = fallback.toolCalls ?? []
 
   if (extracted.text) {
     content.push({ type: 'text', text: extracted.text })
   }
 
-  for (const [index, toolCall] of extracted.toolCalls.entries()) {
+  const allToolCalls = normalizeToolCalls(structuredToolCalls.length > 0
+    ? structuredToolCalls
+    : extracted.toolCalls, tools)
+
+  for (const [index, toolCall] of allToolCalls.entries()) {
     content.push({
       type: 'tool_use',
       id: `ollama-fallback-tool-${Date.now()}-${index + 1}`,
@@ -806,7 +1139,7 @@ async function invokeTauriChatFallback(
   return {
     content: content.length > 0 ? content : [{ type: 'text', text: fallback.assistantMessage }],
     model: fallback.model || config.model,
-    stopReason: extracted.toolCalls.length > 0 ? 'tool_use' : 'stop',
+    stopReason: allToolCalls.length > 0 ? 'tool_use' : 'stop',
     usage: { ...EMPTY_USAGE },
     costUsd: 0,
   }

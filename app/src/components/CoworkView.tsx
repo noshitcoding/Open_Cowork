@@ -1,8 +1,9 @@
 import { useRef, useEffect, useMemo, useState } from 'react'
 import type { ClipboardEvent, DragEvent, FormEvent } from 'react'
-import { invoke } from '@tauri-apps/api/core'
-import { open } from '@tauri-apps/plugin-dialog'
+import { open, save } from '@tauri-apps/plugin-dialog'
 import { useChatStore, getActiveThread, type ChatMessage } from '../stores/chatStore'
+import type { LiveToolCall, LiveToolCallStatus } from '../stores/chatStore'
+import { CheckCircle2, Clock3, Loader2, ShieldAlert, Wrench, XCircle } from 'lucide-react'
 import { useConfigStore } from '../stores/configStore'
 import { useTaskStore } from '../stores/taskStore'
 import { useLogStore } from '../stores/logStore'
@@ -15,20 +16,27 @@ import { useSkillStore } from '../stores/skillStore'
 import { useCrewStore } from '../stores/crewStore'
 import { useEngineStore } from '../stores/engineStore'
 import { useUiStore } from '../stores/uiStore'
+import type { ContentBlock } from '../engine'
 import type { ToolProgressData } from '../engine/types'
 import { checkOllamaConnection } from '../engine/api/ollamaClient'
 import {
+  createInlineImageAttachment,
   extractFileAttachmentsFromFileList,
   extractFileAttachmentsFromUriList,
-  getPathName,
+  getAttachmentDisplayName,
+  getAttachmentPreviewSrcForAttachment,
+  hasLocalAttachmentPath,
+  isImageAttachment,
   mergeAttachments,
   normalizeDialogSelection,
+  toImageContentBlocks,
   type ChatAttachment,
 } from '../utils/chatAttachments'
 import { buildAttachmentPromptContext } from '../utils/attachmentPromptContext'
-import { resolveAssistantPresentation, sanitizeAssistantContent } from '../utils/messageDisplay'
+import { limitRollingLines, resolveAssistantPresentation, resolveDisplayedAssistantContent, resolveDisplayedThinkingContent, sanitizeAssistantContent, splitPromptDebugContent } from '../utils/messageDisplay'
+import { appendWebSearchSources, mergeWebSearchSources, parseWebSearchSourcesFromToolResult, type WebSearchSource } from '../utils/webSearchSources'
 // Ollama streaming is now handled by the engine
-import { MessageThinking, MessageVerbose, StreamingPlaceholder } from './MessageThinking'
+import { MessageThinking, MessageVerbose } from './MessageThinking'
 import { HighlightedChatText } from './HighlightedChatText'
 import { writeAuditEvent } from '../utils/audit'
 import {
@@ -37,7 +45,13 @@ import {
   isToolDeniedByRules,
   parseSlashCommand,
 } from '../utils/claudeBridge'
+import {
+  buildClarificationContinuationPrompt,
+  inferClarificationContext,
+} from '../utils/followUpPrompt'
 import { useCommandRegistry } from '../stores/commandRegistryStore'
+import { hasTauriRuntime, safeInvoke, safeInvokeVoid } from '../utils/safeInvoke'
+import { parseScheduledTaskInput, SCHEDULE_HELP_TEXT } from '../utils/schedulerUtils'
 
 type WebFetchResponse = {
   url: string
@@ -101,6 +115,45 @@ function clipVerboseText(value: string, maxChars = 4000): string {
   return `${normalized.slice(0, maxChars)}\n... [gekuerzt, ${normalized.length - maxChars} weitere Zeichen]`
 }
 
+function appendRollingTerminalOutput(previous: string, nextLine: string, maxLines = 200): string {
+  const normalized = nextLine.trim()
+  if (!normalized) return previous
+  const combined = previous ? `${previous}\n${normalized}` : normalized
+  return limitRollingLines(combined, maxLines)
+}
+
+const TERMINAL_CWD_MARKER = '__OPEN_COWORK_CURRENT_CWD__='
+
+function normalizeShellPanelLine(output: string): string | null {
+  const normalized = output.trim()
+  if (!normalized) return null
+
+  if (normalized === 'stdout:' || normalized === 'stderr:') return null
+  if (normalized.startsWith(`stdout: ${TERMINAL_CWD_MARKER}`)) return null
+  if (normalized.startsWith('status: ')) return null
+
+  if (normalized.startsWith('stdout: ')) return normalized.slice('stdout: '.length)
+  if (normalized.startsWith('stderr: ')) return `[stderr] ${normalized.slice('stderr: '.length)}`
+  if (normalized.startsWith('exit code: ')) return `[exit ${normalized.slice('exit code: '.length)}]`
+  if (normalized.startsWith('cwd: ')) return `[cwd] ${normalized.slice('cwd: '.length)}`
+
+  return normalized
+}
+
+function extractShellPanelCompletionLine(result: string): string | null {
+  const cwdMatch = result.match(/current cwd:\s*([^\n\r]+)/i)
+  if (cwdMatch?.[1]?.trim()) {
+    return `[cwd] ${cwdMatch[1].trim()}`
+  }
+
+  const stdoutMatch = result.match(/stdout:\s*\n([^\n\r]+)/i)
+  if (stdoutMatch?.[1]?.trim()) {
+    return stdoutMatch[1].trim()
+  }
+
+  return null
+}
+
 function stringifyVerboseValue(value: unknown): string {
   if (typeof value === 'string') return value
   try {
@@ -112,11 +165,107 @@ function stringifyVerboseValue(value: unknown): string {
 
 async function getOllamaStatusText(config: { baseUrl: string; model: string }): Promise<string> {
   try {
-    const health = await invoke<{ status: string }>('ollama_health_check', { config })
+    const health = await safeInvoke<{ status: string }>('ollama_health_check', { config })
     return health.status
   } catch {
     const reachable = await checkOllamaConnection(config.baseUrl)
     return reachable ? 'ERREICHBAR (Web-Check)' : 'NICHT ERREICHBAR'
+  }
+}
+
+type ChatExportFormat = 'md' | 'txt' | 'json'
+
+function sanitizeExportBaseName(value: string): string {
+  const normalized = value.trim().replace(/[^a-zA-Z0-9_-]+/g, '_').replace(/^_+|_+$/g, '')
+  return normalized.slice(0, 40) || 'chat-export'
+}
+
+function getParentDirectory(path: string): string {
+  const normalized = path.trim()
+  const lastSeparatorIndex = Math.max(normalized.lastIndexOf('\\'), normalized.lastIndexOf('/'))
+  if (lastSeparatorIndex < 0) return '.'
+  if (lastSeparatorIndex === 0) return normalized.slice(0, 1)
+  if (lastSeparatorIndex === 2 && /^[a-zA-Z]:[\\/]/.test(normalized)) {
+    return normalized.slice(0, 3)
+  }
+  return normalized.slice(0, lastSeparatorIndex)
+}
+
+function getEffectiveWorkspaceCwd(
+  attachments: ChatAttachment[],
+  workingPath: string | null,
+  workingPathKind: 'file' | 'folder' | null,
+  workspaceDefaultPath: string,
+): string {
+  for (const attachment of attachments) {
+    if (!hasLocalAttachmentPath(attachment)) continue
+    const normalized = attachment.path.trim()
+    if (!normalized) continue
+    if (attachment.kind === 'folder') return normalized
+  }
+
+  for (const attachment of attachments) {
+    if (!hasLocalAttachmentPath(attachment)) continue
+    const normalized = attachment.path.trim()
+    if (!normalized || attachment.kind !== 'file') continue
+    return getParentDirectory(normalized)
+  }
+
+  if (workingPath?.trim()) {
+    const normalized = workingPath.trim()
+    if (workingPathKind === 'file') {
+      return getParentDirectory(normalized)
+    }
+    return normalized
+  }
+
+  if (workspaceDefaultPath.trim()) {
+    return workspaceDefaultPath.trim()
+  }
+
+  return '.'
+}
+
+async function buildEngineUserInput(promptWithAttachments: string, attachments: ChatAttachment[]): Promise<string | ContentBlock[]> {
+  const imageBlocks = await toImageContentBlocks(attachments)
+  if (imageBlocks.length === 0) {
+    return promptWithAttachments
+  }
+
+  return [
+    { type: 'text', text: promptWithAttachments },
+    ...imageBlocks,
+  ]
+}
+
+function buildChatExportPayload(
+  activeThread: { title: string },
+  activeMessages: ChatMessage[],
+  format: ChatExportFormat,
+): { data: string; mimeType: string; ext: ChatExportFormat } {
+  if (format === 'json') {
+    return {
+      data: JSON.stringify({ title: activeThread.title, messages: activeMessages }, null, 2),
+      mimeType: 'application/json',
+      ext: 'json',
+    }
+  }
+
+  if (format === 'txt') {
+    return {
+      data: activeMessages.map((message) => `[${message.role}] ${message.content}`).join('\n\n'),
+      mimeType: 'text/plain',
+      ext: 'txt',
+    }
+  }
+
+  return {
+    data: `# Chat Export: ${activeThread.title}\n\n${activeMessages.map((message) => {
+      const prefix = message.role === 'user' ? '## Du' : message.role === 'assistant' ? '## Open_Cowork' : '## System'
+      return `${prefix}\n\n${message.content}`
+    }).join('\n\n---\n\n')}`,
+    mimeType: 'text/markdown',
+    ext: 'md',
   }
 }
 
@@ -165,6 +314,133 @@ function formatToolProgress(toolName: string, data: ToolProgressData): { headlin
   }
 }
 
+type LiveToolCallPatch = Partial<Omit<LiveToolCall, 'id' | 'startedAt'>> & {
+  id: string
+  toolName: string
+  input: Record<string, unknown>
+}
+
+function upsertLiveToolCall(calls: LiveToolCall[], patch: LiveToolCallPatch): LiveToolCall[] {
+  const now = Date.now()
+  const existingIndex = calls.findIndex((call) => call.id === patch.id)
+  if (existingIndex < 0) {
+    return [
+      ...calls,
+      {
+        id: patch.id,
+        toolName: patch.toolName,
+        input: patch.input,
+        status: patch.status ?? 'requested',
+        result: patch.result,
+        error: patch.error,
+        startedAt: now,
+        finishedAt: patch.finishedAt,
+      },
+    ]
+  }
+
+  return calls.map((call, index) => index === existingIndex
+    ? {
+        ...call,
+        ...patch,
+        startedAt: call.startedAt,
+        finishedAt: patch.finishedAt ?? call.finishedAt,
+      }
+    : call)
+}
+
+function findLiveToolCallId(calls: LiveToolCall[], toolName: string, input: Record<string, unknown>): string {
+  const inputJson = JSON.stringify(input ?? {})
+  const exact = calls.find((call) => call.toolName === toolName && JSON.stringify(call.input ?? {}) === inputJson)
+  if (exact) return exact.id
+
+  const active = [...calls].reverse().find((call) =>
+    call.toolName === toolName && (call.status === 'requested' || call.status === 'running' || call.status === 'approval')
+  )
+  if (active) return active.id
+
+  return `approval-${toolName}-${Date.now()}`
+}
+
+function formatToolPayload(value: unknown): string {
+  if (value === undefined || value === null || value === '') return ''
+  if (typeof value === 'string') return value
+  try {
+    return JSON.stringify(value, null, 2)
+  } catch {
+    return String(value)
+  }
+}
+
+function getToolStatusLabel(status: LiveToolCallStatus): string {
+  switch (status) {
+    case 'requested':
+      return 'Tool Call erkannt'
+    case 'running':
+      return 'Tool laeuft'
+    case 'approval':
+      return 'Freigabe erforderlich'
+    case 'completed':
+      return 'Abgeschlossen'
+    case 'failed':
+      return 'Fehlgeschlagen'
+  }
+}
+
+function getToolStatusIcon(status: LiveToolCallStatus) {
+  switch (status) {
+    case 'requested':
+      return <Clock3 size={15} />
+    case 'running':
+      return <Loader2 size={15} className="tool-call-spin" />
+    case 'approval':
+      return <ShieldAlert size={15} />
+    case 'completed':
+      return <CheckCircle2 size={15} />
+    case 'failed':
+      return <XCircle size={15} />
+  }
+}
+
+function LiveToolCalls({ calls }: { calls?: LiveToolCall[] }) {
+  if (!Array.isArray(calls) || calls.length === 0) return null
+
+  return (
+    <div className="live-tool-call-list" aria-label="Live Tool Calls">
+      {calls.map((call) => {
+        const inputPreview = formatToolPayload(call.input)
+        const resultPreview = formatToolPayload(call.error ?? call.result)
+        return (
+          <div key={call.id} className={`live-tool-call ${call.status}`}>
+            <div className="live-tool-call-header">
+              <span className="live-tool-call-icon" aria-hidden="true">
+                {getToolStatusIcon(call.status)}
+              </span>
+              <span className="live-tool-call-name">
+                <Wrench size={14} aria-hidden="true" />
+                {call.toolName}
+              </span>
+              <span className="live-tool-call-status">{getToolStatusLabel(call.status)}</span>
+            </div>
+            {inputPreview && (
+              <details className="live-tool-call-detail" open={call.status === 'requested' || call.status === 'running' || call.status === 'approval'}>
+                <summary>Input</summary>
+                <pre>{inputPreview}</pre>
+              </details>
+            )}
+            {resultPreview && (
+              <details className="live-tool-call-detail" open={call.status === 'failed'}>
+                <summary>{call.error ? 'Fehler' : 'Ergebnis'}</summary>
+                <pre>{resultPreview}</pre>
+              </details>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 export default function CoworkView() {
   const [attachments, setAttachments] = useState<ChatAttachment[]>([])
   const [attachmentNotice, setAttachmentNotice] = useState<string | null>(null)
@@ -175,6 +451,9 @@ export default function CoworkView() {
   const [inputValue, setInputValue] = useState('')
   const [slashSuggestionsOpen, setSlashSuggestionsOpen] = useState(false)
   const [activeSlashSuggestionIndex, setActiveSlashSuggestionIndex] = useState(0)
+  const [shellPanelOpen, setShellPanelOpen] = useState(false)
+  const [shellPanelContent, setShellPanelContent] = useState('')
+  const [shellPanelRunning, setShellPanelRunning] = useState(false)
   const ollama = useConfigStore((s) => s.ollama)
   const availableModels = useConfigStore((s) => s.availableModels)
   const setOllama = useConfigStore((s) => s.setOllama)
@@ -189,12 +468,16 @@ export default function CoworkView() {
   const currentSessionId = useEngineStore((s) => s.currentSessionId)
   const contextWarning = useEngineStore((s) => s.contextWarning)
   const compactionCount = useEngineStore((s) => s.compactionCount)
+  const liveThinkingText = useEngineStore((s) => s.thinkingText)
+  const workingFolder = useUiStore((s) => s.workingFolder)
+  const workingPathKind = useUiStore((s) => s.workingPathKind)
   const showTimestamps = useConfigStore((s) => s.preferences.showTimestamps)
   const compactMode = useConfigStore((s) => s.preferences.compactMode)
   const verboseMode = useConfigStore((s) => s.preferences.verboseMode)
   const limitThinkingWindow = useConfigStore((s) => s.preferences.limitThinkingWindow)
   const superVerboseAuditLogging = useConfigStore((s) => s.preferences.superVerboseAuditLogging)
   const autoPilotAllTools = useConfigStore((s) => s.preferences.autoPilotAllTools)
+  const workspaceDefaultPath = useConfigStore((s) => s.preferences.workspaceDefaultPath)
   const {
     activeThreadId,
     pendingApproval,
@@ -226,6 +509,7 @@ export default function CoworkView() {
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const logRef = useRef<HTMLDivElement>(null)
   const activeMessages = Array.isArray(activeThread?.messages) ? activeThread.messages : []
+  const lastActiveMessage = activeMessages[activeMessages.length - 1]
   const selectableModels = Array.isArray(availableModels) ? availableModels : []
   const approvalSteps = Array.isArray(pendingApproval) ? pendingApproval : []
   const isAskUserPrompt =
@@ -234,6 +518,33 @@ export default function CoworkView() {
     typeof currentToolUI.content === 'string' &&
     currentToolUI.content.trim().length > 0
   const askUserQuestion = isAskUserPrompt ? currentToolUI.content.trim() : null
+  const awaitingHumanInput = approvalSteps.length > 0 || Boolean(askUserQuestion)
+  const uiLocked = busy && !awaitingHumanInput
+
+  useEffect(() => {
+    if (!activeThreadId || !currentToolUI) return
+
+    const activeAssistant = [...activeMessages]
+      .reverse()
+      .find((message) => message.role === 'assistant' && message.streaming)
+    if (!activeAssistant) return
+
+    const toolCallId = `tool-ui-${currentToolUI.toolName}`
+    const existing = activeAssistant.liveToolCalls?.find((call) => call.id === toolCallId)
+    if (existing?.status === 'approval' && existing.result === currentToolUI.content) {
+      return
+    }
+
+    updateMessage(activeThreadId, activeAssistant.id, {
+      liveToolCalls: upsertLiveToolCall(activeAssistant.liveToolCalls ?? [], {
+        id: toolCallId,
+        toolName: currentToolUI.toolName,
+        input: { content: currentToolUI.content },
+        status: 'approval',
+        result: currentToolUI.content,
+      }),
+    })
+  }, [activeMessages, activeThreadId, currentToolUI, updateMessage])
 
   const enabledPluginSkills = useMemo<EnabledPluginSkill[]>(() => {
     return plugins
@@ -309,10 +620,28 @@ export default function CoworkView() {
   }
 
   useEffect(() => {
-    if (logRef.current) {
-      logRef.current.scrollTop = logRef.current.scrollHeight
-    }
-  }, [activeMessages.length])
+    const node = logRef.current
+    if (!node) return
+
+    const frame = window.requestAnimationFrame(() => {
+      node.scrollTop = node.scrollHeight
+    })
+
+    return () => window.cancelAnimationFrame(frame)
+  }, [
+    activeThreadId,
+    activeMessages.length,
+    lastActiveMessage?.id,
+    lastActiveMessage?.streaming,
+    lastActiveMessage?.content,
+    lastActiveMessage?.thinkingContent,
+    lastActiveMessage?.verboseContent,
+  ])
+
+  useEffect(() => {
+    if (!awaitingHumanInput || !busy) return
+    setBusy(false)
+  }, [awaitingHumanInput, busy])
 
   useEffect(() => {
     if (!askUserQuestion || busy) return
@@ -322,7 +651,7 @@ export default function CoworkView() {
   }, [askUserQuestion, busy])
 
   const visibleMessages = useMemo(
-    () => activeMessages.filter((message) => message.role !== 'system'),
+    () => activeMessages.filter((message) => message.role !== 'system' || message.visibleInChat),
     [activeMessages],
   )
 
@@ -418,11 +747,21 @@ export default function CoworkView() {
     const pastedItems = [...fromFiles, ...fromUriList]
 
     if (pastedItems.length === 0) {
-      const hasImageData = Array.from(event.clipboardData.items).some((item) =>
-        item.type.startsWith('image/')
-      )
-      if (hasImageData) {
-        setAttachmentNotice('Bild aus Zwischenablage erkannt, aber ohne Dateipfad. Bitte als Datei speichern oder per Datei/Bild-Button anhaengen.')
+      const imageFiles = Array.from(event.clipboardData.items)
+        .filter((item) => item.type.startsWith('image/'))
+        .map((item) => item.getAsFile())
+        .filter((file): file is File => file !== null)
+
+      if (imageFiles.length > 0) {
+        event.preventDefault()
+        void Promise.all(imageFiles.map((file) => createInlineImageAttachment(file)))
+          .then((inlineAttachments) => {
+            addNewAttachments(inlineAttachments)
+            setAttachmentNotice(null)
+          })
+          .catch(() => {
+            setAttachmentNotice('Bild aus Zwischenablage konnte nicht gelesen werden.')
+          })
       }
       return
     }
@@ -630,7 +969,7 @@ export default function CoworkView() {
                 targetPath,
               })
             }
-            const textOut = await invoke<string>('fs_extract_text', { path: targetPath })
+            const textOut = await safeInvoke<string>('fs_extract_text', { path: targetPath })
             appendAssistantMessage(`Datei gelesen: ${targetPath}\n\n${textOut.slice(0, 5000)}`)
             if (superVerboseAuditLogging) {
               void writeAuditEvent('super_verbose', 'cowork_tool_call_finished', {
@@ -683,7 +1022,7 @@ export default function CoworkView() {
                 url,
               })
             }
-            const response = await invoke<WebFetchResponse>('web_fetch_url', {
+            const response = await safeInvoke<WebFetchResponse>('web_fetch_url', {
               request: { url, maxChars: 4000 },
             })
             appendAssistantMessage([
@@ -744,7 +1083,7 @@ export default function CoworkView() {
                 query,
               })
             }
-            const response = await invoke<{ query: string; results: Array<{ title: string; url: string; snippet: string }> }>('web_search', {
+            const response = await safeInvoke<{ query: string; results: Array<{ title: string; url: string; snippet: string }> }>('web_search', {
               request: {
                 query,
                 maxResults: 5,
@@ -824,7 +1163,7 @@ export default function CoworkView() {
                 },
               })
             }
-            const response = await invoke<McpCallResponse>('mcp_call_tool', {
+            const response = await safeInvoke<McpCallResponse>('mcp_call_tool', {
               request: {
                 name: mcpServer.name,
                 command: mcpServer.command,
@@ -921,7 +1260,7 @@ export default function CoworkView() {
               viaCommand: '/fetch',
             })
           }
-          const response = await invoke<WebFetchResponse>('web_fetch_url', {
+          const response = await safeInvoke<WebFetchResponse>('web_fetch_url', {
             request: {
               url: slash.args,
               maxChars: 4000,
@@ -1103,7 +1442,7 @@ export default function CoworkView() {
           return
         }
         if (activeThread) {
-          void invoke('db_save_thread', { id: activeThread.id, title: slash.args.trim(), createdAt: new Date(activeThread.createdAt).toISOString() }).catch(() => {})
+          void safeInvokeVoid('db_save_thread', { id: activeThread.id, title: slash.args.trim(), createdAt: new Date(activeThread.createdAt).toISOString() })
           appendAssistantMessage(`Thread umbenannt: ${slash.args.trim()}`)
         }
         return
@@ -1142,8 +1481,12 @@ export default function CoworkView() {
       if (slash.command === 'rewind') {
         const count = Number.parseInt(slash.args ?? '1', 10) || 1
         if (activeThread) {
-          const removed = useChatStore.getState().removeLastMessages(activeThread.id, count)
-          appendAssistantMessage(`${removed} Nachricht(en) entfernt. Sende deine naechste Anweisung.`)
+          const removed = useChatStore.getState().removeLastMessagePairs(activeThread.id, count)
+          appendAssistantMessage(
+            removed.pairsRemoved > 0
+              ? `${removed.pairsRemoved} Nachrichtenpaar(e) entfernt (${removed.messagesRemoved} Nachrichten). Sende deine naechste Anweisung.`
+              : 'Keine vollstaendigen User/Assistant-Paare zum Zurueckspulen gefunden.'
+          )
         } else {
           appendAssistantMessage('Kein aktiver Thread zum Zurueckspulen.')
         }
@@ -1212,41 +1555,46 @@ export default function CoworkView() {
 
       if (slash.command === 'export') {
         if (activeThread) {
-          const format = slash.args?.trim() ?? 'md'
-          let data: string
-          let mimeType: string
-          let ext: string
-          if (format === 'json') {
-            data = JSON.stringify(activeThread, null, 2)
-            mimeType = 'application/json'
-            ext = 'json'
-          } else if (format === 'txt') {
-            data = activeMessages.map(m => `[${m.role}] ${m.content}`).join('\n\n')
-            mimeType = 'text/plain'
-            ext = 'txt'
+          const rawFormat = slash.args?.trim().toLowerCase()
+          const format: ChatExportFormat = rawFormat === 'json' || rawFormat === 'txt' ? rawFormat : 'md'
+          const { data, ext } = buildChatExportPayload(activeThread, activeMessages, format)
+          const suggestedFileName = `${sanitizeExportBaseName(activeThread.title)}.${ext}`
+
+          if (hasTauriRuntime()) {
+            const selectedPath = await save({
+              defaultPath: suggestedFileName,
+              filters: [
+                { name: 'Markdown', extensions: ['md'] },
+                { name: 'Text', extensions: ['txt'] },
+                { name: 'JSON', extensions: ['json'] },
+              ],
+            })
+
+            if (!selectedPath) {
+              appendAssistantMessage('Export abgebrochen.')
+              return
+            }
+
+            await safeInvoke('export_save_text_file', {
+              path: selectedPath,
+              content: data,
+            })
+
+            await navigator.clipboard.writeText(data).catch(() => {})
+            appendAssistantMessage(`Export (${ext}) gespeichert: ${selectedPath}`)
           } else {
-            // Default: Markdown
-            data = `# Chat Export: ${activeThread.title}\n\n` +
-              activeMessages.map(m => {
-                const prefix = m.role === 'user' ? '## 👤 Du' : m.role === 'assistant' ? '## 🤖 Open_Cowork' : '## ⚙️ System'
-                return `${prefix}\n\n${m.content}`
-              }).join('\n\n---\n\n')
-            mimeType = 'text/markdown'
-            ext = 'md'
+            const blob = new Blob([data], { type: 'text/plain' })
+            const url = URL.createObjectURL(blob)
+            const anchor = document.createElement('a')
+            anchor.href = url
+            anchor.download = suggestedFileName
+            document.body.appendChild(anchor)
+            anchor.click()
+            document.body.removeChild(anchor)
+            URL.revokeObjectURL(url)
+            await navigator.clipboard.writeText(data).catch(() => {})
+            appendAssistantMessage(`Export (${ext}) heruntergeladen und in Zwischenablage kopiert (${data.length} Zeichen).`)
           }
-          // File download via Blob
-          const blob = new Blob([data], { type: mimeType })
-          const url = URL.createObjectURL(blob)
-          const a = document.createElement('a')
-          a.href = url
-          a.download = `chat-export-${activeThread.title.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 30)}.${ext}`
-          document.body.appendChild(a)
-          a.click()
-          document.body.removeChild(a)
-          URL.revokeObjectURL(url)
-          // Also copy to clipboard
-          await navigator.clipboard.writeText(data).catch(() => {})
-          appendAssistantMessage(`Export (${ext}) heruntergeladen und in Zwischenablage kopiert (${data.length} Zeichen).`)
         }
         return
       }
@@ -1322,25 +1670,33 @@ export default function CoworkView() {
       }
 
       if (slash.command === 'feedback') {
-        void invoke('audit_event', {
+        void safeInvokeVoid('audit_event', {
           area: 'feedback', action: 'user_feedback', details: slash.args || 'Kein Kommentar',
-        }).catch(() => {})
+        })
         appendAssistantMessage(`Feedback gespeichert. Danke!${slash.args ? '' : ' (Tipp: /feedback <kommentar>)'}`)
         return
       }
 
       if (slash.command === 'schedule') {
         if (!slash.args?.trim()) {
-          appendAssistantMessage('Nutze: /schedule <cron> <aufgabe>\nBeispiel: /schedule 0 9 * * * Taeglicher Report')
+          appendAssistantMessage(SCHEDULE_HELP_TEXT)
           return
         }
-        const parts = slash.args.split(' ')
-        const cron = parts[0]
-        const prompt = parts.slice(1).join(' ') || 'Geplante Aufgabe'
-        useCoworkStore.getState().upsertScheduledTask({
-          id: `sched-${Date.now()}`, name: prompt.slice(0, 40), prompt, cronLike: cron, active: true, lastRunAt: null,
+        const parsed = parseScheduledTaskInput(slash.args)
+        if (!parsed) {
+          appendAssistantMessage(SCHEDULE_HELP_TEXT)
+          return
+        }
+        await useCoworkStore.getState().upsertScheduledTask({
+          id: `sched-${Date.now()}`,
+          name: parsed.prompt.slice(0, 40),
+          prompt: parsed.prompt,
+          cronLike: parsed.scheduleExpr,
+          active: true,
+          lastRunAt: null,
+          nextRunAt: null,
         })
-        appendAssistantMessage(`Aufgabe geplant: "${prompt}" (Cron: ${cron})`)
+        appendAssistantMessage(`Aufgabe geplant: "${parsed.prompt}" (${parsed.scheduleExpr})`)
         return
       }
 
@@ -1483,7 +1839,7 @@ export default function CoworkView() {
       }
 
       if (slash.command === 'init') {
-        void invoke('audit_event', { area: 'project', action: 'init', details: 'Projekt-Init' }).catch(() => {})
+        void safeInvokeVoid('audit_event', { area: 'project', action: 'init', details: 'Projekt-Init' })
         appendAssistantMessage('Projekt initialisiert. Open_Cowork Konfiguration wurde erstellt.')
         return
       }
@@ -1505,11 +1861,14 @@ export default function CoworkView() {
       }
 
       if (slash.command === 'voice') {
+        type SpeechRecognitionResultEventLike = Event & {
+          results: ArrayLike<ArrayLike<{ transcript?: string }>>
+        }
         type SpeechRecognitionConstructor = new () => {
           lang: string
           interimResults: boolean
           maxAlternatives: number
-          onresult: ((event: SpeechRecognitionEvent) => void) | null
+          onresult: ((event: SpeechRecognitionResultEventLike) => void) | null
           onerror: ((event: Event) => void) | null
           onend: (() => void) | null
           start: () => void
@@ -1527,17 +1886,12 @@ export default function CoworkView() {
         recognition.lang = 'de-DE'
         recognition.interimResults = false
         recognition.maxAlternatives = 1
-        recognition.onresult = (event: SpeechRecognitionEvent) => {
+        recognition.onresult = (event: SpeechRecognitionResultEventLike) => {
           const transcript = event.results[0]?.[0]?.transcript ?? ''
           if (transcript) {
             appendAssistantMessage(`🎤 Erkannt: "${transcript}"\nSende diesen Text als naechste Anweisung oder bearbeite ihn.`)
-            // Pre-fill the input
-            const textarea = document.querySelector<HTMLTextAreaElement>('textarea[placeholder]')
-            if (textarea) {
-              const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set
-              nativeInputValueSetter?.call(textarea, transcript)
-              textarea.dispatchEvent(new Event('input', { bubbles: true }))
-            }
+            setInputValue((current) => current.trim().length > 0 ? `${current.trim()} ${transcript}` : transcript)
+            inputRef.current?.focus()
           }
         }
         recognition.onerror = (event: Event) => {
@@ -1651,9 +2005,24 @@ export default function CoworkView() {
     }
 
     const baseUserPrompt = skillPromptOverride ?? (slash?.command === 'plan' ? slash.args : effectiveInput)
+    const inferredClarificationContext = !replyingToAskUser && !slash
+      ? inferClarificationContext(
+          visibleMessages.map((message) => ({
+            role: message.role,
+            content: typeof message.content === 'string' ? message.content : '',
+          })),
+          baseUserPrompt,
+        )
+      : null
     const rawPrompt = replyingToAskUser && askUserQuestion
       ? `Antwort auf Rueckfrage:\nFrage: ${askUserQuestion}\nAntwort: ${baseUserPrompt}`
-      : baseUserPrompt
+      : inferredClarificationContext
+        ? buildClarificationContinuationPrompt(
+            inferredClarificationContext.originalTask,
+            inferredClarificationContext.assistantQuestion,
+            baseUserPrompt,
+          )
+        : baseUserPrompt
     const hasApprovalBypassMarker = /\[approval-beduerftig\]/i.test(rawPrompt)
     const mergedForSend = mergeAttachments([], draftAttachments)
     const attachmentBuild = await buildAttachmentPromptContext(mergedForSend.next, rawPrompt)
@@ -1670,6 +2039,7 @@ export default function CoworkView() {
     })
     const basePrompt = attachmentContext ? `${planWrappedPrompt}\n\n${attachmentContext}` : planWrappedPrompt
     const promptWithAttachments = systemAddendum ? `${systemAddendum}\n\n${basePrompt}` : basePrompt
+    const engineUserInput = await buildEngineUserInput(promptWithAttachments, mergedForSend.next)
     const userMessage = {
       role: 'user' as const,
       content: rawPrompt,
@@ -1677,6 +2047,7 @@ export default function CoworkView() {
       attachments: mergedForSend.next,
       debugContent: promptWithAttachments,
     }
+    let userMessageId: string | null = null
     const history = activeMessages
       .filter((m) => m.role !== 'system')
       .map((m) => ({ role: m.role, content: typeof m.content === 'string' ? m.content : '' }))
@@ -1701,7 +2072,7 @@ export default function CoworkView() {
     }
 
     if (!slash) {
-      addMessage(threadId, userMessage)
+      userMessageId = addMessage(threadId, userMessage)
     }
     setInputValue('')
     setAttachments([])
@@ -1710,6 +2081,7 @@ export default function CoworkView() {
     setError(null)
 
     let assistantMessageId: string | null = null
+    let requestPreviewMessageId: string | null = null
 
     try {
       const started = Date.now()
@@ -1762,9 +2134,12 @@ export default function CoworkView() {
         ? `[${formatVerboseTimestamp(Date.now())}] Live-Verbose aktiviert`
         : ''
       let engineErrorMessage: string | null = null
+      let webSearchSources: WebSearchSource[] = []
       const usedToolNames = new Set<string>()
       const toolNamesById = new Map<string, string>()
+      let liveToolCalls: LiveToolCall[] = []
       let approvalSummary: string | null = null
+      setShellPanelRunning(false)
       const createdAssistantMessageId = addMessage(threadId, {
         role: 'assistant',
         content: '',
@@ -1773,6 +2148,13 @@ export default function CoworkView() {
         streaming: true,
       })
       assistantMessageId = createdAssistantMessageId
+
+      const updateLiveToolCall = (patch: LiveToolCallPatch) => {
+        liveToolCalls = upsertLiveToolCall(liveToolCalls, patch)
+        updateMessage(threadId, createdAssistantMessageId, {
+          liveToolCalls,
+        })
+      }
 
       const appendVerboseEntry = (headline: string, details?: string) => {
         if (!verboseMode) return
@@ -1794,9 +2176,14 @@ export default function CoworkView() {
 
       {
         // ── Engine Provider (Ollama backend) ──
-        const cwd = await invoke<string>('get_workspace_path').catch(() => '.')
+        const cwd = getEffectiveWorkspaceCwd(
+          mergedForSend.next,
+          workingFolder,
+          workingPathKind,
+          workspaceDefaultPath,
+        )
         appendVerboseEntry('Engine-Stream gestartet', `Arbeitsverzeichnis: ${cwd}`)
-        await engineSendMessage(promptWithAttachments, cwd, (event) => {
+        await engineSendMessage(engineUserInput, cwd, (event) => {
           switch (event.type) {
             case 'text_delta':
               rawAssistantMessage += event.text
@@ -1817,6 +2204,26 @@ export default function CoworkView() {
                 thinkingContent: rawThinkingMessage,
               })
               break
+            case 'request_debug':
+              if (userMessageId) {
+                updateMessage(threadId, userMessageId, {
+                  debugContent: `${promptWithAttachments}\n\n[OLLAMA REQUEST PREVIEW]\n${event.payload}`,
+                })
+              }
+              if (requestPreviewMessageId) {
+                updateMessage(threadId, requestPreviewMessageId, {
+                  content: `Ollama Request Preview\n${event.payload}`,
+                })
+              } else {
+                requestPreviewMessageId = addMessage(threadId, {
+                  role: 'system',
+                  content: `Ollama Request Preview\n${event.payload}`,
+                  visibleInChat: true,
+                  timestamp: Date.now(),
+                })
+              }
+              appendVerboseEntry('Ollama-Request vorbereitet', event.payload)
+              break
             case 'assistant_message': {
               // Non-stream fallback paths can emit only a final assistant_message
               // without prior text_delta events.
@@ -1831,12 +2238,28 @@ export default function CoworkView() {
                 .map((block) => block.thinking)
                 .join('\n\n')
                 .trim()
+              const toolUseBlocks = blocks
+                .filter((block): block is { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> } =>
+                  block.type === 'tool_use'
+                  && typeof block.id === 'string'
+                  && typeof block.name === 'string'
+                  && typeof block.input === 'object'
+                  && block.input !== null,
+                )
 
               if (!rawAssistantMessage && textFromEvent) {
                 rawAssistantMessage = textFromEvent
               }
               if (!rawThinkingMessage && thinkingFromEvent) {
                 rawThinkingMessage = thinkingFromEvent
+              }
+              for (const block of toolUseBlocks) {
+                updateLiveToolCall({
+                  id: block.id,
+                  toolName: block.name,
+                  input: block.input,
+                  status: 'requested',
+                })
               }
 
               const presentation = resolveAssistantPresentation(rawAssistantMessage, {
@@ -1856,8 +2279,23 @@ export default function CoworkView() {
               })
               break
             }
+            case 'tool_call_delta':
+              updateLiveToolCall({
+                id: event.toolUseId,
+                toolName: event.toolName,
+                input: event.input,
+                status: 'requested',
+              })
+              break
             case 'approval_required':
               approvalSummary = `${event.request.toolName}: ${event.request.description}`
+              updateLiveToolCall({
+                id: findLiveToolCallId(liveToolCalls, event.request.toolName, event.request.input),
+                toolName: event.request.toolName,
+                input: event.request.input,
+                status: 'approval',
+                result: event.request.description,
+              })
               appendVerboseEntry('Freigabe erforderlich', [
                 `Tool: ${event.request.toolName}`,
                 `Beschreibung: ${event.request.description}`,
@@ -1880,6 +2318,7 @@ export default function CoworkView() {
                 })
                 break
               }
+              setBusy(false)
               setPendingApproval([`${event.request.toolName}: ${event.request.description}`])
               addLog({
                 level: 'warn',
@@ -1891,6 +2330,20 @@ export default function CoworkView() {
             case 'tool_use_start':
               usedToolNames.add(event.toolName)
               toolNamesById.set(event.toolUseId, event.toolName)
+              updateLiveToolCall({
+                id: event.toolUseId,
+                toolName: event.toolName,
+                input: event.input,
+                status: 'running',
+              })
+              if (event.toolName === 'Bash') {
+                setShellPanelOpen(true)
+                setShellPanelRunning(true)
+                setShellPanelContent((previous) => appendRollingTerminalOutput(
+                  previous,
+                  `[${formatVerboseTimestamp(Date.now())}] $ ${String(event.input.command ?? '').trim()}`,
+                ))
+              }
               appendVerboseEntry(
                 `Tool gestartet: ${event.toolName}`,
                 stringifyVerboseValue(event.input),
@@ -1905,11 +2358,45 @@ export default function CoworkView() {
             case 'tool_progress': {
               const activeToolName = toolNamesById.get(event.toolUseId) ?? 'Tool'
               const progress = formatToolProgress(activeToolName, event.data)
+              const progressData = event.data
+              if (activeToolName === 'Bash' && progressData.type === 'bash_progress') {
+                const shellLine = normalizeShellPanelLine(progressData.output)
+                if (shellLine) {
+                  setShellPanelContent((previous) => appendRollingTerminalOutput(previous, shellLine))
+                }
+                setShellPanelRunning(progressData.exitCode === undefined)
+              }
               appendVerboseEntry(progress.headline, progress.details)
               break
             }
             case 'tool_use_complete':
               usedToolNames.add(event.toolName)
+              updateLiveToolCall({
+                id: event.toolUseId,
+                toolName: event.toolName,
+                input: liveToolCalls.find((call) => call.id === event.toolUseId)?.input ?? {},
+                status: event.result.trim().toLowerCase().startsWith('fehler:') ? 'failed' : 'completed',
+                result: event.result,
+                error: event.result.trim().toLowerCase().startsWith('fehler:') ? event.result : undefined,
+                finishedAt: Date.now(),
+              })
+              if (event.toolName === 'Bash') {
+                setShellPanelRunning(false)
+                const shellCompletionLine = extractShellPanelCompletionLine(event.result)
+                if (shellCompletionLine) {
+                  setShellPanelContent((previous) => appendRollingTerminalOutput(previous, shellCompletionLine))
+                }
+                setShellPanelContent((previous) => appendRollingTerminalOutput(
+                  previous,
+                  `[${formatVerboseTimestamp(Date.now())}] Shell-Lauf abgeschlossen`,
+                ))
+              }
+              if (event.toolName === 'WebSearch') {
+                webSearchSources = mergeWebSearchSources(
+                  webSearchSources,
+                  parseWebSearchSourcesFromToolResult(event.result),
+                )
+              }
               appendVerboseEntry(
                 `Tool fertig: ${event.toolName}`,
                 clipVerboseText(event.result, 6000),
@@ -1960,6 +2447,13 @@ export default function CoworkView() {
               addLog({ level: 'error', area: 'llm', message: event.error })
               break
           }
+        }, {
+          threadId,
+          messages: activeMessages.map((message) => ({
+            role: message.role,
+            content: typeof message.content === 'string' ? message.content : '',
+            debugContent: message.debugContent,
+          })),
         })
 
         const fallbackText = engineErrorMessage
@@ -1974,8 +2468,9 @@ export default function CoworkView() {
           thinkingContent: rawThinkingMessage,
           fallbackText,
         })
+        const finalContent = appendWebSearchSources(presentation.content, webSearchSources)
         updateMessage(threadId, createdAssistantMessageId, {
-          content: presentation.content,
+          content: finalContent,
           debugContent: presentation.debugContent,
           thinkingContent: presentation.thinkingContent,
           verboseContent: rawVerboseMessage || undefined,
@@ -2044,6 +2539,7 @@ export default function CoworkView() {
 
   const handleApprove = () => {
     if (approvalSteps.length === 0 || !activeThreadId) return
+    setBusy(true)
     addMessage(activeThreadId, {
       role: 'system',
       content: `Plan freigegeben: ${approvalSteps.join(' | ')}`,
@@ -2147,18 +2643,58 @@ export default function CoworkView() {
                 ? 'stabil'
                 : `${contextWarning.level} (${contextWarning.estimatedTokens} Tokens)`}
             </span>
-            <button type="button" className="btn-sm" onClick={() => void forceCompact()} disabled={busy}>
+            <button
+              type="button"
+              className="btn-sm"
+              onClick={() => setShellPanelOpen((open) => !open)}
+            >
+              {shellPanelOpen ? 'Terminal Live ausblenden' : shellPanelRunning || shellPanelContent ? 'Terminal Live einblenden' : 'Terminal Live'}
+            </button>
+            <button type="button" className="btn-sm" onClick={() => void forceCompact()} disabled={uiLocked}>
               Kontext kompaktieren
             </button>
           </div>
         </div>
 
+        {shellPanelOpen && (shellPanelContent || shellPanelRunning) && (
+          <div className="card" style={{ marginBottom: 12 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', marginBottom: 8, flexWrap: 'wrap' }}>
+              <div>
+                <strong style={{ fontSize: 13 }}>Terminal Live</strong>
+                <span style={{ fontSize: 11, color: shellPanelRunning ? 'var(--success)' : 'var(--text-muted)', marginLeft: 8 }}>
+                  {shellPanelRunning ? 'laeuft' : 'bereit'}
+                </span>
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button type="button" className="btn-sm" onClick={() => setShellPanelContent('')} disabled={shellPanelRunning || !shellPanelContent}>
+                  Leeren
+                </button>
+                <button type="button" className="btn-sm" onClick={() => setShellPanelOpen(false)}>
+                  Schliessen
+                </button>
+              </div>
+            </div>
+            <pre style={{ margin: 0, fontSize: 12, lineHeight: 1.45, background: 'var(--bg-primary)', color: 'var(--text-primary)', padding: 12, borderRadius: 'var(--radius-sm)', overflowX: 'auto', maxHeight: 280, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'Consolas, Monaco, monospace' }}>
+              {shellPanelContent || (shellPanelRunning ? 'Warte auf Shell-Ausgabe...' : 'Noch keine Shell-Ausgabe.')}
+            </pre>
+          </div>
+        )}
+
         <div className="cowork-messages" ref={logRef}>
           {visibleMessages.map((msg, index) => {
               const content = typeof msg.content === 'string' ? msg.content : ''
-              const hasLiveVerbose = verboseMode && !!msg.verboseContent?.trim()
-              const hasLiveThinking = verboseMode && !!msg.thinkingContent?.trim()
+              const { promptDebug, ollamaRequestPreview } = splitPromptDebugContent(msg.debugContent)
               const attachmentsForMessage = Array.isArray(msg.attachments) ? msg.attachments : []
+              const imageAttachments = attachmentsForMessage.filter((item) => item.kind === 'file' && isImageAttachment(item))
+              const displayedThinkingContent = resolveDisplayedThinkingContent(
+                msg.thinkingContent,
+                liveThinkingText,
+                {
+                  streaming: msg.streaming,
+                  preferLive: msg.streaming && index === visibleMessages.length - 1,
+                },
+              )
+              const displayedContent = resolveDisplayedAssistantContent(content, displayedThinkingContent)
               const canRegenerate = msg.role === 'assistant' && findPreviousUserMessage(msg.id) !== null
               return (
                 <div key={`${msg.timestamp}-${index}`} className={`cowork-msg ${msg.role}`}>
@@ -2171,14 +2707,14 @@ export default function CoworkView() {
                     {showTimestamps && <span className="msg-time">{formatTime(msg.timestamp)}</span>}
                   </div>
                   <div className="msg-content">
-                    {content ? <HighlightedChatText content={content} /> : (msg.streaming && !hasLiveVerbose && !hasLiveThinking ? <StreamingPlaceholder /> : null)}
+                    {displayedContent ? <HighlightedChatText content={displayedContent} /> : null}
                   </div>
-                  {verboseMode && (
-                    <MessageThinking
-                      content={msg.thinkingContent}
-                      limitToRollingWindow={limitThinkingWindow}
-                    />
-                  )}
+                  <MessageThinking
+                    content={displayedThinkingContent}
+                    limitToRollingWindow={limitThinkingWindow}
+                    streaming={msg.streaming}
+                  />
+                  <LiveToolCalls calls={msg.liveToolCalls} />
                   {verboseMode && (
                     <MessageVerbose
                       content={msg.verboseContent}
@@ -2186,18 +2722,40 @@ export default function CoworkView() {
                     />
                   )}
                   {attachmentsForMessage.length > 0 && (
-                    <div className="message-attachments">
-                      {attachmentsForMessage.map((item) => (
-                        <span key={`${item.kind}-${item.path}`} className="message-attachment-chip" title={item.path}>
-                          {item.kind === 'folder' ? '📁' : '📄'} {getPathName(item.path)}
-                        </span>
-                      ))}
-                    </div>
+                    <>
+                      {imageAttachments.length > 0 && (
+                        <div className="message-attachment-previews">
+                          {imageAttachments.map((item) => (
+                            <div key={`preview-${item.kind}-${item.path}`} className="message-attachment-preview" title={item.label ?? item.path}>
+                              <img
+                                src={getAttachmentPreviewSrcForAttachment(item)}
+                                alt={getAttachmentDisplayName(item)}
+                                className="message-attachment-image"
+                                loading="lazy"
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <div className="message-attachments">
+                        {attachmentsForMessage.map((item) => (
+                          <span key={`${item.kind}-${item.path}`} className="message-attachment-chip" title={item.label ?? item.path}>
+                            {item.kind === 'folder' ? '📁' : isImageAttachment(item) ? '🖼️' : '📄'} {getAttachmentDisplayName(item)}
+                          </span>
+                        ))}
+                      </div>
+                    </>
                   )}
-                  {verboseMode && msg.debugContent && msg.debugContent !== content && (
+                  {ollamaRequestPreview && (
+                    <details className="message-debug">
+                      <summary>Ollama Request Preview</summary>
+                      <pre>{ollamaRequestPreview}</pre>
+                    </details>
+                  )}
+                  {verboseMode && promptDebug && promptDebug !== content && (
                     <details className="message-debug">
                       <summary>Verbose: interner Prompt</summary>
-                      <pre>{msg.debugContent}</pre>
+                      <pre>{promptDebug}</pre>
                     </details>
                   )}
                   <div className="msg-actions">
@@ -2221,7 +2779,7 @@ export default function CoworkView() {
                           type="button"
                           className="btn-msg-action"
                           onClick={() => void handleRegenerate(msg.id)}
-                          disabled={busy || !canRegenerate}
+                          disabled={uiLocked || !canRegenerate}
                         >
                           Neu generieren
                         </button>
@@ -2265,10 +2823,10 @@ export default function CoworkView() {
               ))}
             </ol>
             <div className="approval-actions">
-              <button type="button" className="btn-approve" onClick={handleApprove} disabled={busy}>
+              <button type="button" className="btn-approve" onClick={handleApprove} disabled={uiLocked}>
                 ✓ Freigeben
               </button>
-              <button type="button" className="btn-reject" onClick={handleReject} disabled={busy}>
+              <button type="button" className="btn-reject" onClick={handleReject} disabled={uiLocked}>
                 ✗ Ablehnen
               </button>
             </div>
@@ -2295,7 +2853,7 @@ export default function CoworkView() {
                     inputRef.current?.setSelectionRange(askUserQuestion.length, askUserQuestion.length)
                   })
                 }}
-                disabled={busy}
+                disabled={uiLocked}
               >
                 Frage uebernehmen
               </button>
@@ -2321,7 +2879,7 @@ export default function CoworkView() {
                 className="model-selector chat-model-selector"
                 value={ollama.model}
                 onChange={(e) => handleModelChange(e.target.value)}
-                disabled={busy}
+                disabled={uiLocked}
               >
                 {selectableModels.length > 0 ? (
                   selectableModels.map((model) => (
@@ -2344,7 +2902,7 @@ export default function CoworkView() {
                   setEngineConfig({ permissionMode: mode })
                   setClaudePermissionMode(ENGINE_TO_CLAUDE_PERMISSION_MODE[mode])
                 }}
-                disabled={busy}
+                disabled={uiLocked}
               >
                 <option value="default">Standard</option>
                 <option value="plan">Plan-Modus</option>
@@ -2353,10 +2911,10 @@ export default function CoworkView() {
               </select>
             </label>
             <div className="attachment-actions">
-              <button type="button" className="btn-attach" onClick={handleAttachFiles} disabled={busy}>
+              <button type="button" className="btn-attach" onClick={handleAttachFiles} disabled={uiLocked}>
                 Dateien
               </button>
-              <button type="button" className="btn-attach" onClick={handleAttachFolders} disabled={busy}>
+              <button type="button" className="btn-attach" onClick={handleAttachFolders} disabled={uiLocked}>
                 Ordner
               </button>
             </div>
@@ -2365,16 +2923,16 @@ export default function CoworkView() {
             {attachments.length > 0 && (
               <div className="attachment-list" aria-label="Verbundene Elemente">
                 {attachments.map((item) => (
-                  <span key={`${item.kind}-${item.path}`} className="attachment-chip" title={item.path}>
+                  <span key={`${item.kind}-${item.path}`} className="attachment-chip" title={item.label ?? item.path}>
                     <span className="attachment-chip-label">
-                      {item.kind === 'folder' ? 'Ordner' : 'Datei'}: {getPathName(item.path)}
+                      {item.kind === 'folder' ? 'Ordner' : isImageAttachment(item) ? 'Bild' : 'Datei'}: {getAttachmentDisplayName(item)}
                     </span>
                     <button
                       type="button"
                       className="attachment-remove"
                       onClick={() => handleRemoveAttachment(item)}
-                      aria-label={`Anhang entfernen: ${item.path}`}
-                      disabled={busy}
+                      aria-label={`Anhang entfernen: ${getAttachmentDisplayName(item)}`}
+                      disabled={uiLocked}
                     >
                       ×
                     </button>
@@ -2387,7 +2945,7 @@ export default function CoworkView() {
               ref={inputRef}
               rows={2}
               placeholder={askUserQuestion ? 'Beantworte die Rueckfrage hier...' : 'Nächste Anweisung...'}
-              disabled={busy}
+              disabled={uiLocked}
               value={inputValue}
               className={dragOverInput ? 'input-drop-active' : ''}
               onChange={(e) => setInputValue(e.currentTarget.value)}
@@ -2479,7 +3037,7 @@ export default function CoworkView() {
               </div>
             )}
           </div>
-          <button type="submit" disabled={busy} className="btn-send">
+          <button type="submit" disabled={uiLocked} className="btn-send">
             {busy ? '⟳' : askUserQuestion ? 'Antwort senden →' : 'Senden →'}
           </button>
         </form>

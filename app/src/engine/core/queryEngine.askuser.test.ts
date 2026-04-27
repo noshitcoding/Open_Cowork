@@ -4,6 +4,7 @@ import type { Tool, ToolResult } from '../types'
 const streamOllamaMessagesMock = vi.fn()
 
 vi.mock('../api/ollamaClient', () => ({
+  buildOllamaChatRequest: vi.fn(() => ({ body: {}, debugPreview: '{}' })),
   streamOllamaMessages: (...args: unknown[]) => streamOllamaMessagesMock(...args),
 }))
 

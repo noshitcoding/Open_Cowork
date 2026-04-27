@@ -1,15 +1,9 @@
 import { limitRollingLines } from '../utils/messageDisplay'
 
-const WAITING_LINES = [
-  'Kontext wird sortiert',
-  'Gedanken werden gebündelt',
-  'Antwort wird aufgebaut',
-  'Nächster sinnvoller Schritt wird gesucht',
-]
-
 type MessageThinkingProps = {
   content?: string
   limitToRollingWindow: boolean
+  streaming?: boolean
 }
 
 type MessageStreamPanelProps = MessageThinkingProps & {
@@ -17,27 +11,31 @@ type MessageStreamPanelProps = MessageThinkingProps & {
   className?: string
 }
 
-function MessageStreamPanel({ content, limitToRollingWindow, title, className }: MessageStreamPanelProps) {
-  if (!content?.trim()) return null
+function MessageStreamPanel({ content, limitToRollingWindow, title, className, streaming }: MessageStreamPanelProps) {
+  const hasContent = Boolean(content?.trim())
+  if (!hasContent && !streaming) return null
 
-  const visibleContent = limitToRollingWindow ? limitRollingLines(content, 50) : content
+  const visibleContent = hasContent
+    ? (limitToRollingWindow ? limitRollingLines(content!, 50) : content!)
+    : ''
 
   return (
-    <div className={`thinking-panel ${className ?? ''}`.trim()}>
-      <div className="thinking-header">
+    <details className={`thinking-panel ${className ?? ''}`.trim()} open={streaming || hasContent}>
+      <summary className="thinking-header">
         <span>{title}</span>
         {limitToRollingWindow && <span className="thinking-limit">letzte 50 Zeilen</span>}
-      </div>
-      <pre>{visibleContent}</pre>
-    </div>
+      </summary>
+      <pre aria-live={streaming ? 'polite' : undefined}>{visibleContent}</pre>
+    </details>
   )
 }
 
-export function MessageThinking({ content, limitToRollingWindow }: MessageThinkingProps) {
+export function MessageThinking({ content, limitToRollingWindow, streaming }: MessageThinkingProps) {
   return (
     <MessageStreamPanel
       content={content}
       limitToRollingWindow={limitToRollingWindow}
+      streaming={streaming}
       title="Thinking"
     />
   )
@@ -51,17 +49,5 @@ export function MessageVerbose({ content, limitToRollingWindow }: MessageThinkin
       title="Verbose Live"
       className="verbose-panel"
     />
-  )
-}
-
-export function StreamingPlaceholder() {
-  return (
-    <span className="stream-placeholder" aria-live="polite">
-      {WAITING_LINES.map((line) => (
-        <span key={line} className="stream-placeholder-line">
-          {line}<span className="stream-placeholder-dots" />
-        </span>
-      ))}
-    </span>
   )
 }
