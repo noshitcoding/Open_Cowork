@@ -31,6 +31,7 @@ import {
   listOllamaModels,
   checkOllamaConnection,
   autoSaveSession,
+  createSession,
   generateSessionTitle,
   loadSession,
   listSessions,
@@ -545,6 +546,8 @@ export const useEngineStore = create<EngineStoreState>()(
                   case 'turn_complete':
                     if (event.stopReason === 'tool_use') {
                       set({ status: 'streaming' })
+                    } else if (event.stopReason === 'await_user') {
+                      set({ status: 'idle', currentToolUI: null })
                     }
                     break
 
@@ -608,14 +611,24 @@ export const useEngineStore = create<EngineStoreState>()(
                     if (get().config.sessionPersistence) {
                       const doneMessages = event.messages
                       const sessionId = get().currentSessionId ?? crypto.randomUUID()
+                      const title = generateSessionTitle(doneMessages)
+                      const threadId = get().conversationThreadId
+                      void createSession({
+                        id: sessionId,
+                        threadId: threadId ?? undefined,
+                        title,
+                        model: providerState.model,
+                        provider: providerState.provider,
+                      }).catch(() => { /* optional */ })
                       void autoSaveSession(
                         sessionId,
-                        generateSessionTitle(doneMessages),
+                        title,
                         cwd,
                         doneMessages,
                         event.totalUsage,
                         event.totalCostUsd,
                         engine!.getAppState(),
+                        threadId ?? undefined,
                       )
                         .then(() => set({ currentSessionId: sessionId }))
                         .catch(() => { /* session save optional */ })
@@ -731,18 +744,13 @@ export const useEngineStore = create<EngineStoreState>()(
         const session = await loadSession(sessionId)
         if (session) {
           set({
-            messages: session.messages,
-            totalUsage: session.totalUsage,
-            totalCostUsd: session.totalCostUsd,
-            appState: { ...createInitialAppState(session.cwd), ...session.appState },
             currentSessionId: session.id,
             currentRunId: null,
-            conversationThreadId: session.id,
+            conversationThreadId: session.threadId ?? session.id,
             streamingText: '',
             thinkingText: '',
             activeTools: [],
             status: 'idle',
-            contextSnapshot: get()._engine?.getContextSnapshot(session.messages) ?? null,
           })
         }
         return session

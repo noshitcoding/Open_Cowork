@@ -28,7 +28,9 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": [
+      "nsis"
+    ],
     "resources": [
       "resources/pdfium/bin/pdfium.dll",
       "resources/pdfium/LICENSE",

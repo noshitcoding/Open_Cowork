@@ -8136,6 +8136,16 @@ fn session_freeze_snapshot(
   Ok(snapshot_json)
 }
 
+#[tauri::command]
+fn session_get(state: tauri::State<'_, Arc<Database>>, id: String) -> Result<Option<db::SessionRow>, String> {
+  state.get_session(&id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn session_delete(state: tauri::State<'_, Arc<Database>>, id: String) -> Result<(), String> {
+  state.delete_session(&id).map_err(|e| e.to_string())
+}
+
 // -- Learning outcome commands ----------------------------------------------
 
 #[tauri::command]
@@ -8613,6 +8623,8 @@ pub fn run() {
       session_list,
       session_search,
       session_freeze_snapshot,
+      session_get,
+      session_delete,
       // Learning
       learning_upsert,
       learning_list,

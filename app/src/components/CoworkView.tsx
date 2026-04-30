@@ -3349,71 +3349,6 @@ export default function CoworkView() {
         </div>
 
         <form className="cowork-input" onSubmit={handleSend}>
-          <div className="chat-input-toolbar">
-            <label>
-              Provider
-              <select
-                className="model-selector chat-model-selector"
-                value={providerState.provider}
-                onChange={(e) => handleProviderChange(e.target.value)}
-                disabled={uiLocked}
-              >
-                {CHAT_PROVIDER_OPTIONS.map((provider) => (
-                  <option key={provider} value={provider}>
-                    {CHAT_PROVIDER_LABELS[provider]}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Modell
-              <select
-                className="model-selector chat-model-selector"
-                value={providerState.model}
-                onChange={(e) => handleModelChange(e.target.value)}
-                disabled={uiLocked}
-              >
-                {selectableModels.length > 0 ? (
-                  selectableModels.map((model) => (
-                    <option key={model} value={model}>
-                      {model}
-                    </option>
-                  ))
-                ) : (
-                  <option value={providerState.model}>{providerState.model || 'kein Modell gesetzt'}</option>
-                )}
-                {selectableModels.length > 0 && providerState.model && !selectableModels.includes(providerState.model) && (
-                  <option value={providerState.model}>{providerState.model}</option>
-                )}
-              </select>
-            </label>
-            <label>
-              Berechtigungs-Modus
-              <select
-                className="model-selector chat-model-selector"
-                value={enginePermissionMode}
-                onChange={(e) => {
-                  const mode = e.target.value as 'default' | 'plan' | 'bypass' | 'strict'
-                  setEngineConfig({ permissionMode: mode })
-                  setClaudePermissionMode(ENGINE_TO_CLAUDE_PERMISSION_MODE[mode])
-                }}
-                disabled={uiLocked}
-              >
-                <option value="default">Standard</option>
-                <option value="plan">Plan-Modus</option>
-                <option value="bypass">Bypass (alles erlauben)</option>
-                <option value="strict">Strikt (alles fragen)</option>
-              </select>
-            </label>
-            <div className="attachment-actions">
-              <button type="button" className="btn-attach" onClick={handleAttachFiles} disabled={uiLocked}>
-                Dateien
-              </button>
-              <button type="button" className="btn-attach" onClick={handleAttachFolders} disabled={uiLocked}>
-                Ordner
-              </button>
-            </div>
-          </div>
           <div className="chat-input-main">
             {attachments.length > 0 && (
               <div className="attachment-list" aria-label="Verbundene Elemente">
@@ -3532,9 +3467,70 @@ export default function CoworkView() {
               </div>
             )}
           </div>
-          <button type="submit" disabled={uiLocked} className="btn-send">
-            {busy ? '⟳' : askUserQuestion ? 'Antwort senden →' : 'Senden →'}
-          </button>
+          <div className="chat-input-bottom-bar">
+            <div className="chat-input-toolbar-compact">
+              <select
+                className="chat-compact-select"
+                value={providerState.provider}
+                onChange={(e) => handleProviderChange(e.target.value)}
+                disabled={uiLocked}
+                title="Provider"
+              >
+                {CHAT_PROVIDER_OPTIONS.map((provider) => (
+                  <option key={provider} value={provider}>
+                    {CHAT_PROVIDER_LABELS[provider]}
+                  </option>
+                ))}
+              </select>
+              <select
+                className="chat-compact-select"
+                value={providerState.model}
+                onChange={(e) => handleModelChange(e.target.value)}
+                disabled={uiLocked}
+                title="Modell"
+              >
+                {selectableModels.length > 0 ? (
+                  selectableModels.map((model) => (
+                    <option key={model} value={model}>
+                      {model}
+                    </option>
+                  ))
+                ) : (
+                  <option value={providerState.model}>{providerState.model || 'kein Modell gesetzt'}</option>
+                )}
+                {selectableModels.length > 0 && providerState.model && !selectableModels.includes(providerState.model) && (
+                  <option value={providerState.model}>{providerState.model}</option>
+                )}
+              </select>
+              <select
+                className="chat-compact-select"
+                value={enginePermissionMode}
+                onChange={(e) => {
+                  const mode = e.target.value as 'default' | 'plan' | 'bypass' | 'strict'
+                  setEngineConfig({ permissionMode: mode })
+                  setClaudePermissionMode(ENGINE_TO_CLAUDE_PERMISSION_MODE[mode])
+                }}
+                disabled={uiLocked}
+                title="Berechtigungs-Modus"
+              >
+                <option value="default">Standard</option>
+                <option value="plan">Plan-Modus</option>
+                <option value="bypass">Bypass</option>
+                <option value="strict">Strikt</option>
+              </select>
+              <div className="chat-compact-actions">
+                <button type="button" className="btn-compact-action" onClick={handleAttachFiles} disabled={uiLocked}>
+                  Dateien
+                </button>
+                <button type="button" className="btn-compact-action" onClick={handleAttachFolders} disabled={uiLocked}>
+                  Ordner
+                </button>
+              </div>
+            </div>
+            <button type="submit" disabled={uiLocked} className="btn-send compact-send-btn">
+              {busy ? '⟳' : askUserQuestion ? 'Antwort senden →' : 'Senden →'}
+            </button>
+          </div>
         </form>
       </div>
     </div>

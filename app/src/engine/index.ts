@@ -39,6 +39,7 @@ export type {
   ToolCategory,
   ToolUseContext,
   ToolUIRequest,
+  AskQuestionOption,
   ApprovalRequest,
   ApprovalResult,
   CanUseToolFn,
@@ -233,7 +234,8 @@ export type {
 
 export {
   // Session Persistence
-  saveSession,
+  createSession,
+  endSession,
   loadSession,
   listSessions,
   deleteSession,

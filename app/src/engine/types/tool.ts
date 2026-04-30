@@ -163,12 +163,27 @@ export type ToolUseContext = {
 
 // ── Tool UI ────────────────────────────────────────────────────────────────
 
+export type AskQuestionOption = {
+  label: string
+  value?: string
+  description?: string
+}
+
 export type ToolUIRequest = {
   type: 'progress' | 'approval' | 'input' | 'result' | 'error'
   toolName: string
   content: string
   details?: Record<string, unknown>
-}
+} & ({
+  type: 'input'
+  options?: AskQuestionOption[]
+  allowMultiple?: boolean
+  allowFreeformInput?: boolean
+  freeTextLabel?: string
+  freeTextPlaceholder?: string
+} | {
+  type: 'progress' | 'approval' | 'result' | 'error'
+})
 
 // ── Approval System ────────────────────────────────────────────────────────
 

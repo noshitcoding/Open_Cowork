@@ -36,7 +36,8 @@ export type {
 
 export {
   // Session Persistence
-  saveSession,
+  createSession,
+  endSession,
   loadSession,
   listSessions,
   deleteSession,

@@ -2134,6 +2134,40 @@ impl Database {
         rows.collect()
     }
 
+    pub fn delete_session(&self, id: &str) -> SqlResult<()> {
+        let conn = self.conn.lock().map_err(|_| rusqlite::Error::InvalidQuery)?;
+        conn.execute("DELETE FROM sessions WHERE id = ?1", params![id])?;
+        Ok(())
+    }
+
+    pub fn get_session(&self, id: &str) -> SqlResult<Option<SessionRow>> {
+        let conn = self.conn.lock().map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let mut stmt = conn.prepare(
+            "SELECT id, thread_id, title, summary, model_used, provider, personality,
+                    total_messages, total_tokens_est, outcome, started_at, ended_at
+             FROM sessions WHERE id = ?1 LIMIT 1"
+        )?;
+        let mut rows = stmt.query(params![id])?;
+        if let Some(row) = rows.next()? {
+            Ok(Some(SessionRow {
+                id: row.get(0)?,
+                thread_id: row.get(1)?,
+                title: row.get(2)?,
+                summary: row.get(3)?,
+                model_used: row.get(4)?,
+                provider: row.get(5)?,
+                personality: row.get(6)?,
+                total_messages: row.get(7)?,
+                total_tokens_est: row.get(8)?,
+                outcome: row.get(9)?,
+                started_at: row.get(10)?,
+                ended_at: row.get(11)?,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
     #[allow(dead_code)]
     pub fn search_sessions(&self, query: &str, limit: i64) -> SqlResult<Vec<SessionRow>> {
         let conn = self.conn.lock().map_err(|_| rusqlite::Error::InvalidQuery)?;

@@ -1,16 +1,16 @@
-// ── Session Persistence Service (ported from Claude Code) ──────────────────
-// Mirrors: claude-code-main/src/services/session/
-// Saves and restores conversation sessions via Tauri DB
+// ── Session Persistence Service ────────────────────────────────────────────
+// Uses the dedicated `sessions` table instead of `chat_threads`.
+// Provides: create, end, list, get, delete for engine sessions.
 
 import { invoke } from '@tauri-apps/api/core'
 import type { Message, TokenUsage, AppState } from '../types'
-import { generateUUID } from '../types'
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
 export type SessionRecord = {
   id: string
   title: string
+  threadId?: string
   cwd: string
   messages: Message[]
   totalUsage: TokenUsage
@@ -23,169 +23,104 @@ export type SessionRecord = {
 export type SessionSummary = {
   id: string
   title: string
-  cwd: string
+  threadId?: string
+  cwd?: string
   messageCount: number
   createdAt: number
   updatedAt: number
 }
 
-type RawRecord = Record<string, unknown>
-
-const asRecord = (value: unknown): RawRecord =>
-  value && typeof value === 'object' ? value as RawRecord : {}
-
-const asString = (value: unknown, fallback = ''): string =>
-  typeof value === 'string' ? value : fallback
-
-const asNumber = (value: unknown, fallback = 0): number => {
-  if (typeof value === 'number' && Number.isFinite(value)) return value
-  if (typeof value === 'string' && value.trim()) {
-    const parsedAsNumber = Number(value)
-    if (Number.isFinite(parsedAsNumber)) return parsedAsNumber
-    const parsedAsDate = Date.parse(value)
-    if (Number.isFinite(parsedAsDate)) return parsedAsDate
-  }
-  return fallback
+type DbSessionRow = {
+  id: string
+  threadId?: string
+  title: string
+  summary?: string
+  modelUsed?: string
+  provider?: string
+  personality?: string
+  totalMessages: number
+  totalTokensEst: number
+  outcome?: string
+  startedAt: string
+  endedAt?: string
 }
 
-const normalizeSummary = (value: unknown): SessionSummary | null => {
-  const row = asRecord(value)
-  const id = asString(row.id)
-  if (!id) return null
+function parseDbDate(value: string | undefined): number {
+  if (!value) return Date.now()
+  const parsed = Date.parse(value)
+  return Number.isFinite(parsed) ? parsed : Date.now()
+}
 
-  const title = asString(row.title, 'Unbenannte Session')
-  const cwd = asString(row.cwd)
-  const messageCount = asNumber(row.messageCount ?? row.message_count, 0)
-  const createdAt = asNumber(row.createdAt ?? row.created_at, Date.now())
-  const updatedAt = asNumber(row.updatedAt ?? row.updated_at, createdAt)
-
+function rowToSummary(row: DbSessionRow): SessionSummary {
   return {
-    id,
-    title,
-    cwd,
-    messageCount,
-    createdAt,
-    updatedAt,
-  }
-}
-
-const parseMessage = (content: string): Message | null => {
-  try {
-    const parsed = JSON.parse(content) as unknown
-    if (!parsed || typeof parsed !== 'object') return null
-
-    const message = parsed as RawRecord
-    const type = asString(message.type)
-
-    if (type) {
-      return message as Message
-    }
-
-    // Backward compatibility: older rows may store { role, content, timestamp }
-    const role = asString(message.role)
-    const timestamp = asNumber(message.timestamp, Date.now())
-    const uuid = asString(message.uuid, generateUUID())
-    const textContent = asString(message.content)
-
-    if (role === 'user') {
-      return {
-        type: 'user',
-        uuid,
-        content: [{ type: 'text', text: textContent }],
-        timestamp,
-      }
-    }
-
-    if (role === 'assistant') {
-      return {
-        type: 'assistant',
-        uuid,
-        content: [{ type: 'text', text: textContent }],
-        model: asString(message.model, 'legacy'),
-        stopReason: null,
-        usage: { input_tokens: 0, output_tokens: 0 },
-        timestamp,
-      }
-    }
-
-    if (role === 'system') {
-      return {
-        type: 'system',
-        uuid,
-        content: textContent,
-        timestamp,
-      }
-    }
-
-    return null
-  } catch {
-    return null
+    id: row.id,
+    title: row.title || 'Unbenannte Session',
+    threadId: row.threadId,
+    cwd: '',
+    messageCount: row.totalMessages ?? 0,
+    createdAt: parseDbDate(row.startedAt),
+    updatedAt: parseDbDate(row.endedAt ?? row.startedAt),
   }
 }
 
 // ── Save/Load ──────────────────────────────────────────────────────────────
 
 /**
- * Save a session to the database.
- * Uses Tauri's db_save_thread + db_save_message to persist.
+ * Start a new session in the sessions table.
  */
-export async function saveSession(session: SessionRecord): Promise<void> {
-  // Save thread record
-  await invoke('db_save_thread', {
-    id: session.id,
-    title: session.title,
-    createdAt: new Date(session.createdAt).toISOString(),
+export async function createSession(params: {
+  id: string
+  threadId?: string
+  title: string
+  model?: string
+  provider?: string
+}): Promise<void> {
+  await invoke('session_create', {
+    id: params.id,
+    threadId: params.threadId ?? null,
+    title: params.title,
+    modelUsed: params.model ?? null,
+    provider: params.provider ?? null,
+    personality: null,
   })
-
-  // Save messages
-  for (let i = 0; i < session.messages.length; i++) {
-    const msg = session.messages[i]
-    await invoke('db_save_message', {
-      id: 'uuid' in msg ? (msg as { uuid: string }).uuid : `${session.id}-msg-${i}`,
-      threadId: session.id,
-      role: msg.type,
-      content: JSON.stringify(msg),
-      timestamp: 'timestamp' in msg ? (msg as { timestamp: number }).timestamp : Date.now(),
-    })
-  }
 }
 
 /**
- * Load a session from the database.
+ * End a session with final stats.
+ */
+export async function endSession(params: {
+  id: string
+  summary?: string
+  totalMessages?: number
+  totalTokensEst?: number
+  outcome?: string
+}): Promise<void> {
+  await invoke('session_end', {
+    id: params.id,
+    summary: params.summary ?? null,
+    totalMessages: params.totalMessages ?? 0,
+    totalTokensEst: params.totalTokensEst ?? 0,
+    outcome: params.outcome ?? null,
+  })
+}
+
+/**
+ * Load a session row from the database.
  */
 export async function loadSession(sessionId: string): Promise<SessionRecord | null> {
   try {
-    const threads = await invoke<unknown[]>('db_list_threads')
-    const thread = Array.isArray(threads)
-      ? threads
-        .map(asRecord)
-        .find((entry) => asString(entry.id) === sessionId)
-      : undefined
-
-    if (!thread) return null
-
-    const rawMessages = await invoke<unknown[]>('db_list_messages', { threadId: sessionId })
-    const parsedMessages = Array.isArray(rawMessages)
-      ? rawMessages
-        .map(asRecord)
-        .sort((a, b) => asNumber(a.timestamp) - asNumber(b.timestamp))
-        .map((m) => parseMessage(asString(m.content)))
-        .filter((msg): msg is Message => msg !== null)
-      : []
-
-    const createdAt = asNumber(thread.createdAt ?? thread.created_at, Date.now())
-    const updatedAt = asNumber(thread.updatedAt ?? thread.updated_at, createdAt)
-
+    const row = await invoke<DbSessionRow | null>('session_get', { id: sessionId })
+    if (!row) return null
     return {
-      id: asString(thread.id),
-      title: asString(thread.title, 'Unbenannte Session'),
-      cwd: asString(thread.cwd),
-      messages: parsedMessages,
+      id: row.id,
+      title: row.title || 'Unbenannte Session',
+      cwd: '',
+      messages: [],
       totalUsage: { input_tokens: 0, output_tokens: 0 },
       totalCostUsd: 0,
       appState: {},
-      createdAt,
-      updatedAt,
+      createdAt: parseDbDate(row.startedAt),
+      updatedAt: parseDbDate(row.endedAt ?? row.startedAt),
     }
   } catch {
     return null
@@ -197,11 +132,9 @@ export async function loadSession(sessionId: string): Promise<SessionRecord | nu
  */
 export async function listSessions(): Promise<SessionSummary[]> {
   try {
-    const threads = await invoke<unknown[]>('db_list_threads')
-    if (!Array.isArray(threads)) return []
-    return threads
-      .map(normalizeSummary)
-      .filter((thread): thread is SessionSummary => thread !== null)
+    const rows = await invoke<DbSessionRow[]>('session_list', { limit: 100 })
+    if (!Array.isArray(rows)) return []
+    return rows.map(rowToSummary)
   } catch {
     return []
   }
@@ -211,7 +144,7 @@ export async function listSessions(): Promise<SessionSummary[]> {
  * Delete a session from the database.
  */
 export async function deleteSession(sessionId: string): Promise<void> {
-  await invoke('db_delete_thread', { id: sessionId })
+  await invoke('session_delete', { id: sessionId })
 }
 
 /**
@@ -233,26 +166,35 @@ export function generateSessionTitle(messages: Message[]): string {
 }
 
 /**
- * Auto-save current session (called periodically during conversation).
+ * Auto-save current session after a run completes.
+ * Now uses the dedicated sessions table and links to the thread.
  */
 export async function autoSaveSession(
   sessionId: string,
   title: string,
-  cwd: string,
+  _cwd: string,
   messages: Message[],
   totalUsage: TokenUsage,
-  totalCostUsd: number,
-  appState: Partial<AppState>,
+  _totalCostUsd: number,
+  _appState: Partial<AppState>,
+  threadId?: string,
 ): Promise<void> {
-  await saveSession({
+  await endSession({
     id: sessionId,
-    title,
-    cwd,
-    messages,
-    totalUsage,
-    totalCostUsd,
-    appState,
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
+    summary: title,
+    totalMessages: messages.length,
+    totalTokensEst: totalUsage.input_tokens + totalUsage.output_tokens,
+    outcome: 'completed',
   })
+  // If this is the first time we save and a threadId is provided, update the row
+  if (threadId) {
+    try {
+      await invoke('db_update_thread_provider_settings', {
+        id: threadId,
+        providerSettingsJson: JSON.stringify({ sessionId }),
+      })
+    } catch {
+      // optional: thread may not exist
+    }
+  }
 }

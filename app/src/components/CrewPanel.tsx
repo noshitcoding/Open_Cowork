@@ -807,8 +807,7 @@ export default function CrewPanel() {
                         </label>
                         <label>
                           OpenAI-kompatibles Modell
-                          <input
-                            list="openai-compatible-models"
+                          <select
                             value={activeCrew.providerProfiles.openAICompatible.model}
                             onChange={(event) => updateActiveCrew({
                               providerProfiles: {
@@ -820,14 +819,17 @@ export default function CrewPanel() {
                               },
                             })}
                             style={inputStyle}
-                            placeholder={defaultOpenAICompatibleProfile?.model || 'gpt-4.1-mini'}
-                          />
+                          >
+                            <option value="">Crew-Default ({getCrewDefaultModelLabel('openai-compatible')})</option>
+                            {providerModelOptions.openAICompatible?.models.map((model) => (
+                              <option key={model} value={model}>{model}</option>
+                            ))}
+                            {activeCrew.providerProfiles.openAICompatible.model && 
+                              !providerModelOptions.openAICompatible?.models.includes(activeCrew.providerProfiles.openAICompatible.model) && (
+                              <option value={activeCrew.providerProfiles.openAICompatible.model}>{activeCrew.providerProfiles.openAICompatible.model}</option>
+                            )}
+                          </select>
                         </label>
-                        <datalist id="openai-compatible-models">
-                          {(providerModelOptions.openAICompatible?.models ?? []).map((model) => (
-                            <option key={model} value={model} />
-                          ))}
-                        </datalist>
                         <label>
                           OpenAI-kompatibler API-Key
                           <input
@@ -925,8 +927,7 @@ export default function CrewPanel() {
                         </label>
                         <label>
                           OpenRouter-Modell
-                          <input
-                            list="openrouter-models"
+                          <select
                             value={activeCrew.providerProfiles.openRouter.model}
                             onChange={(event) => updateActiveCrew({
                               providerProfiles: {
@@ -938,14 +939,17 @@ export default function CrewPanel() {
                               },
                             })}
                             style={inputStyle}
-                            placeholder={defaultOpenRouterProfile?.model || 'openai/gpt-4o-mini'}
-                          />
+                          >
+                            <option value="">Crew-Default ({getCrewDefaultModelLabel('openrouter')})</option>
+                            {providerModelOptions.openRouter?.models.map((model) => (
+                              <option key={model} value={model}>{model}</option>
+                            ))}
+                            {activeCrew.providerProfiles.openRouter.model && 
+                              !providerModelOptions.openRouter?.models.includes(activeCrew.providerProfiles.openRouter.model) && (
+                              <option value={activeCrew.providerProfiles.openRouter.model}>{activeCrew.providerProfiles.openRouter.model}</option>
+                            )}
+                          </select>
                         </label>
-                        <datalist id="openrouter-models">
-                          {(providerModelOptions.openRouter?.models ?? []).map((model) => (
-                            <option key={model} value={model} />
-                          ))}
-                        </datalist>
                         <label>
                           OpenRouter-API-Key
                           <input

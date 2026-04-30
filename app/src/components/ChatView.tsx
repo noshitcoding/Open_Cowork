@@ -1,9 +1,9 @@
-import { useRef, useEffect, useMemo, useState } from 'react'
+import { useRef, useEffect, useMemo, useState, useCallback } from 'react'
 import type { ClipboardEvent, FormEvent } from 'react'
 import { open } from '@tauri-apps/plugin-dialog'
 import { useChatStore, getActiveThread } from '../stores/chatStore'
 import type { LiveToolCall, LiveToolCallStatus } from '../stores/chatStore'
-import { CheckCircle2, Clock3, Loader2, ShieldAlert, Wrench, XCircle } from 'lucide-react'
+
 import { useConfigStore } from '../stores/configStore'
 import { useTaskStore } from '../stores/taskStore'
 import { useLogStore } from '../stores/logStore'
@@ -171,24 +171,104 @@ function getToolStatusLabel(status: LiveToolCallStatus): string {
   }
 }
 
-function getToolStatusIcon(status: LiveToolCallStatus) {
+function AskUserForm({ call, onRespond }: { call: LiveToolCall; onRespond: (answer: string) => void }) {
+  const [selectedOptions, setSelectedOptions] = useState<string[]>([])
+  const [freeText, setFreeText] = useState('')
+  const options = call.options ?? []
+  const allowMultiple = call.allowMultiple ?? false
+  const allowFreeform = call.allowFreeformInput ?? true
+  const freeTextLabel = call.freeTextLabel || 'Freitext'
+  const freeTextPlaceholder = call.freeTextPlaceholder || 'Optional ergaenzen...'
+
+  const handleToggleOption = (value: string) => {
+    if (allowMultiple) {
+      setSelectedOptions((prev) =>
+        prev.includes(value) ? prev.filter((v) => v !== value) : [...prev, value],
+      )
+    } else {
+      setSelectedOptions([value])
+    }
+  }
+
+  const handleSubmit = () => {
+    const parts: string[] = []
+    if (selectedOptions.length > 0) {
+      parts.push(selectedOptions.join(', '))
+    }
+    if (allowFreeform && freeText.trim()) {
+      if (parts.length > 0) parts.push('')
+      parts.push(freeText.trim())
+    }
+    const answer = parts.join('\n')
+    if (!answer.trim()) return
+    onRespond(answer)
+  }
+
+  const canSubmit = selectedOptions.length > 0 || (allowFreeform && freeText.trim().length > 0)
+
+  return (
+    <div className="ask-user-form">
+      {options.length > 0 && (
+        <div className="ask-user-options">
+          {options.map((opt) => {
+            const value = opt.value ?? opt.label
+            const checked = selectedOptions.includes(value)
+            return (
+              <label key={value} className={`ask-user-option ${allowMultiple ? 'checkbox' : 'radio'}`}>
+                <input
+                  type={allowMultiple ? 'checkbox' : 'radio'}
+                  checked={checked}
+                  onChange={() => handleToggleOption(value)}
+                />
+                <span className="ask-user-option-label">{opt.label}</span>
+              </label>
+            )
+          })}
+        </div>
+      )}
+      {allowFreeform && (
+        <div className="ask-user-freetext">
+          <label>{freeTextLabel}</label>
+          <textarea
+            value={freeText}
+            onChange={(e) => setFreeText(e.target.value)}
+            placeholder={freeTextPlaceholder}
+            rows={2}
+          />
+        </div>
+      )}
+      <button
+        className="ask-user-submit"
+        onClick={handleSubmit}
+        disabled={!canSubmit}
+      >
+        Antwort senden
+      </button>
+    </div>
+  )
+}
+
+function getStatusDotColor(status: LiveToolCallStatus): string {
   switch (status) {
     case 'requested':
-      return <Clock3 size={15} />
+      return 'var(--info)'
     case 'running':
-      return <Loader2 size={15} className="tool-call-spin" />
+      return 'var(--accent)'
     case 'approval':
-      return <ShieldAlert size={15} />
+      return 'var(--warning)'
     case 'waiting_input':
-      return <Clock3 size={15} />
+      return 'var(--info)'
     case 'completed':
-      return <CheckCircle2 size={15} />
+      return 'var(--success)'
     case 'failed':
-      return <XCircle size={15} />
+      return 'var(--danger)'
   }
 }
 
-function LiveToolCalls({ calls }: { calls?: LiveToolCall[] }) {
+function LiveToolCalls({ calls, onAskUserRespond }: {
+  calls?: LiveToolCall[]
+  onAskUserRespond?: (callId: string, answer: string) => void
+}) {
   if (!Array.isArray(calls) || calls.length === 0) return null
 
   return (
@@ -196,31 +276,47 @@ function LiveToolCalls({ calls }: { calls?: LiveToolCall[] }) {
       {calls.map((call) => {
         const inputPreview = formatToolPayload(call.input)
         const resultPreview = formatToolPayload(call.error ?? call.result)
+        const isAskUserWaiting = call.status === 'waiting_input' && call.toolName === 'AskUser'
+        const isActive = call.status === 'requested' || call.status === 'running' || call.status === 'approval' || call.status === 'waiting_input'
+
         return (
-          <div key={call.id} className={`live-tool-call ${call.status}`}>
-            <div className="live-tool-call-header">
-              <span className="live-tool-call-icon" aria-hidden="true">
-                {getToolStatusIcon(call.status)}
-              </span>
+          <details
+            key={call.id}
+            className={`live-tool-call ${call.status}`}
+            open={isActive}
+          >
+            <summary className="live-tool-call-header">
+              <span
+                className="live-tool-call-dot"
+                aria-hidden="true"
+                style={{ backgroundColor: getStatusDotColor(call.status) }}
+              />
               <span className="live-tool-call-name">
-                <Wrench size={14} aria-hidden="true" />
                 {call.toolName}
               </span>
               <span className="live-tool-call-status">{getToolStatusLabel(call.status)}</span>
+            </summary>
+            <div className="live-tool-call-body">
+              {isAskUserWaiting && onAskUserRespond ? (
+                <AskUserForm call={call} onRespond={(answer) => onAskUserRespond(call.id, answer)} />
+              ) : (
+                <>
+                  {inputPreview && (
+                    <div className="live-tool-call-section">
+                      <div className="live-tool-call-section-label">Input</div>
+                      <pre>{inputPreview}</pre>
+                    </div>
+                  )}
+                  {resultPreview && (
+                    <div className="live-tool-call-section">
+                      <div className="live-tool-call-section-label">{call.error ? 'Fehler' : 'Ergebnis'}</div>
+                      <pre>{resultPreview}</pre>
+                    </div>
+                  )}
+                </>
+              )}
             </div>
-            {inputPreview && (
-              <details className="live-tool-call-detail" open={call.status === 'requested' || call.status === 'running' || call.status === 'approval' || call.status === 'waiting_input'}>
-                <summary>Input</summary>
-                <pre>{inputPreview}</pre>
-              </details>
-            )}
-            {resultPreview && (
-              <details className="live-tool-call-detail" open={call.status === 'failed'}>
-                <summary>{call.error ? 'Fehler' : 'Ergebnis'}</summary>
-                <pre>{resultPreview}</pre>
-              </details>
-            )}
-          </div>
+          </details>
         )
       })}
     </div>
@@ -371,6 +467,204 @@ export default function ChatView() {
     const matches = getSlashCommandSuggestions(registryCommands, value).map((command) => command.command)
     setSlashSuggestions(matches)
   }
+
+  const handleAskUserRespond = useCallback((callId: string, answer: string) => {
+    if (!activeThreadId || !answer.trim()) return
+
+    // Mark the AskUser tool call as completed
+    const assistantMsg = activeMessages.find((m) =>
+      m.role === 'assistant' &&
+      m.liveToolCalls?.some((call) => call.id === callId && call.status === 'waiting_input'),
+    )
+    if (assistantMsg) {
+      updateMessage(activeThreadId, assistantMsg.id, {
+        liveToolCalls: assistantMsg.liveToolCalls?.map((call) =>
+          call.id === callId
+            ? { ...call, status: 'completed', result: answer }
+            : call,
+        ),
+      })
+    }
+
+    // Add user answer as a new message
+    addMessage(activeThreadId, {
+      role: 'user',
+      content: answer,
+      timestamp: Date.now(),
+    })
+
+    // Continue the conversation by sending the answer to the engine
+    const answerInput = answer.trim()
+    const cwd = getEffectiveChatCwd(attachments, workspaceDefaultPath)
+
+    setBusy(true)
+    setError(null)
+
+    let rawAssistantMessage = ''
+    let rawThinkingMessage = ''
+    let engineErrorMessage = ''
+    const usedToolNames = new Set<string>()
+    let liveToolCalls: LiveToolCall[] = []
+
+    const createdAssistantMessageId = addMessage(activeThreadId, {
+      role: 'assistant',
+      content: '',
+      timestamp: Date.now(),
+      streaming: true,
+    })
+
+    const updateLiveToolCall = (patch: LiveToolCallPatch) => {
+      liveToolCalls = upsertLiveToolCall(liveToolCalls, patch)
+      updateMessage(activeThreadId, createdAssistantMessageId, {
+        liveToolCalls,
+      })
+    }
+
+    void engineSendMessage(answerInput, cwd, (event) => {
+      switch (event.type) {
+        case 'text_delta': {
+          rawAssistantMessage += event.text
+          const presentation = resolveAssistantPresentation(rawAssistantMessage, {
+            verboseMode,
+            thinkingContent: rawThinkingMessage,
+          })
+          updateMessage(activeThreadId, createdAssistantMessageId, {
+            content: presentation.content,
+            thinkingContent: presentation.thinkingContent,
+          })
+          break
+        }
+        case 'thinking_delta':
+          rawThinkingMessage += event.thinking
+          updateMessage(activeThreadId, createdAssistantMessageId, {
+            thinkingContent: rawThinkingMessage,
+          })
+          break
+        case 'assistant_message': {
+          const blocks = Array.isArray(event.message.content) ? event.message.content : []
+          const textFromEvent = blocks
+            .filter((block): block is { type: 'text'; text: string } => block.type === 'text')
+            .map((block) => block.text)
+            .join('\n')
+            .trim()
+          const thinkingFromEvent = blocks
+            .filter((block): block is { type: 'thinking'; thinking: string } => block.type === 'thinking')
+            .map((block) => block.thinking)
+            .join('\n\n')
+            .trim()
+          const toolUseBlocks = blocks
+            .filter((block): block is { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> } =>
+              block.type === 'tool_use'
+              && typeof block.id === 'string'
+              && typeof block.name === 'string'
+              && typeof block.input === 'object'
+              && block.input !== null,
+            )
+
+          if (!rawAssistantMessage && textFromEvent) {
+            rawAssistantMessage = textFromEvent
+          }
+          if (!rawThinkingMessage && thinkingFromEvent) {
+            rawThinkingMessage = thinkingFromEvent
+          }
+          for (const block of toolUseBlocks) {
+            updateLiveToolCall({
+              id: block.id,
+              toolName: block.name,
+              input: block.input,
+              status: 'requested',
+            })
+          }
+
+          const presentation = resolveAssistantPresentation(rawAssistantMessage, {
+            verboseMode,
+            thinkingContent: rawThinkingMessage,
+          })
+          updateMessage(activeThreadId, createdAssistantMessageId, {
+            content: presentation.content,
+            thinkingContent: presentation.thinkingContent,
+          })
+          break
+        }
+        case 'tool_call_delta':
+          updateLiveToolCall({
+            id: event.toolUseId,
+            toolName: event.toolName,
+            input: event.input,
+            status: 'requested',
+          })
+          break
+        case 'tool_use_start':
+          usedToolNames.add(event.toolName)
+          updateLiveToolCall({
+            id: event.toolUseId,
+            toolName: event.toolName,
+            input: event.input,
+            status: 'running',
+          })
+          break
+        case 'tool_use_complete':
+          usedToolNames.add(event.toolName)
+          {
+            const toolFailed = event.result.trim().toLowerCase().startsWith('fehler:')
+            const nextStatus: LiveToolCallStatus = toolFailed
+              ? 'failed'
+              : event.toolName === 'AskUser'
+                ? 'waiting_input'
+                : 'completed'
+            updateLiveToolCall({
+              id: event.toolUseId,
+              toolName: event.toolName,
+              input: liveToolCalls.find((call) => call.id === event.toolUseId)?.input ?? {},
+              status: nextStatus,
+              result: event.result,
+              error: toolFailed ? event.result : undefined,
+              finishedAt: Date.now(),
+            })
+            if (event.toolName === 'AskUser' && !toolFailed) {
+              setBusy(false)
+            }
+          }
+          break
+        case 'error':
+          engineErrorMessage = event.error
+          break
+      }
+    }, {
+      threadId: activeThreadId,
+      messages: activeMessages.map((message) => ({
+        role: message.role,
+        content: typeof message.content === 'string' ? message.content : '',
+        debugContent: message.debugContent,
+      })),
+    }, createChatProviderSelection(providerState))
+      .then(() => {
+        const fallbackText = engineErrorMessage
+          ? `LLM-Anfrage fehlgeschlagen: ${engineErrorMessage}\n\n${getChatProviderFailureHint(providerState.provider)}`
+          : usedToolNames.size > 0
+            ? `Die Engine hat Tools verwendet (${Array.from(usedToolNames).join(', ')}), aber keinen sichtbaren Abschlusstext geliefert.`
+            : 'Das Modell hat keine sichtbare Antwort geliefert. Bitte erneut versuchen oder Modell/Prompt prüfen.'
+        const presentation = resolveAssistantPresentation(rawAssistantMessage, {
+          verboseMode,
+          thinkingContent: rawThinkingMessage,
+          fallbackText,
+        })
+        updateMessage(activeThreadId, createdAssistantMessageId, {
+          content: presentation.content,
+          debugContent: presentation.debugContent,
+          thinkingContent: presentation.thinkingContent,
+          streaming: false,
+        }, {
+          persist: true,
+        })
+        setBusy(false)
+      })
+      .catch((err) => {
+        const msg = err instanceof Error ? err.message : String(err)
+        setError(msg)
+        setBusy(false)
+      })
+  }, [activeThreadId, activeMessages, updateMessage, addMessage, engineSendMessage, attachments, workspaceDefaultPath, providerState, verboseMode, setBusy, setError])
 
   const handleSend = async (event: FormEvent) => {
     event.preventDefault()
@@ -692,6 +986,10 @@ export default function ChatView() {
                 error: toolFailed ? event.result : undefined,
                 finishedAt: Date.now(),
               })
+              // Allow user to respond when AskUser is waiting for input
+              if (event.toolName === 'AskUser' && !toolFailed) {
+                setBusy(false)
+              }
             }
             if (event.toolName === 'WebSearch') {
               webSearchSources = mergeWebSearchSources(
@@ -974,7 +1272,10 @@ export default function ChatView() {
                 limitToRollingWindow={limitThinkingWindow}
                 streaming={msg.streaming}
               />
-              <LiveToolCalls calls={msg.liveToolCalls} />
+              <LiveToolCalls
+                calls={msg.liveToolCalls}
+                onAskUserRespond={handleAskUserRespond}
+              />
               {verboseMode && (
                 <MessageVerbose
                   content={msg.verboseContent}

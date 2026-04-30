@@ -7,7 +7,6 @@ import { useConfigStore } from '../stores/configStore'
 import { useCoworkStore } from '../stores/coworkStore'
 import { useEngineStore } from '../stores/engineStore'
 import { useWorkTasksStore, type WorkTask } from '../stores/workTasksStore'
-import { resolveSessionRecord, toChatThread } from '../utils/sessionThreads'
 import { createChatProviderSelection, getChatProviderState } from '../utils/chatProvider'
 
 function isAbsolutePath(path: string): boolean {
@@ -31,6 +30,17 @@ function buildTaskSidebarSummary(task: WorkTask): string {
     task.expectedOutput.trim() ? `Expected Output: ${task.expectedOutput.trim()}` : '',
     task.workDir.trim() ? `Arbeitsordner: ${task.workDir.trim()}` : '',
   ].filter(Boolean).join('\n')
+}
+
+type SidebarFilter = 'all' | 'task' | 'chat' | 'session'
+
+interface SidebarItem {
+  id: string
+  type: SidebarFilter
+  title: string
+  status?: string
+  onClick: () => void
+  onDelete?: () => void
 }
 
 export default function LeftSidebar() {
@@ -59,9 +69,10 @@ export default function LeftSidebar() {
   const getSessions = useEngineStore((s) => s.getSessions)
   const loadSessionById = useEngineStore((s) => s.loadSessionById)
   const currentSessionId = useEngineStore((s) => s.currentSessionId)
-  const hydrateThread = useChatStore((s) => s.hydrateThread)
+  const deleteSessionById = useEngineStore((s) => s.deleteSessionById)
   const [persistedSessions, setPersistedSessions] = useState<SessionSummary[]>([])
   const [loadingSessions, setLoadingSessions] = useState(false)
+  const [filter, setFilter] = useState<SidebarFilter>('all')
 
   const enabledConnectors = connectors.filter((entry) => entry.enabled).length
   const enabledPlugins = plugins.filter((entry) => entry.enabled).length
@@ -82,28 +93,18 @@ export default function LeftSidebar() {
 
   useEffect(() => {
     let cancelled = false
-
     void (async () => {
       setLoadingSessions(true)
       try {
         const sessions = await getSessions()
-        if (!cancelled) {
-          setPersistedSessions(sessions)
-        }
+        if (!cancelled) setPersistedSessions(sessions)
       } catch {
-        if (!cancelled) {
-          setPersistedSessions([])
-        }
+        if (!cancelled) setPersistedSessions([])
       } finally {
-        if (!cancelled) {
-          setLoadingSessions(false)
-        }
+        if (!cancelled) setLoadingSessions(false)
       }
     })()
-
-    return () => {
-      cancelled = true
-    }
+    return () => { cancelled = true }
   }, [getSessions, currentSessionId])
 
   const threadIds = useMemo(() => new Set(threads.map((thread) => thread.id)), [threads])
@@ -114,10 +115,6 @@ export default function LeftSidebar() {
   const historyThreads = useMemo(
     () => threads.filter((thread) => !taskThreadIds.has(thread.id)),
     [taskThreadIds, threads],
-  )
-  const recentPersistedSessions = useMemo(
-    () => persistedSessions.filter((session) => !threadIds.has(session.id)).slice(0, 6),
-    [persistedSessions, threadIds],
   )
 
   const handleNewTask = () => {
@@ -157,13 +154,69 @@ export default function LeftSidebar() {
     navigate('/')
   }
 
-  const handleOpenPersistedSession = async (sessionId: string) => {
-    const session = await resolveSessionRecord(sessionId, loadSessionById)
+  const handleOpenSession = async (sessionId: string) => {
+    const session = await loadSessionById(sessionId)
     if (!session) return
-
-    hydrateThread(toChatThread(session))
+    if (session.threadId && threadIds.has(session.threadId)) {
+      setActiveThread(session.threadId)
+    }
     setActiveMode('work')
     navigate('/')
+  }
+
+  const items: SidebarItem[] = useMemo(() => {
+    const result: SidebarItem[] = []
+
+    workTasks.forEach((task) => {
+      result.push({
+        id: `task-${task.id}`,
+        type: 'task',
+        title: `${getTaskSidebarTitle(task)} · ${task.status}`,
+        status: task.status,
+        onClick: () => handleOpenTaskThread(task),
+      })
+    })
+
+    historyThreads.forEach((t) => {
+      result.push({
+        id: `chat-${t.id}`,
+        type: 'chat',
+        title: t.title,
+        onClick: () => handleOpenThread(t.id),
+        onDelete: () => deleteThread(t.id),
+      })
+    })
+
+    persistedSessions.forEach((session) => {
+      result.push({
+        id: `session-${session.id}`,
+        type: 'session',
+        title: session.title,
+        onClick: () => void handleOpenSession(session.id),
+        onDelete: () => void deleteSessionById(session.id),
+      })
+    })
+
+    return result
+  }, [workTasks, historyThreads, persistedSessions, threadIds])
+
+  const filteredItems = useMemo(() => {
+    if (filter === 'all') return items
+    return items.filter((item) => item.type === filter)
+  }, [items, filter])
+
+  const isActive = (item: SidebarItem): boolean => {
+    if (item.type === 'chat') {
+      return item.id.replace('chat-', '') === activeThreadId
+    }
+    if (item.type === 'task') {
+      const task = workTasks.find((t) => `task-${t.id}` === item.id)
+      return task?.threadId === activeThreadId
+    }
+    if (item.type === 'session') {
+      return item.id.replace('session-', '') === currentSessionId
+    }
+    return false
   }
 
   return (
@@ -197,86 +250,65 @@ export default function LeftSidebar() {
         </div>
       </div>
 
-      {/* History */}
+      {/* Unified History */}
       <div className="sidebar-section">
-        <h3 className="sidebar-section-title">Task Chats</h3>
-        <div className="session-list">
-          {workTasks.map((task) => (
-            <div
-              key={task.id}
-              className={`session-item${task.threadId === activeThreadId ? ' active' : ''}`}
+        <div className="sidebar-filter-bar">
+          {(['all', 'task', 'chat', 'session'] as SidebarFilter[]).map((f) => (
+            <button
+              key={f}
+              type="button"
+              className={`sidebar-filter-btn${filter === f ? ' active' : ''}`}
+              onClick={() => setFilter(f)}
             >
-              <button
-                type="button"
-                className="session-select"
-                onClick={() => handleOpenTaskThread(task)}
-              >
-                <span className="session-icon">🧩</span>
-                <span className="session-title">{getTaskSidebarTitle(task)} · {task.status}</span>
-              </button>
-            </div>
+              {f === 'all' && 'Alle'}
+              {f === 'task' && 'Tasks'}
+              {f === 'chat' && 'Chats'}
+              {f === 'session' && 'Sessions'}
+            </button>
           ))}
-          {workTasks.length === 0 && (
-            <p className="hint-text">Noch keine Tasks</p>
-          )}
         </div>
-      </div>
-
-      <div className="sidebar-section">
-        <h3 className="sidebar-section-title">Verlauf</h3>
         <div className="session-list">
-          {historyThreads.map((t) => (
+          {filteredItems.map((item) => (
             <div
-              key={t.id}
-              className={`session-item${t.id === activeThreadId ? ' active' : ''}`}
+              key={item.id}
+              className={`session-item${isActive(item) ? ' active' : ''}`}
             >
               <button
                 type="button"
                 className="session-select"
-                onClick={() => handleOpenThread(t.id)}
+                onClick={item.onClick}
               >
-                <span className="session-icon">💬</span>
-                <span className="session-title">{t.title}</span>
+                <span className="session-icon">
+                  {item.type === 'task' && '🧩'}
+                  {item.type === 'chat' && '💬'}
+                  {item.type === 'session' && '🗂'}
+                </span>
+                <span className="session-title">{item.title}</span>
+                <span className={`session-badge badge-${item.type}`}>
+                  {item.type === 'task' && 'Task'}
+                  {item.type === 'chat' && 'Chat'}
+                  {item.type === 'session' && 'Session'}
+                </span>
               </button>
-              <button
-                type="button"
-                className="session-delete"
-                onClick={() => deleteThread(t.id)}
-                title="Löschen"
-              >
-                ×
-              </button>
-            </div>
-          ))}
-          {historyThreads.length === 0 && (
-            <p className="hint-text">Noch keine Chats</p>
-          )}
-        </div>
-      </div>
-
-      <div className="sidebar-section">
-        <h3 className="sidebar-section-title">Persistierte Sessions</h3>
-        <div className="session-list">
-          {recentPersistedSessions.map((session) => (
-            <div
-              key={session.id}
-              className={`session-item${session.id === currentSessionId ? ' active' : ''}`}
-            >
-              <button
-                type="button"
-                className="session-select"
-                onClick={() => void handleOpenPersistedSession(session.id)}
-              >
-                <span className="session-icon">🗂</span>
-                <span className="session-title">{session.title}</span>
-              </button>
+              {item.onDelete && (
+                <button
+                  type="button"
+                  className="session-delete"
+                  onClick={(e) => { e.stopPropagation(); item.onDelete!() }}
+                  title="Löschen"
+                >
+                  ×
+                </button>
+              )}
             </div>
           ))}
           {loadingSessions && (
-            <p className="hint-text">Sessions werden geladen...</p>
+            <p className="hint-text">Wird geladen...</p>
           )}
-          {!loadingSessions && recentPersistedSessions.length === 0 && (
-            <p className="hint-text">Keine weiteren Sessions</p>
+          {!loadingSessions && filteredItems.length === 0 && (
+            <p className="hint-text">
+              {filter === 'all' ? 'Noch keine Einträge' : `Keine ${filter === 'task' ? 'Tasks' : filter === 'chat' ? 'Chats' : 'Sessions'}`}
+            </p>
           )}
         </div>
       </div>

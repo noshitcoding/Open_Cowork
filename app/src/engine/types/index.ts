@@ -53,6 +53,7 @@ export type {
   ToolCategory,
   ToolUseContext,
   ToolUIRequest,
+  AskQuestionOption,
   ApprovalRequest,
   ApprovalResult,
   CanUseToolFn,

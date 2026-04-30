@@ -20,6 +20,12 @@ export type ChatMessage = {
 
 export type LiveToolCallStatus = 'requested' | 'running' | 'completed' | 'failed' | 'approval' | 'waiting_input'
 
+export type AskQuestionOption = {
+  label: string
+  value?: string
+  description?: string
+}
+
 export type LiveToolCall = {
   id: string
   toolName: string
@@ -29,6 +35,11 @@ export type LiveToolCall = {
   error?: string
   startedAt: number
   finishedAt?: number
+  options?: AskQuestionOption[]
+  allowMultiple?: boolean
+  allowFreeformInput?: boolean
+  freeTextLabel?: string
+  freeTextPlaceholder?: string
 }
 
 export type ChatThread = {

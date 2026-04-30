@@ -1504,12 +1504,27 @@ const askUserTool: Tool<AskUserToolInput> = {
   isReadOnly: () => true,
   isConcurrencySafe: () => false,
   async call(input, context) {
-    // The UI layer will intercept this and show a dialog
+    const options = Array.isArray(input.options)
+      ? input.options.map((opt, idx) => {
+          if (typeof opt === 'string') return { label: opt, value: opt }
+          const label = opt.label || opt.value || String(idx)
+          const value = opt.value || label
+          return { label, value }
+        })
+      : undefined
+
+    const allowMultiple = input.allow_multiple ?? (options && options.length > 0 ? !/(\b(eine|einer|eines|one)\b[^.?!]{0,40}\b(option|optionen|auswahl|choice|choices)\b)/i.test(input.question) : false)
+
     context.setToolUI?.({
       type: 'input',
       toolName: 'AskUser',
       content: input.question,
       details: { input },
+      options,
+      allowMultiple,
+      allowFreeformInput: true,
+      freeTextLabel: input.free_text_label || 'Freitext',
+      freeTextPlaceholder: input.free_text_placeholder || 'Optional ergaenzen...',
     })
     return {
       data: `[Warte auf Benutzerantwort: ${input.question}]`,
