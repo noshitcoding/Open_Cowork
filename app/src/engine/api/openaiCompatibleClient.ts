@@ -1,0 +1,487 @@
+import type {
+  ContentBlock,
+  StreamEvent,
+  TokenUsage,
+  ToolInputSchema,
+} from '../types'
+import {
+  EMPTY_USAGE,
+  generateUUID,
+} from '../types'
+
+export type OpenAiCompatibleConfig = {
+  provider: 'openai-compatible' | 'openrouter'
+  apiKey: string
+  model: string
+  baseUrl: string
+  timeoutMs?: number
+  temperature?: number
+  maxTokens?: number
+}
+
+type APIMessage = {
+  role: 'user' | 'assistant'
+  content: string | ContentBlock[]
+}
+
+type APIToolDef = {
+  name: string
+  description: string
+  input_schema: ToolInputSchema
+}
+
+type OpenAiCompatibleRequestMessage =
+  | { role: 'system'; content: string }
+  | { role: 'user'; content: string | OpenAiCompatibleContentPart[] }
+  | { role: 'assistant'; content: string | null; tool_calls?: OpenAiCompatibleToolCall[] }
+  | { role: 'tool'; content: string; tool_call_id: string }
+
+type OpenAiCompatibleContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string } }
+
+type OpenAiCompatibleToolCall = {
+  id: string
+  type: 'function'
+  function: {
+    name: string
+    arguments: string
+  }
+}
+
+type OpenAiCompatibleResponse = {
+  id?: string
+  model?: string
+  usage?: {
+    prompt_tokens?: number
+    completion_tokens?: number
+  }
+  choices?: Array<{
+    finish_reason?: string | null
+    message?: {
+      content?: string | Array<{ type?: string; text?: string; content?: string }> | null
+      reasoning?: string | null
+      reasoning_content?: string | null
+      reasoning_details?: unknown[] | null
+      tool_calls?: Array<{
+        id?: string
+        function?: {
+          name?: string
+          arguments?: string
+        }
+      }>
+    }
+  }>
+}
+
+type OpenAiCompatibleResponseMessage = NonNullable<NonNullable<OpenAiCompatibleResponse['choices']>[number]['message']>
+
+function getProviderLabel(provider: OpenAiCompatibleConfig['provider']): string {
+  return provider === 'openrouter' ? 'OpenRouter' : 'OpenAI-kompatibler Provider'
+}
+
+function buildEndpoint(baseUrl: string): string {
+  const trimmed = baseUrl.trim().replace(/\/+$/, '')
+  if (!trimmed) {
+    throw new Error('Endpoint fehlt')
+  }
+
+  return trimmed.endsWith('/chat/completions')
+    ? trimmed
+    : `${trimmed}/chat/completions`
+}
+
+function createAbortSignal(timeoutMs: number | undefined, signal?: AbortSignal): { signal: AbortSignal; cleanup: () => void } {
+  const controller = new AbortController()
+  let timeoutHandle: ReturnType<typeof setTimeout> | null = null
+
+  const abortFromSource = () => {
+    try {
+      controller.abort(signal?.reason)
+    } catch {
+      controller.abort()
+    }
+  }
+
+  if (signal) {
+    if (signal.aborted) {
+      abortFromSource()
+    } else {
+      signal.addEventListener('abort', abortFromSource, { once: true })
+    }
+  }
+
+  if (timeoutMs && Number.isFinite(timeoutMs) && timeoutMs > 0) {
+    timeoutHandle = setTimeout(() => {
+      controller.abort(new Error(`Request timed out after ${timeoutMs}ms`))
+    }, timeoutMs)
+  }
+
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      if (timeoutHandle) clearTimeout(timeoutHandle)
+      if (signal) signal.removeEventListener('abort', abortFromSource)
+    },
+  }
+}
+
+function blocksToUserContent(blocks: ContentBlock[]): string | OpenAiCompatibleContentPart[] | null {
+  const contentParts: OpenAiCompatibleContentPart[] = []
+
+  for (const block of blocks) {
+    if (block.type === 'text' && block.text.trim()) {
+      contentParts.push({ type: 'text', text: block.text })
+      continue
+    }
+
+    if (block.type === 'image') {
+      contentParts.push({
+        type: 'image_url',
+        image_url: {
+          url: `data:${block.source.media_type};base64,${block.source.data}`,
+        },
+      })
+    }
+  }
+
+  if (contentParts.length === 0) return null
+  if (contentParts.length === 1 && contentParts[0].type === 'text') {
+    return contentParts[0].text
+  }
+
+  return contentParts
+}
+
+function toOpenAiCompatibleMessages(
+  messages: APIMessage[],
+  systemPrompt: string,
+): OpenAiCompatibleRequestMessage[] {
+  const result: OpenAiCompatibleRequestMessage[] = []
+
+  if (systemPrompt.trim()) {
+    result.push({ role: 'system', content: systemPrompt })
+  }
+
+  for (const message of messages) {
+    const blocks = typeof message.content === 'string'
+      ? [{ type: 'text', text: message.content } satisfies ContentBlock]
+      : message.content
+
+    if (message.role === 'assistant') {
+      const textContent = blocks
+        .filter((block): block is Extract<ContentBlock, { type: 'text' }> => block.type === 'text')
+        .map((block) => block.text)
+        .join('\n\n')
+        .trim()
+
+      const toolCalls = blocks
+        .filter((block): block is Extract<ContentBlock, { type: 'tool_use' }> => block.type === 'tool_use')
+        .map((block) => ({
+          id: block.id,
+          type: 'function' as const,
+          function: {
+            name: block.name,
+            arguments: JSON.stringify(block.input ?? {}),
+          },
+        }))
+
+      if (textContent || toolCalls.length > 0) {
+        result.push({
+          role: 'assistant',
+          content: textContent || null,
+          ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
+        })
+      }
+
+      continue
+    }
+
+    let bufferedBlocks: ContentBlock[] = []
+    const flushBufferedUserContent = () => {
+      const content = blocksToUserContent(bufferedBlocks)
+      if (content !== null) {
+        result.push({ role: 'user', content })
+      }
+      bufferedBlocks = []
+    }
+
+    for (const block of blocks) {
+      if (block.type === 'tool_result') {
+        flushBufferedUserContent()
+        result.push({
+          role: 'tool',
+          content: block.content,
+          tool_call_id: block.tool_use_id,
+        })
+        continue
+      }
+
+      if (block.type === 'thinking' || block.type === 'tool_use') {
+        continue
+      }
+
+      bufferedBlocks.push(block)
+    }
+
+    flushBufferedUserContent()
+  }
+
+  return result
+}
+
+function toOpenAiCompatibleToolDefs(tools?: APIToolDef[]): Array<{ type: 'function'; function: { name: string; description: string; parameters: ToolInputSchema } }> | undefined {
+  if (!tools || tools.length === 0) return undefined
+
+  return tools.map((tool) => ({
+    type: 'function',
+    function: {
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.input_schema,
+    },
+  }))
+}
+
+function parseToolInput(raw: string | undefined): Record<string, unknown> {
+  if (!raw?.trim()) return {}
+
+  try {
+    const parsed = JSON.parse(raw)
+    return parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : {}
+  } catch {
+    return {}
+  }
+}
+
+function extractTextContent(content: string | Array<{ type?: string; text?: string; content?: string }> | null | undefined): string {
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return ''
+
+  return content
+    .map((part) => {
+      if (typeof part?.text === 'string') return part.text
+      if (typeof part?.content === 'string') return part.content
+      return ''
+    })
+    .filter(Boolean)
+    .join('\n')
+}
+
+function extractReasoningDetailText(value: unknown): string {
+  if (!value || typeof value !== 'object') return ''
+
+  const detail = value as Record<string, unknown>
+  const directFields = ['text', 'content', 'reasoning', 'summary']
+  for (const field of directFields) {
+    const fieldValue = detail[field]
+    if (typeof fieldValue === 'string' && fieldValue.trim()) {
+      return fieldValue.trim()
+    }
+    if (Array.isArray(fieldValue)) {
+      const text = fieldValue.map(extractReasoningDetailText).filter(Boolean).join('\n')
+      if (text.trim()) return text.trim()
+    }
+  }
+
+  return ''
+}
+
+function extractReasoningContent(message: OpenAiCompatibleResponseMessage | undefined): string {
+  const reasoning = message?.reasoning?.trim() || message?.reasoning_content?.trim() || ''
+  if (reasoning) return reasoning
+
+  return (message?.reasoning_details ?? [])
+    .map(extractReasoningDetailText)
+    .filter(Boolean)
+    .join('\n\n')
+    .trim()
+}
+
+function mapStopReason(
+  finishReason: string | null | undefined,
+  hasToolCalls: boolean,
+): 'end_turn' | 'tool_use' | 'max_tokens' | 'stop_sequence' | null {
+  if (hasToolCalls || finishReason === 'tool_calls') return 'tool_use'
+  if (finishReason === 'length') return 'max_tokens'
+  if (finishReason === 'stop') return 'end_turn'
+  return null
+}
+
+export type SampleResult = {
+  content: ContentBlock[]
+  model: string
+  stopReason: 'end_turn' | 'tool_use' | 'max_tokens' | 'stop_sequence' | null
+  usage: TokenUsage
+  costUsd: number
+}
+
+export async function* streamOpenAiCompatibleMessages(
+  config: OpenAiCompatibleConfig,
+  messages: APIMessage[],
+  systemPrompt: string,
+  tools?: APIToolDef[],
+  signal?: AbortSignal,
+): AsyncGenerator<StreamEvent, SampleResult> {
+  const providerLabel = getProviderLabel(config.provider)
+
+  if (!config.apiKey.trim()) {
+    throw new Error(`${providerLabel} API-Key fehlt.`)
+  }
+  if (!config.model.trim()) {
+    throw new Error(`${providerLabel} Modell fehlt.`)
+  }
+
+  const endpoint = buildEndpoint(config.baseUrl)
+  const requestMessages = toOpenAiCompatibleMessages(messages, systemPrompt)
+  const timeoutSignal = createAbortSignal(config.timeoutMs, signal)
+
+  try {
+    const body: Record<string, unknown> = {
+      model: config.model,
+      messages: requestMessages,
+      stream: false,
+    }
+
+    if (config.provider === 'openrouter') {
+      body.reasoning = {
+        enabled: true,
+        exclude: false,
+      }
+    }
+
+    const toolDefs = toOpenAiCompatibleToolDefs(tools)
+    if (toolDefs) {
+      body.tools = toolDefs
+      body.tool_choice = 'auto'
+    }
+
+    if (config.temperature !== undefined) {
+      body.temperature = config.temperature
+    }
+
+    if (config.maxTokens !== undefined) {
+      body.max_tokens = config.maxTokens
+    }
+
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${config.apiKey.trim()}`,
+    }
+
+    if (config.provider === 'openrouter') {
+      headers['HTTP-Referer'] = 'https://open-cowork.local'
+      headers['X-Title'] = 'Open Cowork'
+    }
+
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+      signal: timeoutSignal.signal,
+    })
+
+    if (!response.ok) {
+      const bodyText = await response.text()
+      const excerpt = bodyText.slice(0, 400)
+      throw new Error(`${providerLabel} API Error (${response.status}): ${excerpt || response.statusText}`)
+    }
+
+    const payload = await response.json() as OpenAiCompatibleResponse
+    const choice = payload.choices?.[0]
+    const message = choice?.message
+    const reasoningContent = extractReasoningContent(message)
+    const textContent = extractTextContent(message?.content).trim()
+    const toolCalls = message?.tool_calls ?? []
+    const model = payload.model ?? config.model
+    const usage: TokenUsage = {
+      input_tokens: payload.usage?.prompt_tokens ?? 0,
+      output_tokens: payload.usage?.completion_tokens ?? 0,
+    }
+
+    const resultContent: ContentBlock[] = []
+    if (reasoningContent) {
+      resultContent.push({ type: 'thinking', thinking: reasoningContent })
+    }
+
+    if (textContent) {
+      resultContent.push({ type: 'text', text: textContent })
+    }
+
+    for (const toolCall of toolCalls) {
+      resultContent.push({
+        type: 'tool_use',
+        id: toolCall.id ?? generateUUID(),
+        name: toolCall.function?.name?.trim() || 'unknown_tool',
+        input: parseToolInput(toolCall.function?.arguments),
+      })
+    }
+
+    if (resultContent.length === 0) {
+      throw new Error(`${providerLabel} lieferte keine Antwort.`)
+    }
+
+    const stopReason = mapStopReason(choice?.finish_reason, toolCalls.length > 0)
+    const messageId = payload.id ?? generateUUID()
+
+    yield {
+      type: 'message_start',
+      message: {
+        id: messageId,
+        model,
+        usage: { ...EMPTY_USAGE },
+      },
+    }
+
+    let index = 0
+    for (const block of resultContent) {
+      yield {
+        type: 'content_block_start',
+        index,
+        content_block: block,
+      }
+
+      if (block.type === 'text') {
+        yield {
+          type: 'content_block_delta',
+          index,
+          delta: {
+            type: 'text_delta',
+            text: block.text,
+          },
+        }
+      }
+
+      if (block.type === 'thinking') {
+        yield {
+          type: 'content_block_delta',
+          index,
+          delta: {
+            type: 'thinking_delta',
+            thinking: block.thinking,
+          },
+        }
+      }
+
+      yield { type: 'content_block_stop', index }
+      index += 1
+    }
+
+    yield {
+      type: 'message_delta',
+      delta: { stop_reason: stopReason ?? '' },
+      usage,
+    }
+    yield { type: 'message_stop' }
+
+    return {
+      content: resultContent,
+      model,
+      stopReason,
+      usage,
+      costUsd: 0,
+    }
+  } finally {
+    timeoutSignal.cleanup()
+  }
+}

@@ -34,6 +34,67 @@ async function* oneToolUseTurn() {
 }
 
 describe('QueryEngine AskUser pause behavior', () => {
+  it('allows AskUser without a separate approval even in strict mode', async () => {
+    const { QueryEngine } = await import('./queryEngine')
+
+    const askUserTool: Tool = {
+      name: 'AskUser',
+      description: 'ask user',
+      category: 'user_interaction',
+      riskLevel: 'low' as const,
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          question: {
+            type: 'string',
+            description: 'question',
+          },
+        },
+        required: ['question'],
+      },
+      async call(): Promise<ToolResult<string>> {
+        return {
+          data: 'waiting for user',
+          awaitUserInput: true,
+        }
+      },
+      isConcurrencySafe: () => false,
+      isReadOnly: () => true,
+    }
+
+    const engine = new QueryEngine({
+      backend: 'ollama',
+      ollama: {
+        baseUrl: 'http://localhost:11434',
+        model: 'test-model',
+        timeoutMs: 10_000,
+        contextWindow: 16_000,
+        temperature: 0,
+      },
+      cwd: 'C:/workspace',
+      systemPrompt: 'test',
+      permissionMode: 'strict',
+      maxTurns: 5,
+      customTools: [askUserTool],
+    })
+
+    const decision = (engine as unknown as {
+      evaluatePermission: (
+        tool: Tool,
+        input: Record<string, unknown>,
+        context: { permissionContext: { mode: 'strict'; denyRules: []; allowRules: [] } },
+      ) => { kind: string }
+    }).evaluatePermission(askUserTool, { question: 'Need confirmation?' }, {
+      permissionContext: {
+        mode: 'strict',
+        denyRules: [],
+        allowRules: [],
+      },
+    })
+
+    expect(decision.kind).toBe('allow')
+  })
+
   it('stops loop with await_user when tool requests user input', async () => {
     const { QueryEngine } = await import('./queryEngine')
 

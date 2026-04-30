@@ -107,15 +107,20 @@ type OllamaToolDef = {
 }
 
 type OllamaStreamChunk = {
-  model: string
-  message: {
+  model?: string
+  message?: {
     role: string
     content?: string
     thinking?: string
     reasoning_content?: string
+    reasoning?: string
     tool_calls?: OllamaToolCall[]
   }
-  done: boolean
+  response?: string
+  thinking?: string
+  reasoning_content?: string
+  reasoning?: string
+  done?: boolean
   done_reason?: string
   total_duration?: number
   eval_count?: number
@@ -768,6 +773,192 @@ function toolCallSignature(toolCall: OllamaToolCall): string {
   })
 }
 
+type ReasoningTagPair = {
+  start: string
+  end: string
+}
+
+type ParsedReasoningChunk =
+  | { type: 'text'; text: string }
+  | { type: 'thinking'; text: string }
+
+const DEFAULT_REASONING_TAGS: ReasoningTagPair[] = [
+  { start: '<think>', end: '</think>' },
+  { start: '<thinking>', end: '</thinking>' },
+  { start: '<reason>', end: '</reason>' },
+  { start: '<reasoning>', end: '</reasoning>' },
+  { start: '<thought>', end: '</thought>' },
+  { start: '<|begin_of_thought|>', end: '<|end_of_thought|>' },
+  { start: '\u25c1think\u25b7', end: '\u25c1/think\u25b7' },
+]
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function getXmlLikeTagName(tag: string): string | null {
+  const match = tag.match(/^<([^>\s]+)>$/)
+  return match?.[1] ?? null
+}
+
+function buildStartTagRegex(tag: string): RegExp | null {
+  const tagName = getXmlLikeTagName(tag)
+  if (!tagName) return null
+  return new RegExp(`<${escapeRegExp(tagName)}(?:\\s[^>]*)?>`, 'i')
+}
+
+function findReasoningStartTag(text: string): { index: number; length: number; tag: ReasoningTagPair } | null {
+  let best: { index: number; length: number; tag: ReasoningTagPair } | null = null
+
+  for (const tag of DEFAULT_REASONING_TAGS) {
+    const regex = buildStartTagRegex(tag.start)
+    const match = regex?.exec(text)
+    const index = match
+      ? match.index
+      : text.toLowerCase().indexOf(tag.start.toLowerCase())
+    const length = match ? match[0].length : tag.start.length
+
+    if (index < 0) continue
+    if (!best || index < best.index) {
+      best = { index, length, tag }
+    }
+  }
+
+  return best
+}
+
+function findReasoningEndTag(text: string, tag: ReasoningTagPair): { index: number; length: number } | null {
+  const index = text.toLowerCase().indexOf(tag.end.toLowerCase())
+  if (index < 0) return null
+  return { index, length: tag.end.length }
+}
+
+function getStartTagPartialLength(text: string): number {
+  let keep = 0
+
+  for (const tag of DEFAULT_REASONING_TAGS) {
+    const lowerStart = tag.start.toLowerCase()
+    const maxLength = Math.min(text.length, tag.start.length - 1)
+    for (let length = 1; length <= maxLength; length++) {
+      const suffix = text.slice(-length).toLowerCase()
+      if (lowerStart.startsWith(suffix)) {
+        keep = Math.max(keep, length)
+      }
+    }
+  }
+
+  const lastLt = text.lastIndexOf('<')
+  if (lastLt >= 0) {
+    const suffix = text.slice(lastLt)
+    if (!suffix.includes('>')) {
+      const lowerSuffix = suffix.toLowerCase()
+      for (const tag of DEFAULT_REASONING_TAGS) {
+        const tagName = getXmlLikeTagName(tag.start)
+        if (!tagName) continue
+
+        const lowerPrefix = `<${tagName.toLowerCase()}`
+        if (lowerPrefix.startsWith(lowerSuffix) || lowerSuffix.startsWith(`${lowerPrefix} `)) {
+          keep = Math.max(keep, suffix.length)
+        }
+      }
+    }
+  }
+
+  return keep
+}
+
+function getEndTagPartialLength(text: string, tag: ReasoningTagPair): number {
+  let keep = 0
+  const lowerEnd = tag.end.toLowerCase()
+  const maxLength = Math.min(text.length, tag.end.length - 1)
+
+  for (let length = 1; length <= maxLength; length++) {
+    const suffix = text.slice(-length).toLowerCase()
+    if (lowerEnd.startsWith(suffix)) {
+      keep = Math.max(keep, length)
+    }
+  }
+
+  return keep
+}
+
+class ReasoningTagStreamParser {
+  private buffer = ''
+  private activeTag: ReasoningTagPair | null = null
+
+  push(text: string): ParsedReasoningChunk[] {
+    this.buffer += text
+    return this.drain(false)
+  }
+
+  flush(): ParsedReasoningChunk[] {
+    return this.drain(true)
+  }
+
+  private drain(flush: boolean): ParsedReasoningChunk[] {
+    const chunks: ParsedReasoningChunk[] = []
+
+    while (this.buffer.length > 0) {
+      if (this.activeTag) {
+        const end = findReasoningEndTag(this.buffer, this.activeTag)
+        if (end) {
+          const thinking = this.buffer.slice(0, end.index)
+          if (thinking) {
+            chunks.push({ type: 'thinking', text: thinking })
+          }
+          this.buffer = this.buffer.slice(end.index + end.length)
+          this.activeTag = null
+          continue
+        }
+
+        const keep = flush ? 0 : getEndTagPartialLength(this.buffer, this.activeTag)
+        const emitLength = this.buffer.length - keep
+        if (emitLength > 0) {
+          chunks.push({ type: 'thinking', text: this.buffer.slice(0, emitLength) })
+          this.buffer = this.buffer.slice(emitLength)
+        }
+        break
+      }
+
+      const start = findReasoningStartTag(this.buffer)
+      if (start) {
+        const text = this.buffer.slice(0, start.index)
+        if (text) {
+          chunks.push({ type: 'text', text })
+        }
+        this.buffer = this.buffer.slice(start.index + start.length)
+        this.activeTag = start.tag
+        continue
+      }
+
+      const keep = flush ? 0 : getStartTagPartialLength(this.buffer)
+      const emitLength = this.buffer.length - keep
+      if (emitLength > 0) {
+        chunks.push({ type: 'text', text: this.buffer.slice(0, emitLength) })
+        this.buffer = this.buffer.slice(emitLength)
+      }
+      break
+    }
+
+    return chunks
+  }
+}
+
+function firstNonEmptyString(...values: Array<string | undefined>): string {
+  return values.find((value): value is string => typeof value === 'string' && value.length > 0) ?? ''
+}
+
+function getNativeThinkingChunk(chunk: OllamaStreamChunk): string {
+  return firstNonEmptyString(
+    chunk.message?.thinking,
+    chunk.message?.reasoning_content,
+    chunk.message?.reasoning,
+    chunk.thinking,
+    chunk.reasoning_content,
+    chunk.reasoning,
+  )
+}
+
 // ── Streaming API ──────────────────────────────────────────────────────────
 
 /**
@@ -852,7 +1043,7 @@ export async function* streamOllamaMessages(
   let buffer = ''
   let fullText = ''
   let thinkingText = ''
-  let isInThinkingBlock = false
+  const reasoningTagParser = requestedThinking ? new ReasoningTagStreamParser() : null
   const toolCalls: OllamaToolCall[] = []
   const streamedToolBlocks: ContentBlockToolUse[] = []
   const streamedToolSignatures = new Set<string>()
@@ -875,6 +1066,72 @@ export async function* streamOllamaMessages(
     content_block: { type: 'text', text: '' },
   }
 
+  const emitParsedContent = async function* (contentChunk: string): AsyncGenerator<StreamEvent> {
+    const parsedChunks = reasoningTagParser
+      ? reasoningTagParser.push(contentChunk)
+      : [{ type: 'text' as const, text: contentChunk }]
+
+    for (const parsedChunk of parsedChunks) {
+      if (!parsedChunk.text) continue
+
+      if (parsedChunk.type === 'thinking') {
+        thinkingText += parsedChunk.text
+        yield* streamSmoothedDelta(parsedChunk.text, 'thinking_delta')
+        continue
+      }
+
+      fullText += parsedChunk.text
+      yield* streamSmoothedDelta(parsedChunk.text, 'text_delta')
+    }
+  }
+
+  const processStreamChunk = async function* (chunk: OllamaStreamChunk): AsyncGenerator<StreamEvent> {
+    modelId = chunk.model || modelId
+
+    const thinkingChunk = getNativeThinkingChunk(chunk)
+    if (thinkingChunk) {
+      thinkingText += thinkingChunk
+      yield* streamSmoothedDelta(thinkingChunk, 'thinking_delta')
+    }
+
+    const contentChunk = chunk.message?.content ?? chunk.response ?? ''
+    if (contentChunk) {
+      yield* emitParsedContent(contentChunk)
+    }
+
+    if (chunk.message?.tool_calls) {
+      const normalizedChunkToolCalls = normalizeToolCalls(chunk.message.tool_calls, tools)
+      for (const toolCall of normalizedChunkToolCalls) {
+        const signature = toolCallSignature(toolCall)
+        if (streamedToolSignatures.has(signature)) {
+          continue
+        }
+        streamedToolSignatures.add(signature)
+        toolCalls.push(toolCall)
+        blockIndex++
+        const toolBlock: ContentBlockToolUse = {
+          type: 'tool_use',
+          id: `ollama-tool-${Date.now()}-${blockIndex}`,
+          name: toolCall.function.name,
+          input: toolCall.function.arguments,
+        }
+        streamedToolBlocks.push(toolBlock)
+        yield {
+          type: 'content_block_start',
+          index: blockIndex,
+          content_block: toolBlock,
+        }
+        yield { type: 'content_block_stop', index: blockIndex }
+      }
+    }
+
+    if (chunk.done) {
+      promptTokens = chunk.prompt_eval_count ?? 0
+      completionTokens = chunk.eval_count ?? 0
+      stopReason = chunk.done_reason ?? 'stop'
+    }
+  }
+
   try {
     while (true) {
       const { done, value } = await reader.read()
@@ -894,79 +1151,30 @@ export async function* streamOllamaMessages(
           continue
         }
 
-        modelId = chunk.model || modelId
+        yield* processStreamChunk(chunk)
 
-        // Native thinking field (Ollama thinking API)
-        const thinkingChunk = chunk.message?.thinking ?? chunk.message?.reasoning_content
-        if (thinkingChunk) {
-          thinkingText += thinkingChunk
-          yield* streamSmoothedDelta(thinkingChunk, 'thinking_delta')
-        }
+      }
+    }
 
-        // Text content — with fallback <think> tag detection for older models
-        if (chunk.message?.content) {
-          let text = chunk.message.content
+    if (buffer.trim()) {
+      try {
+        const chunk = JSON.parse(buffer) as OllamaStreamChunk
+        yield* processStreamChunk(chunk)
+      } catch {
+        // Ignore incomplete trailing JSON.
+      }
+      buffer = ''
+    }
 
-          // Detect <think>...</think> blocks for reasoning models
-          if (requestedThinking) {
-            if (text.includes('<think>')) {
-              isInThinkingBlock = true
-              text = text.replace('<think>', '')
-            }
-            if (isInThinkingBlock && text.includes('</think>')) {
-              isInThinkingBlock = false
-              const parts = text.split('</think>')
-              thinkingText += parts[0]
-              yield* streamSmoothedDelta(parts[0], 'thinking_delta')
-              // Remaining text after </think> is normal content
-              text = parts.slice(1).join('')
-            }
-
-            if (isInThinkingBlock) {
-              thinkingText += text
-              yield* streamSmoothedDelta(text, 'thinking_delta')
-              continue
-            }
-          }
-
-          if (text) {
-            fullText += text
-            yield* streamSmoothedDelta(text, 'text_delta')
-          }
-        }
-
-        // Tool calls
-        if (chunk.message?.tool_calls) {
-          const normalizedChunkToolCalls = normalizeToolCalls(chunk.message.tool_calls, tools)
-          for (const toolCall of normalizedChunkToolCalls) {
-            const signature = toolCallSignature(toolCall)
-            if (streamedToolSignatures.has(signature)) {
-              continue
-            }
-            streamedToolSignatures.add(signature)
-            toolCalls.push(toolCall)
-            blockIndex++
-            const toolBlock: ContentBlockToolUse = {
-              type: 'tool_use',
-              id: `ollama-tool-${Date.now()}-${blockIndex}`,
-              name: toolCall.function.name,
-              input: toolCall.function.arguments,
-            }
-            streamedToolBlocks.push(toolBlock)
-            yield {
-              type: 'content_block_start',
-              index: blockIndex,
-              content_block: toolBlock,
-            }
-            yield { type: 'content_block_stop', index: blockIndex }
-          }
-        }
-
-        // Final chunk
-        if (chunk.done) {
-          promptTokens = chunk.prompt_eval_count ?? 0
-          completionTokens = chunk.eval_count ?? 0
-          stopReason = chunk.done_reason ?? 'stop'
+    if (reasoningTagParser) {
+      for (const parsedChunk of reasoningTagParser.flush()) {
+        if (!parsedChunk.text) continue
+        if (parsedChunk.type === 'thinking') {
+          thinkingText += parsedChunk.text
+          yield* streamSmoothedDelta(parsedChunk.text, 'thinking_delta')
+        } else {
+          fullText += parsedChunk.text
+          yield* streamSmoothedDelta(parsedChunk.text, 'text_delta')
         }
       }
     }

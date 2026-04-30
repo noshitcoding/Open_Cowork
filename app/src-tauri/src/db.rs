@@ -1,4 +1,4 @@
-use rusqlite::{Connection, Result as SqlResult, params, params_from_iter};
+use rusqlite::{Connection, OptionalExtension, Result as SqlResult, params, params_from_iter};
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -270,7 +270,6 @@ fn map_insights_row(row: &rusqlite::Row) -> SqlResult<InsightsEventRow> {
         created_at: row.get(7)?,
     })
 }
-
 fn map_worker_sandbox_row(row: &rusqlite::Row) -> SqlResult<WorkerSandboxRow> {
     Ok(WorkerSandboxRow {
         id: row.get(0)?,
@@ -832,29 +831,131 @@ impl Database {
             )?;
         }
 
+        if version < 9 {
+            conn.execute_batch(
+                "ALTER TABLE scheduled_tasks ADD COLUMN task_kind TEXT NOT NULL DEFAULT 'prompt';
+                ALTER TABLE scheduled_tasks ADD COLUMN crew_id TEXT;
+                ALTER TABLE scheduled_tasks ADD COLUMN crew_snapshot_json TEXT;
+
+                UPDATE schema_version SET version = 9;"
+            )?;
+        }
+
+        if version < 10 {
+            conn.execute_batch(
+                "ALTER TABLE scheduled_tasks ADD COLUMN priority INTEGER NOT NULL DEFAULT 100;
+                ALTER TABLE scheduled_tasks ADD COLUMN depends_on_task_ids_json TEXT NOT NULL DEFAULT '[]';
+
+                UPDATE schema_version SET version = 10;"
+            )?;
+        }
+
+        if version < 11 {
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS crew_runs (
+                    id TEXT PRIMARY KEY,
+                    crew_id TEXT NOT NULL,
+                    crew_name TEXT NOT NULL,
+                    process TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    manager_agent_id TEXT,
+                    error TEXT,
+                    started_at TEXT NOT NULL,
+                    finished_at TEXT,
+                    created_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_crew_runs_crew
+                    ON crew_runs(crew_id, started_at DESC);
+
+                CREATE TABLE IF NOT EXISTS crew_run_logs (
+                    id TEXT PRIMARY KEY,
+                    run_id TEXT NOT NULL,
+                    crew_id TEXT NOT NULL,
+                    agent_id TEXT NOT NULL,
+                    task_id TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    result TEXT NOT NULL,
+                    timestamp INTEGER NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(run_id) REFERENCES crew_runs(id) ON DELETE CASCADE
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_crew_run_logs_run
+                    ON crew_run_logs(run_id, timestamp ASC);
+
+                UPDATE schema_version SET version = 11;"
+            )?;
+        }
+
+        if version < 12 {
+            conn.execute_batch(
+                "ALTER TABLE crew_runs ADD COLUMN crew_snapshot_json TEXT NOT NULL DEFAULT '{}';
+
+                UPDATE schema_version SET version = 12;"
+            )?;
+        }
+
+        if version < 13 {
+            conn.execute_batch(
+                "ALTER TABLE scheduled_tasks ADD COLUMN model_config_json TEXT;
+
+                UPDATE schema_version SET version = 13;"
+            )?;
+        }
+
+        if version < 14 {
+            conn.execute_batch(
+                "ALTER TABLE chat_threads ADD COLUMN provider_settings_json TEXT;
+
+                UPDATE schema_version SET version = 14;"
+            )?;
+        }
+
+        if version < 15 {
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS policy_tool_states (
+                    tool_id TEXT PRIMARY KEY,
+                    enabled INTEGER NOT NULL,
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+                );
+
+                UPDATE schema_version SET version = 15;"
+            )?;
+        }
+
         Ok(())
     }
 
     // -- Chat Threads --
 
-    pub fn insert_thread(&self, id: &str, title: &str, created_at: &str) -> SqlResult<()> {
+    pub fn insert_thread(&self, id: &str, title: &str, created_at: &str, provider_settings_json: Option<&str>) -> SqlResult<()> {
         let conn = self.conn.lock().map_err(|_| rusqlite::Error::InvalidQuery)?;
         conn.execute(
-            "INSERT INTO chat_threads (id, title, created_at, updated_at) VALUES (?1, ?2, ?3, ?3)",
-            params![id, title, created_at],
+            "INSERT INTO chat_threads (id, title, created_at, updated_at, provider_settings_json) VALUES (?1, ?2, ?3, ?3, ?4)",
+            params![id, title, created_at, provider_settings_json],
         )?;
         Ok(())
     }
 
-    pub fn list_threads(&self) -> SqlResult<Vec<(String, String, String, String)>> {
+    pub fn list_threads(&self) -> SqlResult<Vec<(String, String, String, String, Option<String>)>> {
         let conn = self.conn.lock().map_err(|_| rusqlite::Error::InvalidQuery)?;
         let mut stmt = conn.prepare(
-            "SELECT id, title, created_at, updated_at FROM chat_threads ORDER BY updated_at DESC"
+            "SELECT id, title, created_at, updated_at, provider_settings_json FROM chat_threads ORDER BY updated_at DESC"
         )?;
         let rows = stmt.query_map([], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
         })?;
         rows.collect()
+    }
+
+    pub fn update_thread_provider_settings(&self, id: &str, provider_settings_json: Option<&str>) -> SqlResult<()> {
+        let conn = self.conn.lock().map_err(|_| rusqlite::Error::InvalidQuery)?;
+        conn.execute(
+            "UPDATE chat_threads SET provider_settings_json = ?2, updated_at = datetime('now') WHERE id = ?1",
+            params![id, provider_settings_json],
+        )?;
+        Ok(())
     }
 
     pub fn delete_thread(&self, id: &str) -> SqlResult<()> {
@@ -889,6 +990,136 @@ impl Database {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
         })?;
         rows.collect()
+    }
+
+    pub fn insert_crew_run(
+        &self,
+        id: &str,
+        crew_id: &str,
+        crew_name: &str,
+        process: &str,
+        status: &str,
+        manager_agent_id: Option<&str>,
+        error: Option<&str>,
+        crew_snapshot_json: &str,
+        started_at: &str,
+        finished_at: Option<&str>,
+    ) -> SqlResult<()> {
+        let conn = self.conn.lock().map_err(|_| rusqlite::Error::InvalidQuery)?;
+        conn.execute(
+            "INSERT INTO crew_runs (id, crew_id, crew_name, process, status, manager_agent_id, error, crew_snapshot_json, started_at, finished_at, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, datetime('now'))",
+            params![id, crew_id, crew_name, process, status, manager_agent_id, error, crew_snapshot_json, started_at, finished_at],
+        )?;
+        Ok(())
+    }
+
+    pub fn insert_crew_run_logs(&self, run_id: &str, logs: &[crate::CrewExecutionLogRow]) -> SqlResult<()> {
+        let conn = self.conn.lock().map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let mut stmt = conn.prepare(
+            "INSERT INTO crew_run_logs (id, run_id, crew_id, agent_id, task_id, action, result, timestamp, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, datetime('now'))"
+        )?;
+
+        for log in logs {
+            stmt.execute(params![
+                log.id,
+                run_id,
+                log.crew_id,
+                log.agent_id,
+                log.task_id,
+                log.action,
+                log.result,
+                log.timestamp,
+            ])?;
+        }
+
+        Ok(())
+    }
+
+    pub fn list_crew_runs(&self, crew_id: Option<&str>, limit: i64) -> SqlResult<Vec<(String, String, String, String, String, Option<String>, Option<String>, String, Option<String>)>> {
+        let conn = self.conn.lock().map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let mut stmt = if crew_id.is_some() {
+            conn.prepare(
+                "SELECT id, crew_id, crew_name, process, status, manager_agent_id, error, started_at, finished_at
+                 FROM crew_runs
+                 WHERE crew_id = ?1
+                 ORDER BY started_at DESC
+                 LIMIT ?2"
+            )?
+        } else {
+            conn.prepare(
+                "SELECT id, crew_id, crew_name, process, status, manager_agent_id, error, started_at, finished_at
+                 FROM crew_runs
+                 ORDER BY started_at DESC
+                 LIMIT ?1"
+            )?
+        };
+
+        if let Some(id) = crew_id {
+            let rows = stmt.query_map(params![id, limit], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                    row.get(7)?,
+                    row.get(8)?,
+                ))
+            })?;
+            rows.collect()
+        } else {
+            let rows = stmt.query_map(params![limit], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                    row.get(7)?,
+                    row.get(8)?,
+                ))
+            })?;
+            rows.collect()
+        }
+    }
+
+    pub fn list_crew_run_logs(&self, run_id: &str) -> SqlResult<Vec<crate::CrewExecutionLogRow>> {
+        let conn = self.conn.lock().map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let mut stmt = conn.prepare(
+            "SELECT id, crew_id, agent_id, task_id, action, result, timestamp
+             FROM crew_run_logs
+             WHERE run_id = ?1
+             ORDER BY timestamp ASC"
+        )?;
+
+        let rows = stmt.query_map(params![run_id], |row| {
+            Ok(crate::CrewExecutionLogRow {
+                id: row.get(0)?,
+                crew_id: row.get(1)?,
+                agent_id: row.get(2)?,
+                task_id: row.get(3)?,
+                action: row.get(4)?,
+                result: row.get(5)?,
+                timestamp: row.get(6)?,
+            })
+        })?;
+
+        rows.collect()
+    }
+
+    pub fn get_crew_run_snapshot(&self, run_id: &str) -> SqlResult<Option<String>> {
+        let conn = self.conn.lock().map_err(|_| rusqlite::Error::InvalidQuery)?;
+        conn.query_row(
+            "SELECT crew_snapshot_json FROM crew_runs WHERE id = ?1 LIMIT 1",
+            params![run_id],
+            |row| row.get(0),
+        ).optional()
     }
 
     pub fn update_message_content(&self, id: &str, content: &str) -> SqlResult<()> {
@@ -1109,6 +1340,38 @@ impl Database {
         rows.collect()
     }
 
+    pub fn replace_policy_tool_states(&self, states: &[(String, bool)]) -> SqlResult<()> {
+        let mut conn = self.conn.lock().map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let tx = conn.transaction()?;
+        tx.execute("DELETE FROM policy_tool_states", [])?;
+
+        for (tool_id, enabled) in states {
+            let normalized_tool_id = tool_id.trim();
+            if normalized_tool_id.is_empty() {
+                continue;
+            }
+
+            tx.execute(
+                "INSERT INTO policy_tool_states (tool_id, enabled, updated_at)
+                 VALUES (?1, ?2, datetime('now'))",
+                params![normalized_tool_id, *enabled as i32],
+            )?;
+        }
+
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn list_policy_tool_states(&self) -> SqlResult<Vec<(String, bool)>> {
+        let conn = self.conn.lock().map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let mut stmt = conn.prepare("SELECT tool_id, enabled FROM policy_tool_states ORDER BY tool_id ASC")?;
+        let rows = stmt.query_map([], |row| {
+            let enabled: i32 = row.get(1)?;
+            Ok((row.get(0)?, enabled != 0))
+        })?;
+        rows.collect()
+    }
+
     // -- Artifact Versions --
 
     pub fn insert_artifact_version(
@@ -1299,6 +1562,12 @@ impl Database {
         name: &str,
         prompt: &str,
         schedule_expr: &str,
+        task_kind: &str,
+        crew_id: Option<&str>,
+        crew_snapshot_json: Option<&str>,
+        model_config_json: Option<&str>,
+        priority: i64,
+        depends_on_task_ids_json: &str,
         active: bool,
         last_run_at: Option<&str>,
         next_run_at: Option<&str>,
@@ -1307,12 +1576,18 @@ impl Database {
         let conn = self.conn.lock().map_err(|_| rusqlite::Error::InvalidQuery)?;
         conn.execute(
             "INSERT INTO scheduled_tasks (
-                id, name, prompt, schedule_expr, active, last_run_at, next_run_at, created_at, updated_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)
+                     id, name, prompt, schedule_expr, task_kind, crew_id, crew_snapshot_json, model_config_json, priority, depends_on_task_ids_json, active, last_run_at, next_run_at, created_at, updated_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?14)
              ON CONFLICT(id) DO UPDATE SET
                 name = excluded.name,
                 prompt = excluded.prompt,
                 schedule_expr = excluded.schedule_expr,
+                task_kind = excluded.task_kind,
+                crew_id = excluded.crew_id,
+                crew_snapshot_json = excluded.crew_snapshot_json,
+                     model_config_json = excluded.model_config_json,
+                priority = excluded.priority,
+                depends_on_task_ids_json = excluded.depends_on_task_ids_json,
                 active = excluded.active,
                 last_run_at = excluded.last_run_at,
                 next_run_at = excluded.next_run_at,
@@ -1322,6 +1597,12 @@ impl Database {
                 name,
                 prompt,
                 schedule_expr,
+                task_kind,
+                crew_id,
+                crew_snapshot_json,
+                model_config_json,
+                priority,
+                depends_on_task_ids_json,
                 active as i32,
                 last_run_at,
                 next_run_at,
@@ -1331,26 +1612,32 @@ impl Database {
         Ok(())
     }
 
-    pub fn list_scheduled_tasks(&self) -> SqlResult<Vec<(String, String, String, String, bool, Option<String>, Option<String>, String, String)>> {
+    pub fn list_scheduled_tasks(&self) -> SqlResult<Vec<(String, String, String, String, String, Option<String>, Option<String>, Option<String>, i64, String, bool, Option<String>, Option<String>, String, String)>> {
         let conn = self.conn.lock().map_err(|_| rusqlite::Error::InvalidQuery)?;
         let mut stmt = conn.prepare(
-            "SELECT id, name, prompt, schedule_expr, active, last_run_at, next_run_at, created_at, updated_at
+            "SELECT id, name, prompt, schedule_expr, task_kind, crew_id, crew_snapshot_json, model_config_json, priority, depends_on_task_ids_json, active, last_run_at, next_run_at, created_at, updated_at
              FROM scheduled_tasks
-             ORDER BY created_at DESC"
+             ORDER BY priority DESC, created_at DESC"
         )?;
 
         let rows = stmt.query_map([], |row| {
-            let active_value: i32 = row.get(4)?;
+            let active_value: i32 = row.get(10)?;
             Ok((
                 row.get(0)?,
                 row.get(1)?,
                 row.get(2)?,
                 row.get(3)?,
-                active_value != 0,
+                row.get(4)?,
                 row.get(5)?,
                 row.get(6)?,
                 row.get(7)?,
                 row.get(8)?,
+                row.get(9)?,
+                active_value != 0,
+                row.get(11)?,
+                row.get(12)?,
+                row.get(13)?,
+                row.get(14)?,
             ))
         })?;
 
@@ -1374,20 +1661,33 @@ impl Database {
         Ok(())
     }
 
-    pub fn list_due_scheduled_tasks(&self, now: &str) -> SqlResult<Vec<(String, String, String, String, Option<String>)>> {
+    pub fn list_due_scheduled_tasks(&self, now: &str) -> SqlResult<Vec<(String, String, String, String, Option<String>, String, Option<String>, Option<String>, Option<String>, i64, String, Option<String>)>> {
         let conn = self.conn.lock().map_err(|_| rusqlite::Error::InvalidQuery)?;
         let mut stmt = conn.prepare(
-            "SELECT id, name, prompt, schedule_expr, next_run_at
+            "SELECT id, name, prompt, schedule_expr, next_run_at, task_kind, crew_id, crew_snapshot_json, model_config_json, priority, depends_on_task_ids_json, last_run_at
              FROM scheduled_tasks
              WHERE active = 1 AND next_run_at IS NOT NULL AND next_run_at <= ?1
-             ORDER BY next_run_at ASC"
+             ORDER BY priority DESC, next_run_at ASC"
         )?;
 
         let rows = stmt.query_map(params![now], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?, row.get(9)?, row.get(10)?, row.get(11)?))
         })?;
 
         rows.collect()
+    }
+
+    pub fn latest_scheduled_run_status(&self, task_id: &str) -> SqlResult<Option<(String, Option<String>)>> {
+        let conn = self.conn.lock().map_err(|_| rusqlite::Error::InvalidQuery)?;
+        conn.query_row(
+            "SELECT status, finished_at
+             FROM scheduled_runs
+             WHERE task_id = ?1
+             ORDER BY started_at DESC
+             LIMIT 1",
+            params![task_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        ).optional()
     }
 
     pub fn update_scheduled_task_runtime(&self, id: &str, last_run_at: Option<&str>, next_run_at: Option<&str>) -> SqlResult<()> {
@@ -2916,16 +3216,17 @@ mod tests {
     #[test]
     fn migration_creates_tables() {
         let db = Database::open_in_memory().unwrap();
-        db.insert_thread("t1", "Test Thread", "2025-01-01T00:00:00").unwrap();
+        db.insert_thread("t1", "Test Thread", "2025-01-01T00:00:00", Some("{\"provider\":\"ollama\"}")).unwrap();
         let threads = db.list_threads().unwrap();
         assert_eq!(threads.len(), 1);
         assert_eq!(threads[0].0, "t1");
+        assert_eq!(threads[0].4.as_deref(), Some("{\"provider\":\"ollama\"}"));
     }
 
     #[test]
     fn messages_round_trip() {
         let db = Database::open_in_memory().unwrap();
-        db.insert_thread("t1", "Thread", "2025-01-01T00:00:00").unwrap();
+        db.insert_thread("t1", "Thread", "2025-01-01T00:00:00", None).unwrap();
         db.insert_message("m1", "t1", "user", "Hello", 1000).unwrap();
         db.insert_message("m2", "t1", "assistant", "Hi", 1001).unwrap();
         let msgs = db.list_messages("t1").unwrap();
@@ -2958,7 +3259,7 @@ mod tests {
     #[test]
     fn delete_thread_cascades() {
         let db = Database::open_in_memory().unwrap();
-        db.insert_thread("t1", "Thread", "2025-01-01T00:00:00").unwrap();
+        db.insert_thread("t1", "Thread", "2025-01-01T00:00:00", None).unwrap();
         db.insert_message("m1", "t1", "user", "Hello", 1000).unwrap();
         db.delete_thread("t1").unwrap();
         let msgs = db.list_messages("t1").unwrap();

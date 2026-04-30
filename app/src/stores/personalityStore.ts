@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { safeInvoke } from '../utils/safeInvoke'
+import { DEFAULT_PERSONALITIES } from '../utils/defaultSeeds'
 
 export type Personality = {
   id: string
@@ -29,6 +30,23 @@ type PersonalityState = {
   setActive: (id: string | null) => void
 }
 
+function buildFallbackPersonalities(): Personality[] {
+  const timestamp = new Date().toISOString()
+
+  return DEFAULT_PERSONALITIES.map((entry) => ({
+    id: entry.id,
+    name: entry.name,
+    description: entry.description,
+    system_prompt: entry.systemPrompt,
+    temperature: entry.temperature,
+    model_override: null,
+    icon: entry.icon,
+    is_default: entry.isDefault,
+    created_at: timestamp,
+    updated_at: timestamp,
+  }))
+}
+
 export const usePersonalityStore = create<PersonalityState>()((set) => ({
   personalities: [],
   activeId: null,
@@ -39,11 +57,19 @@ export const usePersonalityStore = create<PersonalityState>()((set) => ({
     set({ loading: true, error: null })
     try {
       const personalities = await safeInvoke<Personality[]>('personality_list', undefined, [])
-      set({ personalities, loading: false })
-      const def = personalities.find((p) => p.is_default)
+      const resolvedPersonalities = personalities.length > 0 ? personalities : buildFallbackPersonalities()
+      set({ personalities: resolvedPersonalities, loading: false })
+      const def = resolvedPersonalities.find((p) => p.is_default)
       if (def) set({ activeId: def.id })
     } catch (e) {
-      set({ error: String(e), loading: false })
+      const fallbackPersonalities = buildFallbackPersonalities()
+      set({
+        personalities: fallbackPersonalities,
+        error: String(e),
+        loading: false,
+      })
+      const def = fallbackPersonalities.find((p) => p.is_default)
+      if (def) set({ activeId: def.id })
     }
   },
 

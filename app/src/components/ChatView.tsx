@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState } from 'react'
+import { useRef, useEffect, useMemo, useState } from 'react'
 import type { ClipboardEvent, FormEvent } from 'react'
 import { open } from '@tauri-apps/plugin-dialog'
 import { useChatStore, getActiveThread } from '../stores/chatStore'
@@ -35,6 +35,14 @@ import { useCoworkStore } from '../stores/coworkStore'
 import { useMemoryStore } from '../stores/memoryStore'
 import { safeInvoke } from '../utils/safeInvoke'
 import { useEngineStore } from '../stores/engineStore'
+import {
+  CHAT_PROVIDER_LABELS,
+  CHAT_PROVIDER_OPTIONS,
+  createChatProviderSelection,
+  getChatProviderFailureHint,
+  getChatProviderState,
+  normalizeChatProvider,
+} from '../utils/chatProvider'
 
 function getParentDirectory(path: string): string {
   const normalized = path.trim()
@@ -124,7 +132,12 @@ function findLiveToolCallId(calls: LiveToolCall[], toolName: string, input: Reco
   if (exact) return exact.id
 
   const active = [...calls].reverse().find((call) =>
-    call.toolName === toolName && (call.status === 'requested' || call.status === 'running' || call.status === 'approval')
+    call.toolName === toolName && (
+      call.status === 'requested' ||
+      call.status === 'running' ||
+      call.status === 'approval' ||
+      call.status === 'waiting_input'
+    )
   )
   if (active) return active.id
 
@@ -149,6 +162,8 @@ function getToolStatusLabel(status: LiveToolCallStatus): string {
       return 'Tool laeuft'
     case 'approval':
       return 'Freigabe erforderlich'
+    case 'waiting_input':
+      return 'Wartet auf Antwort'
     case 'completed':
       return 'Abgeschlossen'
     case 'failed':
@@ -164,6 +179,8 @@ function getToolStatusIcon(status: LiveToolCallStatus) {
       return <Loader2 size={15} className="tool-call-spin" />
     case 'approval':
       return <ShieldAlert size={15} />
+    case 'waiting_input':
+      return <Clock3 size={15} />
     case 'completed':
       return <CheckCircle2 size={15} />
     case 'failed':
@@ -192,7 +209,7 @@ function LiveToolCalls({ calls }: { calls?: LiveToolCall[] }) {
               <span className="live-tool-call-status">{getToolStatusLabel(call.status)}</span>
             </div>
             {inputPreview && (
-              <details className="live-tool-call-detail" open={call.status === 'requested' || call.status === 'running' || call.status === 'approval'}>
+              <details className="live-tool-call-detail" open={call.status === 'requested' || call.status === 'running' || call.status === 'approval' || call.status === 'waiting_input'}>
                 <summary>Input</summary>
                 <pre>{inputPreview}</pre>
               </details>
@@ -219,9 +236,14 @@ export default function ChatView() {
   const workspaceDefaultPath = useConfigStore((s) => s.preferences.workspaceDefaultPath)
   const setOllama = useConfigStore((s) => s.setOllama)
   const setAvailableModels = useConfigStore((s) => s.setAvailableModels)
+  const llmProfiles = useConfigStore((s) => s.llmProfiles)
+  const defaultLlmProfileIds = useConfigStore((s) => s.defaultLlmProfileIds)
+  const llmProfileModels = useConfigStore((s) => s.llmProfileModels)
+  const activeProvider = useEngineStore((s) => s.activeProvider)
   const engineSendMessage = useEngineStore((s) => s.sendMessage)
   const resolveEngineApproval = useEngineStore((s) => s.resolveApproval)
   const liveThinkingText = useEngineStore((s) => s.thinkingText)
+  const liveThinkingThreadId = useEngineStore((s) => s.conversationThreadId)
   const {
     activeThreadId,
     pendingApproval,
@@ -229,6 +251,7 @@ export default function ChatView() {
     error,
     addMessage,
     updateMessage,
+    setThreadProviderSettings,
     setPendingApproval,
     clearApproval,
     setBusy,
@@ -242,17 +265,34 @@ export default function ChatView() {
   const logRef = useRef<HTMLDivElement>(null)
   const activeMessages = Array.isArray(activeThread?.messages) ? activeThread.messages : []
   const lastActiveMessage = activeMessages[activeMessages.length - 1]
-  const selectableModels = Array.isArray(availableModels) ? availableModels : []
+  const providerContext = useMemo(
+    () => ({
+      ollama,
+      availableModels,
+      llmProfiles,
+      defaultLlmProfileIds,
+      llmProfileModels,
+    }),
+    [availableModels, defaultLlmProfileIds, llmProfileModels, llmProfiles, ollama],
+  )
+  const providerState = useMemo(
+    () => getChatProviderState(providerContext, activeProvider, activeThread?.providerSettings),
+    [activeProvider, activeThread?.providerSettings, providerContext],
+  )
+  const selectableModels = providerState.selectableModels
   const approvalSteps = Array.isArray(pendingApproval) ? pendingApproval : []
   const visibleMessages = activeMessages.filter((message) => message.role !== 'system' || message.visibleInChat)
-  const modelCapabilities = detectModelCapabilities(ollama.model)
-  const selectedModelAvailable = selectableModels.length === 0 || selectableModels.includes(ollama.model)
+  const modelCapabilities = providerState.provider === 'ollama'
+    ? detectModelCapabilities(providerState.model)
+    : null
+  const selectedModelAvailable = selectableModels.length === 0 || selectableModels.includes(providerState.model)
   const [attachments, setAttachments] = useState<ChatAttachment[]>([])
   const [attachmentNotice, setAttachmentNotice] = useState<string | null>(null)
   const [modelNotice, setModelNotice] = useState<string | null>(null)
   const [slashSuggestions, setSlashSuggestions] = useState<string[]>([])
 
   const personalities = usePersonalityStore((s) => s.personalities)
+  const activePersonalityId = usePersonalityStore((s) => s.activeId)
   const globalInstruction = useCoworkStore((s) => s.globalInstruction)
   const memoryHints = useMemoryStore((s) => s.hints)
   const registryCommands = useCommandRegistry((s) => s.commands)
@@ -278,6 +318,11 @@ export default function ChatView() {
   ])
 
   useEffect(() => {
+    if (providerState.provider !== 'ollama') {
+      setModelNotice(null)
+      return
+    }
+
     let cancelled = false
 
     const refreshModels = async () => {
@@ -297,10 +342,13 @@ export default function ChatView() {
           return
         }
 
-        if (models.length > 0 && !models.includes(ollama.model)) {
+        if (activeThreadId && models.length > 0 && !models.includes(providerState.model)) {
           const fallbackModel = models[0]
-          setOllama({ model: fallbackModel })
-          setModelNotice(`Modell ${ollama.model} ist auf ${ollama.baseUrl} nicht verfuegbar. Wechsel zu ${fallbackModel}.`)
+          setThreadProviderSettings(activeThreadId, {
+            ...createChatProviderSelection(providerState),
+            model: fallbackModel,
+          })
+          setModelNotice(`Modell ${providerState.model} ist auf ${ollama.baseUrl} nicht verfuegbar. Wechsel zu ${fallbackModel} fuer diesen Chat.`)
           return
         }
 
@@ -317,7 +365,7 @@ export default function ChatView() {
     return () => {
       cancelled = true
     }
-  }, [ollama.baseUrl, ollama.model, setAvailableModels, setOllama])
+  }, [activeThreadId, providerState, ollama, setAvailableModels, setThreadProviderSettings])
 
   const handleInputChange = (value: string) => {
     const matches = getSlashCommandSuggestions(registryCommands, value).map((command) => command.command)
@@ -379,7 +427,9 @@ export default function ChatView() {
     const compactedHistory = compactHistoryForPrompt(history, 12)
 
     // Inject system prompt from active personality
-    const activePersonality = personalities.find(p => p.is_default) ?? personalities[0]
+    const activePersonality = personalities.find(p => p.id === activePersonalityId)
+      ?? personalities.find(p => p.is_default)
+      ?? personalities[0]
     if (activePersonality) {
       const systemPrompt = buildSystemPromptFromPersonality(activePersonality, globalInstruction, memoryHints)
       if (systemPrompt) {
@@ -402,8 +452,10 @@ export default function ChatView() {
     if (inputRef.current) inputRef.current.value = ''
     setAttachments([])
     setAttachmentNotice(null)
-    const effectiveTimeoutMs = Math.max(ollama.timeoutMs, 600000)
-    if (effectiveTimeoutMs !== ollama.timeoutMs) {
+    const effectiveTimeoutMs = providerState.provider === 'ollama'
+      ? Math.max(ollama.timeoutMs, 600000)
+      : providerState.timeoutMs
+    if (providerState.provider === 'ollama' && effectiveTimeoutMs !== ollama.timeoutMs) {
       setOllama({ timeoutMs: effectiveTimeoutMs })
     }
     setBusy(true)
@@ -419,8 +471,9 @@ export default function ChatView() {
         area: 'llm',
         message: 'LLM-Anfrage gestartet',
         details: {
-          endpoint: ollama.baseUrl,
-          model: ollama.model,
+          provider: providerState.provider,
+          endpoint: providerState.endpoint,
+          model: providerState.model,
           timeoutMs: effectiveTimeoutMs,
           historyItems: history.length,
           compactedHistoryItems: compactedHistory.compacted.length,
@@ -438,7 +491,9 @@ export default function ChatView() {
           prompt: text,
           promptWithAttachments,
           history,
-          ollama,
+          provider: providerState.provider,
+          endpoint: providerState.endpoint,
+          model: providerState.model,
         })
       }
       if (attachmentBuild.failedFiles.length > 0) {
@@ -621,15 +676,23 @@ export default function ChatView() {
             break
           case 'tool_use_complete':
             usedToolNames.add(event.toolName)
-            updateLiveToolCall({
-              id: event.toolUseId,
-              toolName: event.toolName,
-              input: liveToolCalls.find((call) => call.id === event.toolUseId)?.input ?? {},
-              status: event.result.trim().toLowerCase().startsWith('fehler:') ? 'failed' : 'completed',
-              result: event.result,
-              error: event.result.trim().toLowerCase().startsWith('fehler:') ? event.result : undefined,
-              finishedAt: Date.now(),
-            })
+            {
+              const toolFailed = event.result.trim().toLowerCase().startsWith('fehler:')
+              const nextStatus: LiveToolCallStatus = toolFailed
+                ? 'failed'
+                : event.toolName === 'AskUser'
+                  ? 'waiting_input'
+                  : 'completed'
+              updateLiveToolCall({
+                id: event.toolUseId,
+                toolName: event.toolName,
+                input: liveToolCalls.find((call) => call.id === event.toolUseId)?.input ?? {},
+                status: nextStatus,
+                result: event.result,
+                error: toolFailed ? event.result : undefined,
+                finishedAt: Date.now(),
+              })
+            }
             if (event.toolName === 'WebSearch') {
               webSearchSources = mergeWebSearchSources(
                 webSearchSources,
@@ -655,10 +718,10 @@ export default function ChatView() {
           content: typeof message.content === 'string' ? message.content : '',
           debugContent: message.debugContent,
         })),
-      })
+      }, createChatProviderSelection(providerState))
 
       const fallbackText = engineErrorMessage
-        ? `LLM-Anfrage fehlgeschlagen: ${engineErrorMessage}\n\nPrüfe unter Einstellungen den Ollama-Endpoint, das Modell und den Timeout.`
+        ? `LLM-Anfrage fehlgeschlagen: ${engineErrorMessage}\n\n${getChatProviderFailureHint(providerState.provider)}`
         : approvalSummary
           ? `Freigabe erforderlich: ${approvalSummary}`
           : usedToolNames.size > 0
@@ -683,8 +746,9 @@ export default function ChatView() {
         area: 'llm',
         message: 'LLM-Anfrage erfolgreich',
         details: {
-          endpoint: ollama.baseUrl,
-          model: ollama.model,
+          provider: providerState.provider,
+          endpoint: providerState.endpoint,
+          model: providerState.model,
           cwd,
           durationMs: Date.now() - started,
           responseChars: rawAssistantMessage.length,
@@ -699,8 +763,9 @@ export default function ChatView() {
           promptWithAttachments,
           assistantRawResponse: rawAssistantMessage,
           assistantVisibleResponse: presentation.content,
-          endpoint: ollama.baseUrl,
-          model: ollama.model,
+          provider: providerState.provider,
+          endpoint: providerState.endpoint,
+          model: providerState.model,
           cwd,
           usedTools: Array.from(usedToolNames),
           approvalSummary,
@@ -714,8 +779,9 @@ export default function ChatView() {
         area: 'llm',
         message: 'LLM-Anfrage fehlgeschlagen',
         details: {
-          endpoint: ollama.baseUrl,
-          model: ollama.model,
+          provider: providerState.provider,
+          endpoint: providerState.endpoint,
+          model: providerState.model,
           timeoutMs: effectiveTimeoutMs,
           error: message,
           source: 'chat',
@@ -728,10 +794,12 @@ export default function ChatView() {
           prompt: text,
           promptWithAttachments,
           error: message,
-          ollama,
+          provider: providerState.provider,
+          endpoint: providerState.endpoint,
+          model: providerState.model,
         })
       }
-      const failureContent = `LLM-Anfrage fehlgeschlagen: ${message}\n\nPrüfe unter Einstellungen den Ollama-Endpoint, das Modell und den Timeout.`
+      const failureContent = `LLM-Anfrage fehlgeschlagen: ${message}\n\n${getChatProviderFailureHint(providerState.provider)}`
       if (assistantMessageId) {
         updateMessage(activeThreadId, assistantMessageId, { content: failureContent, streaming: false }, { persist: true })
       } else {
@@ -744,6 +812,14 @@ export default function ChatView() {
     } finally {
       setBusy(false)
     }
+  }
+
+  const engineAbort = useEngineStore((s) => s.abort)
+
+  const handleStop = () => {
+    engineAbort()
+    setBusy(false)
+    setError(null)
   }
 
   const handleApprove = () => {
@@ -770,16 +846,40 @@ export default function ChatView() {
     setBusy(false)
   }
 
-  const handleModelChange = (model: string) => {
-    setOllama({ model })
+  const handleProviderChange = (provider: string) => {
+    if (!activeThreadId) return
+    const nextProvider = normalizeChatProvider(provider)
+    const nextProviderState = getChatProviderState(providerContext, activeProvider, { provider: nextProvider })
+    setThreadProviderSettings(activeThreadId, createChatProviderSelection(nextProviderState))
+    setModelNotice(null)
     addLog({
       level: 'info',
       area: 'llm',
-      message: 'Modell im Chat gewechselt',
+      message: 'Provider fuer diesen Chat gewechselt',
       details: {
-        previousModel: ollama.model,
+        provider: nextProvider,
+        label: CHAT_PROVIDER_LABELS[nextProvider],
+      },
+    })
+  }
+
+  const handleModelChange = (model: string) => {
+    if (!activeThreadId) return
+
+    setThreadProviderSettings(activeThreadId, {
+      ...createChatProviderSelection(providerState),
+      model,
+    })
+
+    addLog({
+      level: 'info',
+      area: 'llm',
+      message: 'Modell fuer diesen Chat gewechselt',
+      details: {
+        provider: providerState.provider,
+        previousModel: providerState.model,
         nextModel: model,
-        endpoint: ollama.baseUrl,
+        endpoint: providerState.endpoint,
       },
     })
   }
@@ -847,17 +947,18 @@ export default function ChatView() {
           const { promptDebug, ollamaRequestPreview } = splitPromptDebugContent(msg.debugContent)
           const attachmentsForMessage = Array.isArray(msg.attachments) ? msg.attachments : []
           const imageAttachments = attachmentsForMessage.filter((item) => item.kind === 'file' && isImageAttachment(item))
+          const liveThinkingBelongsToThread = liveThinkingThreadId === activeThreadId
           const displayedThinkingContent = resolveDisplayedThinkingContent(
             msg.thinkingContent,
-            liveThinkingText,
+            liveThinkingBelongsToThread ? liveThinkingText : undefined,
             {
               streaming: msg.streaming,
-              preferLive: msg.streaming && index === visibleMessages.length - 1,
+              preferLive: liveThinkingBelongsToThread && msg.streaming && index === visibleMessages.length - 1,
             },
           )
           const displayedContent = resolveDisplayedAssistantContent(content, displayedThinkingContent)
           return (
-          <div key={`${msg.timestamp}-${index}`} className={`cowork-msg ${msg.role}`}>
+          <div key={msg.id} className={`cowork-msg ${msg.role}`}>
             <div className="msg-avatar">
               {msg.role === 'user' ? '👤' : msg.role === 'assistant' ? '✦' : '⚙️'}
             </div>
@@ -963,10 +1064,25 @@ export default function ChatView() {
       <form className="cowork-input" onSubmit={handleSend}>
         <div className="chat-input-toolbar">
           <label>
+            Provider
+            <select
+              className="model-selector chat-model-selector"
+              value={providerState.provider}
+              onChange={(e) => handleProviderChange(e.target.value)}
+              disabled={busy}
+            >
+              {CHAT_PROVIDER_OPTIONS.map((provider) => (
+                <option key={provider} value={provider}>
+                  {CHAT_PROVIDER_LABELS[provider]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
             Modell
             <select
               className="model-selector chat-model-selector"
-              value={ollama.model}
+              value={providerState.model}
               onChange={(e) => handleModelChange(e.target.value)}
               disabled={busy}
             >
@@ -977,10 +1093,10 @@ export default function ChatView() {
                   </option>
                 ))
               ) : (
-                <option value={ollama.model}>{ollama.model}</option>
+                <option value={providerState.model}>{providerState.model || 'kein Modell gesetzt'}</option>
               )}
-              {selectableModels.length > 0 && !selectableModels.includes(ollama.model) && (
-                <option value={ollama.model}>{ollama.model}</option>
+              {selectableModels.length > 0 && providerState.model && !selectableModels.includes(providerState.model) && (
+                <option value={providerState.model}>{providerState.model}</option>
               )}
             </select>
             <p
@@ -992,7 +1108,9 @@ export default function ChatView() {
               }}
             >
               {modelNotice
-                ?? `Endpoint: ${ollama.baseUrl} | Modellfamilie: ${modelCapabilities.family} | ${modelCapabilities.supportsTools ? 'Tool-Calls aktiviert' : 'Tool-Calls deaktiviert'}`}
+                ?? (providerState.provider === 'ollama' && modelCapabilities
+                  ? `Endpoint: ${providerState.endpoint} | Modellfamilie: ${modelCapabilities.family} | ${modelCapabilities.supportsTools ? 'Tool-Calls aktiviert' : 'Tool-Calls deaktiviert'}`
+                  : `Endpoint: ${providerState.endpoint || 'nicht gesetzt'} | Provider: ${providerState.label}`)}
             </p>
           </label>
           <div className="attachment-actions">
@@ -1070,9 +1188,15 @@ export default function ChatView() {
           />
         </div>
 
-        <button type="submit" disabled={busy} className="btn-send">
-          {busy ? '⟳' : 'Senden →'}
-        </button>
+        {busy ? (
+          <button type="button" onClick={handleStop} className="btn-stop">
+            ⏹ Stopp
+          </button>
+        ) : (
+          <button type="submit" disabled={busy} className="btn-send">
+            Senden →
+          </button>
+        )}
       </form>
     </div>
   )

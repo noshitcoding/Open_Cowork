@@ -89,6 +89,9 @@ export default function Layout() {
           <NavLink to="/" end className={({isActive}) => `top-tab${isActive ? ' active' : ''}`}>
             {t('Cowork')}
           </NavLink>
+          <NavLink to="/tasks" className={({isActive}) => `top-tab${isActive ? ' active' : ''}`}>
+            {t('Tasks')}
+          </NavLink>
           <NavLink to="/settings" className={({isActive}) => `top-tab${isActive ? ' active' : ''}`}>
             {t('Settings')}
           </NavLink>

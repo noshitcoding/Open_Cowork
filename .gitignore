@@ -13,6 +13,7 @@ app/src-tauri/target/
 *.swp
 .DS_Store
 Thumbs.db
+temp/
 
 # External example repositories
 andere_ai_agenten_beispiele/

@@ -1,7 +1,8 @@
 import { create } from 'zustand'
 import { invoke } from '@tauri-apps/api/core'
-import { hydrateStoredMessage } from '../utils/sessionThreads'
+import { hydrateStoredMessage, serializeChatMessageForStorage } from '../utils/sessionThreads'
 import type { ChatAttachment } from '../utils/chatAttachments'
+import { normalizeChatProviderSelection, type ChatProviderSelection } from '../utils/chatProvider'
 
 export type ChatMessage = {
   id: string
@@ -17,7 +18,7 @@ export type ChatMessage = {
   streaming?: boolean
 }
 
-export type LiveToolCallStatus = 'requested' | 'running' | 'completed' | 'failed' | 'approval'
+export type LiveToolCallStatus = 'requested' | 'running' | 'completed' | 'failed' | 'approval' | 'waiting_input'
 
 export type LiveToolCall = {
   id: string
@@ -36,6 +37,7 @@ export type ChatThread = {
   messages: ChatMessage[]
   createdAt: number
   updatedAt: number
+  providerSettings?: ChatProviderSelection
 }
 
 type ChatState = {
@@ -45,9 +47,10 @@ type ChatState = {
   busy: boolean
   error: string | null
   loadFromDb: () => Promise<void>
-  addThread: (title: string) => string
+  addThread: (title: string, providerSettings?: ChatProviderSelection) => string
   hydrateThread: (thread: ChatThread) => void
   setActiveThread: (id: string | null) => void
+  setThreadProviderSettings: (threadId: string, providerSettings?: ChatProviderSelection) => void
   addMessage: (threadId: string, message: Omit<ChatMessage, 'id'>) => string
   updateMessage: (
     threadId: string,
@@ -82,6 +85,28 @@ async function persistInvoke(command: string, args: Record<string, unknown>, con
   }
 }
 
+function parseTimestamp(value: string | undefined): number {
+  const parsed = value ? new Date(value).getTime() : NaN
+  return Number.isFinite(parsed) ? parsed : Date.now()
+}
+
+function serializeThreadProviderSettings(providerSettings?: ChatProviderSelection): string | null {
+  const normalized = normalizeChatProviderSelection(providerSettings)
+  return normalized ? JSON.stringify(normalized) : null
+}
+
+function parseThreadProviderSettings(raw: string | null | undefined): ChatProviderSelection | undefined {
+  if (!raw?.trim()) {
+    return undefined
+  }
+
+  try {
+    return normalizeChatProviderSelection(JSON.parse(raw))
+  } catch {
+    return undefined
+  }
+}
+
 export const useChatStore = create<ChatState>()((set) => ({
   threads: [],
   activeThreadId: null,
@@ -91,7 +116,16 @@ export const useChatStore = create<ChatState>()((set) => ({
 
   loadFromDb: async () => {
     try {
-      type DbThread = { id: string; title: string; created_at: string; updated_at: string }
+      type DbThread = {
+        id: string
+        title: string
+        created_at?: string
+        createdAt?: string
+        updated_at?: string
+        updatedAt?: string
+        provider_settings_json?: string | null
+        providerSettingsJson?: string | null
+      }
       type DbMessage = { id: string; role: string; content: string; timestamp: number }
       const dbThreads = await invoke<DbThread[]>('db_list_threads')
       const threads: ChatThread[] = []
@@ -102,24 +136,31 @@ export const useChatStore = create<ChatState>()((set) => ({
           id: dt.id,
           title: dt.title,
           messages: messages.map((m) => hydrateStoredMessage(m)),
-          createdAt: new Date(dt.created_at).getTime(),
-          updatedAt: new Date(dt.updated_at).getTime(),
+          createdAt: parseTimestamp(dt.created_at ?? dt.createdAt),
+          updatedAt: parseTimestamp(dt.updated_at ?? dt.updatedAt),
+          providerSettings: parseThreadProviderSettings(dt.provider_settings_json ?? dt.providerSettingsJson),
         })
       }
-      set({
-        threads: threads.map((thread) => ({
-          ...thread,
-          messages: Array.isArray(thread.messages) ? thread.messages : [],
-        })),
-      })
+      const hydratedThreads = threads.map((thread) => ({
+        ...thread,
+        messages: Array.isArray(thread.messages) ? thread.messages : [],
+      }))
+      const hydratedThreadIds = new Set(hydratedThreads.map((thread) => thread.id))
+      set((state) => ({
+        threads: [
+          ...state.threads.filter((thread) => !hydratedThreadIds.has(thread.id)),
+          ...hydratedThreads,
+        ],
+      }))
     } catch {
       // DB not available (e.g. in tests) - keep in-memory state
     }
   },
 
-  addThread: (title: string) => {
+  addThread: (title: string, providerSettings?: ChatProviderSelection) => {
     const id = generateId()
     const now = Date.now()
+    const normalizedProviderSettings = normalizeChatProviderSelection(providerSettings)
     const systemMsg: ChatMessage = {
       id: generateId(),
       role: 'system',
@@ -132,15 +173,25 @@ export const useChatStore = create<ChatState>()((set) => ({
       messages: [systemMsg],
       createdAt: now,
       updatedAt: now,
+      providerSettings: normalizedProviderSettings,
     }
     set((state) => ({
       threads: [thread, ...state.threads],
       activeThreadId: id,
     }))
     const isoNow = new Date(now).toISOString()
-    void persistInvoke('db_save_thread', { id, title, createdAt: isoNow }, 'db_save_thread')
+    void persistInvoke('db_save_thread', {
+      id,
+      title,
+      createdAt: isoNow,
+      providerSettingsJson: serializeThreadProviderSettings(normalizedProviderSettings),
+    }, 'db_save_thread')
     void persistInvoke('db_save_message', {
-      id: systemMsg.id, threadId: id, role: systemMsg.role, content: systemMsg.content, timestamp: systemMsg.timestamp,
+      id: systemMsg.id,
+      threadId: id,
+      role: systemMsg.role,
+      content: serializeChatMessageForStorage(systemMsg),
+      timestamp: systemMsg.timestamp,
     }, 'db_save_message system')
     return id
   },
@@ -150,6 +201,7 @@ export const useChatStore = create<ChatState>()((set) => ({
       ...thread,
       messages: Array.isArray(thread.messages) ? thread.messages : [],
       updatedAt: thread.updatedAt || Date.now(),
+      providerSettings: normalizeChatProviderSelection(thread.providerSettings),
     }
     set((state) => {
       const remaining = state.threads.filter((item) => item.id !== normalized.id)
@@ -161,6 +213,21 @@ export const useChatStore = create<ChatState>()((set) => ({
   },
 
   setActiveThread: (id) => set({ activeThreadId: id }),
+
+  setThreadProviderSettings: (threadId, providerSettings) => {
+    const normalized = normalizeChatProviderSelection(providerSettings)
+    set((state) => ({
+      threads: state.threads.map((thread) => (
+        thread.id === threadId
+          ? { ...thread, providerSettings: normalized, updatedAt: Date.now() }
+          : thread
+      )),
+    }))
+    void persistInvoke('db_update_thread_provider_settings', {
+      id: threadId,
+      providerSettingsJson: serializeThreadProviderSettings(normalized),
+    }, 'db_update_thread_provider_settings')
+  },
 
   addMessage: (threadId, message) => {
     const msgId = generateId()
@@ -178,30 +245,41 @@ export const useChatStore = create<ChatState>()((set) => ({
       ),
     }))
     void persistInvoke('db_save_message', {
-      id: msgId, threadId, role: message.role, content: full.content, timestamp: message.timestamp,
+      id: msgId,
+      threadId,
+      role: message.role,
+      content: serializeChatMessageForStorage(full),
+      timestamp: message.timestamp,
     }, 'db_save_message addMessage')
     return msgId
   },
 
   updateMessage: (threadId, messageId, patch, options) => {
+    let messageToPersist: ChatMessage | null = null
+
     set((state) => ({
       threads: state.threads.map((t) =>
         t.id === threadId
           ? {
               ...t,
-              messages: t.messages.map((m) =>
-                m.id === messageId ? { ...m, ...patch } : m
-              ),
+              messages: t.messages.map((m) => {
+                if (m.id !== messageId) return m
+                const nextMessage = { ...m, ...patch }
+                if (options?.persist) {
+                  messageToPersist = nextMessage
+                }
+                return nextMessage
+              }),
               updatedAt: Date.now(),
             }
           : t
       ),
     }))
 
-    if (options?.persist && typeof patch.content === 'string') {
+    if (options?.persist && messageToPersist) {
       void persistInvoke('db_update_message_content', {
         id: messageId,
-        content: patch.content,
+        content: serializeChatMessageForStorage(messageToPersist),
       }, 'db_update_message_content')
     }
   },

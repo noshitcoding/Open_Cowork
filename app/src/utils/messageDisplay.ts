@@ -1,6 +1,32 @@
+type ThinkingTagPair = readonly [string, string]
+
+const THINKING_TAG_PAIRS: ThinkingTagPair[] = [
+  ['<think>', '</think>'],
+  ['<thinking>', '</thinking>'],
+  ['<reason>', '</reason>'],
+  ['<reasoning>', '</reasoning>'],
+  ['<thought>', '</thought>'],
+  ['<|begin_of_thought|>', '<|end_of_thought|>'],
+  ['\u25c1think\u25b7', '\u25c1/think\u25b7'],
+]
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function startTagPattern(tag: string): string {
+  const match = tag.match(/^<([^>\s]+)>$/)
+  if (!match) return escapeRegExp(tag)
+  return `<${escapeRegExp(match[1])}(?:\\s[^>]*)?>`
+}
+
 export function stripModelThinking(content: string): string {
-  return content
-    .replace(/<think>[\s\S]*?(?:<\/think>|$)/gi, '')
+  const stripped = THINKING_TAG_PAIRS.reduce((current, [startTag, endTag]) => {
+    const pattern = new RegExp(`${startTagPattern(startTag)}[\\s\\S]*?(?:${escapeRegExp(endTag)}|$)`, 'gi')
+    return current.replace(pattern, '')
+  }, content)
+
+  return stripped
     .replace(/^\s*thinking:[\s\S]*?\n\n/gi, '')
     .trim()
 }
@@ -30,29 +56,18 @@ export function sanitizeAssistantContent(rawContent: string, verboseMode: boolea
 }
 
 function extractThinkingFallback(rawContent: string): string {
-  const blocks: string[] = []
-  const thinkRegex = /<think>([\s\S]*?)<\/think>/gi
-  let match: RegExpExecArray | null
-  while ((match = thinkRegex.exec(rawContent)) !== null) {
-    blocks.push(match[1].trim())
-  }
-  // Handle unclosed <think> tag (model didn't close it)
-  if (blocks.length === 0) {
-    const unclosed = rawContent.match(/<think>([\s\S]*)$/i)
-    if (unclosed?.[1]) {
-      blocks.push(unclosed[1].trim())
-    }
-  }
-  return blocks.join('\n\n')
+  return extractThinkingContent(rawContent)
 }
 
 export function extractThinkingContent(rawContent: string): string {
   const blocks: string[] = []
-  const thinkRegex = /<think>([\s\S]*?)(?:<\/think>|$)/gi
-  let match: RegExpExecArray | null
 
-  while ((match = thinkRegex.exec(rawContent)) !== null) {
-    blocks.push(match[1].trim())
+  for (const [startTag, endTag] of THINKING_TAG_PAIRS) {
+    const pattern = new RegExp(`${startTagPattern(startTag)}([\\s\\S]*?)(?:${escapeRegExp(endTag)}|$)`, 'gi')
+    let match: RegExpExecArray | null
+    while ((match = pattern.exec(rawContent)) !== null) {
+      blocks.push(match[1].trim())
+    }
   }
 
   const thinkingPrefix = rawContent.match(/^\s*thinking:\s*([\s\S]*?)(?:\n\n|$)/i)

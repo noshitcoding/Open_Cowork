@@ -1019,6 +1019,11 @@ body {
   background: rgba(245, 158, 11, 0.08);
 }
 
+.live-tool-call.waiting_input {
+  border-left-color: var(--info);
+  background: rgba(59, 130, 246, 0.06);
+}
+
 .live-tool-call.completed {
   border-left-color: var(--success);
   background: rgba(34, 197, 94, 0.07);
@@ -1050,6 +1055,10 @@ body {
 
 .live-tool-call.approval .live-tool-call-icon {
   color: var(--warning);
+}
+
+.live-tool-call.waiting_input .live-tool-call-icon {
+  color: var(--info);
 }
 
 .live-tool-call.completed .live-tool-call-icon {
@@ -1195,6 +1204,145 @@ body {
   border: 1px solid var(--warning);
   border-radius: var(--radius-md);
 }
+.approval-banner.question-banner {
+  background: rgba(59, 130, 246, 0.06);
+  border-color: var(--info);
+}
+
+.ask-user-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(15, 23, 42, 0.28);
+}
+
+.ask-user-modal {
+  width: min(560px, 100%);
+  max-height: min(680px, calc(100vh - 40px));
+  overflow: auto;
+  border: 1px solid var(--info);
+  border-radius: var(--radius-md);
+  background: var(--bg-white);
+  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.28);
+  padding: 16px;
+}
+
+.ask-user-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.ask-user-modal-kicker {
+  margin: 0 0 4px;
+  color: var(--info);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.ask-user-modal h2 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 18px;
+  line-height: 1.25;
+}
+
+.ask-user-modal-close {
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-white);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.ask-user-modal-question {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  background: rgba(59, 130, 246, 0.06);
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.ask-user-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.ask-user-option {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-white);
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.ask-user-option.selected {
+  border-color: var(--info);
+  background: rgba(59, 130, 246, 0.08);
+}
+
+.ask-user-option input {
+  width: 16px;
+  height: 16px;
+  margin: 2px 0 0;
+  accent-color: var(--info);
+}
+
+.ask-user-free-text-label {
+  display: block;
+  margin: 0 0 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.ask-user-modal-input {
+  width: 100%;
+  min-height: 96px;
+  resize: vertical;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  font: inherit;
+}
+
+.ask-user-modal-input:focus {
+  outline: 2px solid var(--info);
+  outline-offset: 2px;
+}
+
+.ask-user-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+
 .approval-header {
   display: flex;
   align-items: center;
@@ -1514,6 +1662,26 @@ body {
 }
 .btn-send:hover { background: var(--accent-hover); }
 .btn-send:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.btn-stop {
+  min-width: 104px;
+  min-height: 40px;
+  padding: 0 16px;
+  border: none;
+  background: var(--danger);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--transition);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.btn-stop:hover { background: #dc3545; }
+.btn-stop:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* === Code Mode (MCP + Settings) === */
 .code-mode {

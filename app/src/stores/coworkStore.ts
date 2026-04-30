@@ -47,6 +47,12 @@ export type ScheduledTask = {
   name: string
   prompt: string
   cronLike: string
+  taskKind: 'prompt' | 'crew'
+  crewId: string | null
+  crewSnapshotJson: string | null
+  modelConfigJson: string | null
+  priority: number
+  dependsOnTaskIds: string[]
   active: boolean
   lastRunAt: number | null
   nextRunAt: number | null
@@ -91,6 +97,7 @@ export type CoworkPolicyFlags = {
 type PolicySyncRequest = {
   flags: CoworkPolicyFlags
   denyRules: string[]
+  enabledToolIds: string[]
 }
 
 type BackendConnectorTestResponse = {
@@ -139,7 +146,7 @@ type CoworkState = {
   addToolDenyRule: (rule: string) => void
   removeToolDenyRule: (rule: string) => void
   setPolicyFlag: <K extends keyof CoworkPolicyFlags>(key: K, value: CoworkPolicyFlags[K]) => void
-  setPolicySnapshot: (flags: Partial<CoworkPolicyFlags>, denyRules: string[]) => void
+  setPolicySnapshot: (flags: Partial<CoworkPolicyFlags>, denyRules: string[], enabledToolIds: string[]) => void
 }
 
 const DEFAULT_CONNECTORS: ConnectorConfig[] = [
@@ -200,6 +207,12 @@ type BackendScheduledTaskRow = {
   name: string
   prompt: string
   scheduleExpr: string
+  taskKind?: 'prompt' | 'crew'
+  crewId?: string | null
+  crewSnapshotJson?: string | null
+  modelConfigJson?: string | null
+  priority?: number
+  dependsOnTaskIds?: string[]
   active: boolean
   lastRunAt: string | null
   nextRunAt: string | null
@@ -221,6 +234,12 @@ function mapScheduledTaskRow(row: BackendScheduledTaskRow): ScheduledTask {
     name: row.name,
     prompt: row.prompt,
     cronLike: row.scheduleExpr,
+    taskKind: row.taskKind ?? 'prompt',
+    crewId: row.crewId ?? null,
+    crewSnapshotJson: row.crewSnapshotJson ?? null,
+    modelConfigJson: row.modelConfigJson ?? null,
+    priority: row.priority ?? 100,
+    dependsOnTaskIds: row.dependsOnTaskIds ?? [],
     active: row.active,
     lastRunAt: parseBackendDate(row.lastRunAt),
     nextRunAt: parseBackendDate(row.nextRunAt),
@@ -246,13 +265,31 @@ function normalizePolicyDenyRules(denyRules: string[]): string[] {
     .slice(0, 80)
 }
 
+function normalizeEnabledClaudeToolIds(enabledToolIds: string[]): string[] {
+  const knownTools = new Set(CLAUDE_TOOL_CAPABILITIES.map((tool) => tool.id))
+  const seen = new Set<string>()
+
+  return enabledToolIds
+    .map((toolId) => toolId.trim())
+    .filter((toolId) => {
+      if (!toolId || !knownTools.has(toolId) || seen.has(toolId)) {
+        return false
+      }
+
+      seen.add(toolId)
+      return true
+    })
+}
+
 function buildPolicySyncRequest(
   policyFlags: CoworkPolicyFlags,
-  toolDenyRules: string[]
+  toolDenyRules: string[],
+  enabledToolIds: string[]
 ): PolicySyncRequest {
   return {
     flags: policyFlags,
     denyRules: normalizePolicyDenyRules(toolDenyRules),
+    enabledToolIds: normalizeEnabledClaudeToolIds(enabledToolIds),
   }
 }
 
@@ -531,6 +568,12 @@ export const useCoworkStore = create<CoworkState>()(
           name: task.name,
           prompt: task.prompt,
           scheduleExpr: task.cronLike,
+          taskKind: task.taskKind,
+          crewId: task.crewId,
+          crewSnapshotJson: task.crewSnapshotJson,
+          modelConfigJson: task.modelConfigJson,
+          priority: task.priority,
+          dependsOnTaskIds: task.dependsOnTaskIds,
           active: task.active,
           lastRunAt: task.lastRunAt ? new Date(task.lastRunAt).toISOString() : null,
           nextRunAt: task.nextRunAt ? new Date(task.nextRunAt).toISOString() : null,
@@ -548,6 +591,12 @@ export const useCoworkStore = create<CoworkState>()(
             name: task.name,
             prompt: task.prompt,
             scheduleExpr: task.cronLike,
+            taskKind: task.taskKind,
+            crewId: task.crewId,
+            crewSnapshotJson: task.crewSnapshotJson,
+            modelConfigJson: task.modelConfigJson,
+            priority: task.priority,
+            dependsOnTaskIds: task.dependsOnTaskIds,
             active: task.active,
           },
         }, {
@@ -555,6 +604,12 @@ export const useCoworkStore = create<CoworkState>()(
           name: task.name,
           prompt: task.prompt,
           scheduleExpr: task.cronLike,
+          taskKind: task.taskKind,
+          crewId: task.crewId,
+          crewSnapshotJson: task.crewSnapshotJson,
+          modelConfigJson: task.modelConfigJson,
+          priority: task.priority,
+          dependsOnTaskIds: task.dependsOnTaskIds,
           active: task.active,
           lastRunAt: task.lastRunAt ? new Date(task.lastRunAt).toISOString() : null,
           nextRunAt: task.nextRunAt ? new Date(task.nextRunAt).toISOString() : null,
@@ -578,6 +633,12 @@ export const useCoworkStore = create<CoworkState>()(
           name: get().scheduledTasks.find((task) => task.id === id)?.name ?? id,
           prompt: get().scheduledTasks.find((task) => task.id === id)?.prompt ?? '',
           scheduleExpr: get().scheduledTasks.find((task) => task.id === id)?.cronLike ?? '',
+          taskKind: get().scheduledTasks.find((task) => task.id === id)?.taskKind ?? 'prompt',
+          crewId: get().scheduledTasks.find((task) => task.id === id)?.crewId ?? null,
+          crewSnapshotJson: get().scheduledTasks.find((task) => task.id === id)?.crewSnapshotJson ?? null,
+          modelConfigJson: get().scheduledTasks.find((task) => task.id === id)?.modelConfigJson ?? null,
+          priority: get().scheduledTasks.find((task) => task.id === id)?.priority ?? 100,
+          dependsOnTaskIds: get().scheduledTasks.find((task) => task.id === id)?.dependsOnTaskIds ?? [],
           active,
           lastRunAt: get().scheduledTasks.find((task) => task.id === id)?.lastRunAt
             ? new Date(get().scheduledTasks.find((task) => task.id === id)!.lastRunAt!).toISOString()
@@ -610,7 +671,7 @@ export const useCoworkStore = create<CoworkState>()(
       setClaudeToolPreset: (preset) =>
         set(() => ({
           claudeToolPreset: preset,
-          enabledClaudeToolIds: TOOL_PRESET_MAP[preset],
+          enabledClaudeToolIds: [...TOOL_PRESET_MAP[preset]],
         })),
       toggleClaudeTool: (toolId, enabled) =>
         set((state) => {
@@ -650,7 +711,7 @@ export const useCoworkStore = create<CoworkState>()(
             [key]: value,
           },
         })),
-      setPolicySnapshot: (flags, denyRules) => {
+      setPolicySnapshot: (flags, denyRules, enabledToolIds) => {
         suppressPolicySync = true
         set((state) => {
           const policyFlags = {
@@ -658,10 +719,13 @@ export const useCoworkStore = create<CoworkState>()(
             ...flags,
           }
           const toolDenyRules = normalizePolicyDenyRules(denyRules)
-          markPolicySyncAsCurrent(buildPolicySyncRequest(policyFlags, toolDenyRules))
+          const normalizedEnabledToolIds = normalizeEnabledClaudeToolIds(enabledToolIds)
+          markPolicySyncAsCurrent(buildPolicySyncRequest(policyFlags, toolDenyRules, normalizedEnabledToolIds))
           return {
             policyFlags,
             toolDenyRules,
+            enabledClaudeToolIds: normalizedEnabledToolIds,
+            claudeToolPreset: 'default',
           }
         })
         suppressPolicySync = false
@@ -673,16 +737,15 @@ export const useCoworkStore = create<CoworkState>()(
         policySyncReady = true
         queuePolicySync(buildPolicySyncRequest(
           useCoworkStore.getState().policyFlags,
-          useCoworkStore.getState().toolDenyRules
+          useCoworkStore.getState().toolDenyRules,
+          useCoworkStore.getState().enabledClaudeToolIds,
         ))
       },
       merge: (persisted, current) => {
         const state = persisted as Partial<CoworkState>
-        const persistedTools = Array.isArray(state.enabledClaudeToolIds)
-          ? state.enabledClaudeToolIds
-          : DEFAULT_ENABLED_CLAUDE_TOOLS
-        const knownTools = new Set(CLAUDE_TOOL_CAPABILITIES.map((tool) => tool.id))
-        const normalizedTools = persistedTools.filter((id) => knownTools.has(id))
+        const hasPersistedTools = Array.isArray(state.enabledClaudeToolIds)
+        const persistedTools = hasPersistedTools ? state.enabledClaudeToolIds ?? [] : DEFAULT_ENABLED_CLAUDE_TOOLS
+        const normalizedTools = normalizeEnabledClaudeToolIds(persistedTools)
         return {
           ...current,
           ...state,
@@ -692,7 +755,7 @@ export const useCoworkStore = create<CoworkState>()(
           scheduledTasks: Array.isArray(state.scheduledTasks) ? state.scheduledTasks : [],
           scheduledRuns: Array.isArray(state.scheduledRuns) ? state.scheduledRuns : [],
           claudeTools: CLAUDE_TOOL_CAPABILITIES,
-          enabledClaudeToolIds: normalizedTools.length > 0 ? normalizedTools : DEFAULT_ENABLED_CLAUDE_TOOLS,
+          enabledClaudeToolIds: hasPersistedTools ? normalizedTools : DEFAULT_ENABLED_CLAUDE_TOOLS,
           toolDenyRules: Array.isArray(state.toolDenyRules) ? state.toolDenyRules : [],
           policyFlags: {
             ...DEFAULT_POLICY_FLAGS,
@@ -709,10 +772,11 @@ useCoworkStore.subscribe((state, previousState) => {
 
   if (
     state.policyFlags === previousState.policyFlags &&
-    state.toolDenyRules === previousState.toolDenyRules
+    state.toolDenyRules === previousState.toolDenyRules &&
+    state.enabledClaudeToolIds === previousState.enabledClaudeToolIds
   ) {
     return
   }
 
-  queuePolicySync(buildPolicySyncRequest(state.policyFlags, state.toolDenyRules))
+  queuePolicySync(buildPolicySyncRequest(state.policyFlags, state.toolDenyRules, state.enabledClaudeToolIds))
 })

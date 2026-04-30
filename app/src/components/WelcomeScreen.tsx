@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect } from 'react'
+import { useRef, useState, useEffect, useMemo } from 'react'
 import type { FormEvent } from 'react'
 import { open } from '@tauri-apps/plugin-dialog'
 import { useConfigStore } from '../stores/configStore'
@@ -21,6 +21,14 @@ import { appendWebSearchSources, mergeWebSearchSources, parseWebSearchSourcesFro
 import { writeAuditEvent } from '../utils/audit'
 import { safeInvoke } from '../utils/safeInvoke'
 import { useEngineStore } from '../stores/engineStore'
+import {
+  CHAT_PROVIDER_LABELS,
+  CHAT_PROVIDER_OPTIONS,
+  createChatProviderSelection,
+  getChatProviderFailureHint,
+  getChatProviderState,
+  normalizeChatProvider,
+} from '../utils/chatProvider'
 
 type EnginePermissionMode = 'default' | 'plan' | 'bypass' | 'strict'
 
@@ -88,11 +96,27 @@ export default function WelcomeScreen() {
   const availableModels = useConfigStore((s) => s.availableModels)
   const setOllama = useConfigStore((s) => s.setOllama)
   const setAvailableModels = useConfigStore((s) => s.setAvailableModels)
-  const selectableModels = Array.isArray(availableModels) ? availableModels : []
+  const llmProfiles = useConfigStore((s) => s.llmProfiles)
+  const defaultLlmProfileIds = useConfigStore((s) => s.defaultLlmProfileIds)
+  const llmProfileModels = useConfigStore((s) => s.llmProfileModels)
+  const updateLlmProfile = useConfigStore((s) => s.updateLlmProfile)
   const claudePermissionMode = useCoworkStore((s) => s.claudePermissionMode)
+  const activeProvider = useEngineStore((s) => s.activeProvider)
+  const setActiveProvider = useEngineStore((s) => s.setActiveProvider)
   const engineSendMessage = useEngineStore((s) => s.sendMessage)
   const setEngineConfig = useEngineStore((s) => s.setConfig)
   const resolveEngineApproval = useEngineStore((s) => s.resolveApproval)
+  const providerState = useMemo(
+    () => getChatProviderState({
+      ollama,
+      availableModels,
+      llmProfiles,
+      defaultLlmProfileIds,
+      llmProfileModels,
+    }, activeProvider),
+    [activeProvider, availableModels, defaultLlmProfileIds, llmProfileModels, llmProfiles, ollama],
+  )
+  const selectableModels = providerState.selectableModels
 
   const { workingFolder, workingPathKind, setWorkingPath } = useUiStore()
   const {
@@ -153,6 +177,19 @@ export default function WelcomeScreen() {
   const selectedPathName = workingFolder
     ? workingFolder.split(/[\\/]/).filter(Boolean).pop() ?? workingFolder
     : null
+
+  const handleProviderChange = (provider: string) => {
+    const nextProvider = normalizeChatProvider(provider)
+    setActiveProvider(nextProvider)
+  }
+
+  const handleModelChange = (model: string) => {
+    if (providerState.provider === 'ollama') {
+      setOllama({ model })
+    } else if (providerState.profileId) {
+      updateLlmProfile(providerState.profileId, { model })
+    }
+  }
 
   const addNewAttachments = (newItems: ChatAttachment[]) => {
     if (newItems.length === 0) return
@@ -215,7 +252,7 @@ export default function WelcomeScreen() {
     const promptWithAttachments = attachmentContext ? `${text}\n\n${attachmentContext}` : text
 
     // Create a new thread for this task
-    const threadId = addThread(text.slice(0, 50))
+    const threadId = addThread(text.slice(0, 50), createChatProviderSelection(providerState))
     setActiveThread(threadId)
 
     const userMessage = {
@@ -239,8 +276,10 @@ export default function WelcomeScreen() {
     if (inputRef.current) inputRef.current.value = ''
     setAttachments([])
     setAttachmentNotice(null)
-    const effectiveTimeoutMs = Math.max(ollama.timeoutMs, 600000)
-    if (effectiveTimeoutMs !== ollama.timeoutMs) {
+    const effectiveTimeoutMs = providerState.provider === 'ollama'
+      ? Math.max(ollama.timeoutMs, 600000)
+      : providerState.timeoutMs
+    if (providerState.provider === 'ollama' && effectiveTimeoutMs !== ollama.timeoutMs) {
       setOllama({ timeoutMs: effectiveTimeoutMs })
     }
 
@@ -253,8 +292,9 @@ export default function WelcomeScreen() {
         area: 'llm',
         message: 'LLM-Anfrage gestartet',
         details: {
-          endpoint: ollama.baseUrl,
-          model: ollama.model,
+          provider: providerState.provider,
+          endpoint: providerState.endpoint,
+          model: providerState.model,
           timeoutMs: effectiveTimeoutMs,
           promptChars: promptWithAttachments.length,
           parsedAttachments: attachmentBuild.parsedFiles,
@@ -268,7 +308,9 @@ export default function WelcomeScreen() {
           threadId,
           prompt: text,
           promptWithAttachments,
-          ollama,
+          provider: providerState.provider,
+          endpoint: providerState.endpoint,
+          model: providerState.model,
         })
       }
       if (attachmentBuild.failedFiles.length > 0) {
@@ -421,10 +463,10 @@ export default function WelcomeScreen() {
       }, {
         threadId,
         messages: [],
-      })
+      }, createChatProviderSelection(providerState))
 
       const fallbackText = engineErrorMessage
-        ? `LLM-Anfrage fehlgeschlagen: ${engineErrorMessage}\n\nPruefe unter Einstellungen den Ollama-Endpoint, das Modell und den Timeout.`
+        ? `LLM-Anfrage fehlgeschlagen: ${engineErrorMessage}\n\n${getChatProviderFailureHint(providerState.provider)}`
         : approvalSummary
           ? `Freigabe erforderlich: ${approvalSummary}`
           : usedToolNames.size > 0
@@ -449,8 +491,9 @@ export default function WelcomeScreen() {
         area: 'llm',
         message: 'LLM-Anfrage erfolgreich',
         details: {
-          endpoint: ollama.baseUrl,
-          model: ollama.model,
+          provider: providerState.provider,
+          endpoint: providerState.endpoint,
+          model: providerState.model,
           cwd,
           durationMs: Date.now() - started,
           responseChars: rawAssistantMessage.length,
@@ -465,8 +508,9 @@ export default function WelcomeScreen() {
           promptWithAttachments,
           assistantRawResponse: rawAssistantMessage,
           assistantVisibleResponse: presentation.content,
-          endpoint: ollama.baseUrl,
-          model: ollama.model,
+          provider: providerState.provider,
+          endpoint: providerState.endpoint,
+          model: providerState.model,
           approvalSummary,
           cwd,
           usedTools: Array.from(usedToolNames),
@@ -481,8 +525,9 @@ export default function WelcomeScreen() {
         area: 'llm',
         message: 'LLM-Anfrage fehlgeschlagen',
         details: {
-          endpoint: ollama.baseUrl,
-          model: ollama.model,
+          provider: providerState.provider,
+          endpoint: providerState.endpoint,
+          model: providerState.model,
           timeoutMs: effectiveTimeoutMs,
           error: message,
           source: 'welcome',
@@ -495,10 +540,12 @@ export default function WelcomeScreen() {
           prompt: text,
           promptWithAttachments,
           error: message,
-          ollama,
+          provider: providerState.provider,
+          endpoint: providerState.endpoint,
+          model: providerState.model,
         })
       }
-      const failureContent = `LLM-Anfrage fehlgeschlagen: ${message}\n\nPrüfe unter Einstellungen den Ollama-Endpoint, das Modell und den Timeout.`
+      const failureContent = `LLM-Anfrage fehlgeschlagen: ${message}\n\n${getChatProviderFailureHint(providerState.provider)}`
       if (assistantMessageId) {
         updateMessage(threadId, assistantMessageId, { content: failureContent, streaming: false }, { persist: true })
       } else {
@@ -617,8 +664,19 @@ export default function WelcomeScreen() {
             <div className="input-bar-right">
               <select
                 className="model-selector"
-                value={ollama.model}
-                onChange={(e) => setOllama({ model: e.target.value })}
+                value={providerState.provider}
+                onChange={(e) => handleProviderChange(e.target.value)}
+              >
+                {CHAT_PROVIDER_OPTIONS.map((provider) => (
+                  <option key={provider} value={provider}>
+                    {CHAT_PROVIDER_LABELS[provider]}
+                  </option>
+                ))}
+              </select>
+              <select
+                className="model-selector"
+                value={providerState.model}
+                onChange={(e) => handleModelChange(e.target.value)}
               >
                 {selectableModels.length > 0 ? (
                   selectableModels.map((m) => (
@@ -627,7 +685,10 @@ export default function WelcomeScreen() {
                     </option>
                   ))
                 ) : (
-                  <option value={ollama.model}>{ollama.model}</option>
+                  <option value={providerState.model}>{providerState.model || 'kein Modell gesetzt'}</option>
+                )}
+                {selectableModels.length > 0 && providerState.model && !selectableModels.includes(providerState.model) && (
+                  <option value={providerState.model}>{providerState.model}</option>
                 )}
               </select>
 

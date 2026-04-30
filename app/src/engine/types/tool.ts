@@ -42,6 +42,11 @@ export type ToolInputSchema = {
     description: string
     enum?: string[]
     default?: unknown
+    items?: {
+      type: string
+      properties?: Record<string, unknown>
+      required?: string[]
+    }
   }>
   required?: string[]
 }
@@ -159,7 +164,7 @@ export type ToolUseContext = {
 // ── Tool UI ────────────────────────────────────────────────────────────────
 
 export type ToolUIRequest = {
-  type: 'progress' | 'approval' | 'result' | 'error'
+  type: 'progress' | 'approval' | 'input' | 'result' | 'error'
   toolName: string
   content: string
   details?: Record<string, unknown>

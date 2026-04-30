@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Message } from '../engine'
-import { hydrateStoredMessage, toChatMessages } from './sessionThreads'
+import { hydrateStoredMessage, serializeChatMessageForStorage, toChatMessages } from './sessionThreads'
 
 describe('sessionThreads', () => {
   it('renders tool-only persisted messages into readable chat content', () => {
@@ -55,5 +55,39 @@ describe('sessionThreads', () => {
     expect(hydrated.content).toContain('Tool-Aufruf: Read')
     expect(hydrated.content).toContain('note.txt')
     expect(hydrated.debugContent).toBe(serialized)
+  })
+
+  it('hydrates Open Cowork chat payload metadata from the database', () => {
+    const serialized = serializeChatMessageForStorage({
+      id: 'assistant-1',
+      role: 'assistant',
+      content: 'Antwort',
+      timestamp: 10,
+      thinkingContent: 'Gedanke',
+      verboseContent: 'Verbose',
+      liveToolCalls: [{
+        id: 'tool-1',
+        toolName: 'Read',
+        input: { path: 'README.md' },
+        status: 'completed',
+        result: 'ok',
+        startedAt: 10,
+        finishedAt: 11,
+      }],
+    })
+
+    const hydrated = hydrateStoredMessage({
+      id: 'db-message-1',
+      role: 'assistant',
+      content: serialized,
+      timestamp: 12,
+    })
+
+    expect(hydrated.id).toBe('db-message-1')
+    expect(hydrated.content).toBe('Antwort')
+    expect(hydrated.thinkingContent).toBe('Gedanke')
+    expect(hydrated.verboseContent).toBe('Verbose')
+    expect(hydrated.liveToolCalls?.[0]?.toolName).toBe('Read')
+    expect(hydrated.streaming).toBe(false)
   })
 })

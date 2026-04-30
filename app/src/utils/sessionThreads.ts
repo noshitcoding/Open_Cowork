@@ -2,6 +2,8 @@ import { extractTextContent, loadSession, type ContentBlock, type Message, type 
 import type { ChatMessage, ChatThread } from '../stores/chatStore'
 import { extractAttachmentsFromContent } from './chatAttachments'
 
+const STORED_CHAT_MESSAGE_KIND = 'open-cowork-chat-message'
+
 function createFallbackUuid(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID()
@@ -99,6 +101,68 @@ function resolveDisplayRole(message: Message): ChatMessage['role'] {
   return 'system'
 }
 
+function isChatRole(value: unknown): value is ChatMessage['role'] {
+  return value === 'user' || value === 'assistant' || value === 'system'
+}
+
+function parseStoredChatMessagePayload(rawContent: string): ChatMessage | null {
+  const trimmed = rawContent.trim()
+  if (!trimmed.startsWith('{') || !trimmed.includes(STORED_CHAT_MESSAGE_KIND)) {
+    return null
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed) as unknown
+    if (!parsed || typeof parsed !== 'object') return null
+
+    const payload = parsed as Record<string, unknown>
+    if (payload.kind !== STORED_CHAT_MESSAGE_KIND || !payload.message || typeof payload.message !== 'object') {
+      return null
+    }
+
+    const message = payload.message as Record<string, unknown>
+    if (!isChatRole(message.role)) {
+      return null
+    }
+
+    return {
+      id: typeof message.id === 'string' ? message.id : createFallbackUuid(),
+      role: message.role,
+      content: typeof message.content === 'string' ? message.content : '',
+      timestamp: typeof message.timestamp === 'number' ? message.timestamp : Date.now(),
+      attachments: Array.isArray(message.attachments) ? message.attachments as ChatMessage['attachments'] : undefined,
+      visibleInChat: typeof message.visibleInChat === 'boolean' ? message.visibleInChat : undefined,
+      debugContent: typeof message.debugContent === 'string' ? message.debugContent : undefined,
+      thinkingContent: typeof message.thinkingContent === 'string' ? message.thinkingContent : undefined,
+      verboseContent: typeof message.verboseContent === 'string' ? message.verboseContent : undefined,
+      liveToolCalls: Array.isArray(message.liveToolCalls) ? message.liveToolCalls as ChatMessage['liveToolCalls'] : undefined,
+      streaming: false,
+    }
+  } catch {
+    return null
+  }
+}
+
+export function serializeChatMessageForStorage(message: ChatMessage): string {
+  return JSON.stringify({
+    kind: STORED_CHAT_MESSAGE_KIND,
+    version: 1,
+    message: {
+      id: message.id,
+      role: message.role,
+      content: typeof message.content === 'string' ? message.content : '',
+      timestamp: message.timestamp,
+      attachments: message.attachments,
+      visibleInChat: message.visibleInChat,
+      debugContent: message.debugContent,
+      thinkingContent: message.thinkingContent,
+      verboseContent: message.verboseContent,
+      liveToolCalls: message.liveToolCalls,
+      streaming: false,
+    },
+  })
+}
+
 function toChatMessage(message: Message, index: number, persistedRawContent?: string): ChatMessage {
   const role = resolveDisplayRole(message)
   const timestamp = 'timestamp' in message && typeof message.timestamp === 'number'
@@ -189,6 +253,15 @@ export function hydrateStoredMessage(record: {
   content: string
   timestamp: number
 }): ChatMessage {
+  const storedMessage = parseStoredChatMessagePayload(record.content)
+  if (storedMessage) {
+    return {
+      ...storedMessage,
+      id: record.id,
+      timestamp: record.timestamp,
+    }
+  }
+
   const parsedMessage = parsePersistedSessionMessage(record.content)
   if (parsedMessage) {
     return {

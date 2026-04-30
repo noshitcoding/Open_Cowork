@@ -1369,9 +1369,6 @@ const desktopScrollTool: Tool<{ scroll_y: number; x?: number; y?: number; coordi
   },
 }
 
-// ── AgentTool ──────────────────────────────────────────────────────────────
-// Mirrors: claude-code-main/src/tools/AgentTool/
-
 const computerUseAppTestTool: Tool<{
   goal: string
   app_path?: string
@@ -1400,7 +1397,7 @@ const computerUseAppTestTool: Tool<{
       cwd: { type: 'string', description: 'Optionales Arbeitsverzeichnis fuer den Prozessstart' },
       window_title: { type: 'string', description: 'Fenstertitel oder Teilstring zum Fokussieren des Testfensters' },
       process_name: { type: 'string', description: 'Optionaler Prozessname der Ziel-App' },
-      process_id: { type: 'number', description: 'Optionaler Prozess-ID-Filter fuer das Ziel-Fenster' },
+      process_id: { type: 'number', description: 'Optionale Prozess-ID-Filter fuer das Ziel-Fenster' },
       exact_match: { type: 'boolean', description: 'Fenster-/Prozessabgleich exakt statt per Teilstring' },
       max_steps: { type: 'number', description: 'Maximale Anzahl an Computer-Use-Aktionen' },
       action_delay_ms: { type: 'number', description: 'Wartezeit nach jeder UI-Aktion vor dem naechsten Screenshot' },
@@ -1431,6 +1428,9 @@ const computerUseAppTestTool: Tool<{
   },
 }
 
+// ── AgentTool ──────────────────────────────────────────────────────────────
+// Mirrors: claude-code-main/src/tools/AgentTool/
+
 const agentTool: Tool<{ agent_name: string; prompt: string }> = {
   name: 'Agent',
   aliases: ['agent', 'subagent', 'AgentTool'],
@@ -1460,16 +1460,44 @@ const agentTool: Tool<{ agent_name: string; prompt: string }> = {
 // ── AskUserTool ────────────────────────────────────────────────────────────
 // Mirrors: claude-code-main/src/tools/AskUserQuestionTool/
 
-const askUserTool: Tool<{ question: string }> = {
+type AskUserToolInput = {
+  question: string
+  options?: Array<string | { label?: string; value?: string }>
+  allow_multiple?: boolean
+  free_text_label?: string
+  free_text_placeholder?: string
+}
+
+const askUserTool: Tool<AskUserToolInput> = {
   name: 'AskUser',
   aliases: ['ask_user', 'AskUserQuestionTool'],
-  description: 'Stellt dem Benutzer eine Frage und wartet auf Antwort. Fuer Klaerungen und Entscheidungen.',
+  description: 'Stellt dem Benutzer eine strukturierte Rueckfrage und wartet auf Antwort. Nutze options fuer Auswahlmoeglichkeiten und Freitext fuer Zusatzkontext.',
   category: 'user_interaction',
   riskLevel: 'low',
   inputSchema: {
     type: 'object',
     properties: {
       question: { type: 'string', description: 'Die Frage an den Benutzer' },
+      options: {
+        type: 'array',
+        description: 'Optionale Auswahlmoeglichkeiten als Strings oder Objekte mit label/value.',
+        items: { type: 'string' },
+      },
+      allow_multiple: {
+        type: 'boolean',
+        description: 'Ob mehrere Optionen ausgewaehlt werden duerfen. Standard: false bei Entscheidungsfragen, sonst true.',
+        default: false,
+      },
+      free_text_label: {
+        type: 'string',
+        description: 'Beschriftung des Freitextfelds.',
+        default: 'Zusatzangaben',
+      },
+      free_text_placeholder: {
+        type: 'string',
+        description: 'Placeholder fuer das Freitextfeld.',
+        default: 'Optional ergaenzen...',
+      },
     },
     required: ['question'],
   },
@@ -1478,9 +1506,10 @@ const askUserTool: Tool<{ question: string }> = {
   async call(input, context) {
     // The UI layer will intercept this and show a dialog
     context.setToolUI?.({
-      type: 'approval',
+      type: 'input',
       toolName: 'AskUser',
       content: input.question,
+      details: { input },
     })
     return {
       data: `[Warte auf Benutzerantwort: ${input.question}]`,

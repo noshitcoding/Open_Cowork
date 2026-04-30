@@ -210,6 +210,94 @@ describe('sampleOllamaMessage', () => {
     expect(result?.content).toContainEqual({ type: 'thinking', thinking: 'kurz' })
   })
 
+  it('streams OpenWebUI-compatible reasoning fields as live thinking deltas', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        '{"model":"qwen3.6:35b","message":{"role":"assistant","reasoning":"Plan"},"done":false}\n{"model":"qwen3.6:35b","thinking":"Top"}\n{"model":"qwen3.6:35b","message":{"role":"assistant","content":"Antwort"},"done":true,"done_reason":"stop"}\n',
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/x-ndjson' },
+        },
+      ),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { streamOllamaMessages } = await import('./ollamaClient')
+    const stream = streamOllamaMessages(
+      {
+        baseUrl: 'http://localhost:11434',
+        model: 'qwen3.6:35b',
+        timeoutMs: 200000,
+        thinkingEnabled: true,
+      },
+      [{ role: 'user', content: 'Teste Reasoning' }],
+      'Systemprompt',
+    )
+
+    const thinkingDeltas: string[] = []
+    let result
+    while (true) {
+      const next = await stream.next()
+      if (next.done) {
+        result = next.value
+        break
+      }
+      if (next.value.type === 'content_block_delta' && next.value.delta.type === 'thinking_delta') {
+        thinkingDeltas.push(next.value.delta.thinking)
+      }
+    }
+
+    expect(thinkingDeltas.join('')).toBe('PlanTop')
+    expect(result?.content).toContainEqual({ type: 'thinking', thinking: 'PlanTop' })
+  })
+
+  it('parses split reasoning tags without leaking them into visible text', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        '{"model":"qwen3.6:35b","message":{"role":"assistant","content":"Vor "},"done":false}\n{"model":"qwen3.6:35b","message":{"role":"assistant","content":"<thi"},"done":false}\n{"model":"qwen3.6:35b","message":{"role":"assistant","content":"nk>abc</thi"},"done":false}\n{"model":"qwen3.6:35b","message":{"role":"assistant","content":"nk>Antwort"},"done":true,"done_reason":"stop"}\n',
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/x-ndjson' },
+        },
+      ),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { streamOllamaMessages } = await import('./ollamaClient')
+    const stream = streamOllamaMessages(
+      {
+        baseUrl: 'http://localhost:11434',
+        model: 'qwen3.6:35b',
+        timeoutMs: 200000,
+        thinkingEnabled: true,
+      },
+      [{ role: 'user', content: 'Teste geteilte Tags' }],
+      'Systemprompt',
+    )
+
+    const textDeltas: string[] = []
+    const thinkingDeltas: string[] = []
+    let result
+    while (true) {
+      const next = await stream.next()
+      if (next.done) {
+        result = next.value
+        break
+      }
+      if (next.value.type === 'content_block_delta' && next.value.delta.type === 'text_delta') {
+        textDeltas.push(next.value.delta.text)
+      }
+      if (next.value.type === 'content_block_delta' && next.value.delta.type === 'thinking_delta') {
+        thinkingDeltas.push(next.value.delta.thinking)
+      }
+    }
+
+    expect(thinkingDeltas.join('')).toBe('abc')
+    expect(textDeltas.join('')).toBe('Vor Antwort')
+    expect(result?.content).toContainEqual({ type: 'thinking', thinking: 'abc' })
+    expect(result?.content).toContainEqual({ type: 'text', text: 'Vor Antwort' })
+  })
+
   it('announces native Ollama tool calls before the final assistant result', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(

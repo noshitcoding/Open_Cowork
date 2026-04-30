@@ -17,6 +17,7 @@ mod worker_sandbox;
 
 use claude_code_bridge::ClaudeCodeBridge;
 use db::Database;
+use futures_util::future::join_all;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use mcp::{
   call_tool,
@@ -42,6 +43,7 @@ use ollama::{
   ChatMessage,
   ChatStreamChunkPayload,
   ChatToolDef,
+  OllamaToolCall,
   OllamaConfig,
   OllamaError,
 };
@@ -73,6 +75,21 @@ const POLICY_FLAG_FILE_READ: &str = "allowFileReadExtraction";
 const POLICY_FLAG_AUTO_COMPACT: &str = "autoCompactLongContext";
 const POLICY_FLAG_SHELL_EXECUTION: &str = "allowShellExecution";
 const POLICY_FLAG_WEB_SEARCH: &str = "allowWebSearch";
+const DEFAULT_POLICY_ENABLED_TOOL_IDS: &[&str] = &[
+  "bash",
+  "read_file",
+  "edit_file",
+  "create_directory",
+  "move_path",
+  "copy_path",
+  "glob",
+  "grep",
+  "web_fetch",
+  "web_search",
+  "todo",
+  "ask_user",
+  "mcp",
+];
 
 #[derive(Default)]
 struct WatchRegistry {
@@ -332,13 +349,16 @@ struct PolicyFlagsPayload {
 struct PolicySetRequest {
   flags: PolicyFlagsPayload,
   deny_rules: Vec<String>,
+  #[serde(default = "default_policy_enabled_tool_ids_vec")]
+  enabled_tool_ids: Vec<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct PolicyStatePayload {
   flags: PolicyFlagsPayload,
   deny_rules: Vec<String>,
+  enabled_tool_ids: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -453,6 +473,51 @@ struct ConnectorReachabilityResponse {
   checked_at: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CrewProviderHealthCheckRequest {
+  provider_kind: String,
+  base_url: String,
+  api_key: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CrewProviderHealthCheckResponse {
+  reachable: bool,
+  status: Option<u16>,
+  endpoint: String,
+  message: String,
+  checked_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CrewProviderModelsRequest {
+  provider_kind: String,
+  base_url: String,
+  api_key: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CrewProviderModelsResponse {
+  endpoint: String,
+  models: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiModelsResponse {
+  data: Vec<OpenAiModelRow>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiModelRow {
+  id: Option<String>,
+  #[serde(default)]
+  name: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ThreadRow {
@@ -460,6 +525,7 @@ struct ThreadRow {
   title: String,
   created_at: String,
   updated_at: String,
+  provider_settings_json: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -588,6 +654,12 @@ struct ScheduledTaskUpsertRequest {
   name: String,
   prompt: String,
   schedule_expr: String,
+  task_kind: Option<String>,
+  crew_id: Option<String>,
+  crew_snapshot_json: Option<String>,
+  model_config_json: Option<String>,
+  priority: Option<i64>,
+  depends_on_task_ids: Option<Vec<String>>,
   active: bool,
 }
 
@@ -605,6 +677,12 @@ struct ScheduledTaskRow {
   name: String,
   prompt: String,
   schedule_expr: String,
+  task_kind: String,
+  crew_id: Option<String>,
+  crew_snapshot_json: Option<String>,
+  model_config_json: Option<String>,
+  priority: i64,
+  depends_on_task_ids: Vec<String>,
   active: bool,
   last_run_at: Option<String>,
   next_run_at: Option<String>,
@@ -657,7 +735,7 @@ struct PipelineExecutionResponse {
   error: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct CrewExecuteAgentRequest {
   id: String,
@@ -665,15 +743,23 @@ struct CrewExecuteAgentRequest {
   role: String,
   goal: String,
   backstory: String,
+  #[serde(default)]
+  skills_markdown: String,
   personality_id: Option<String>,
   model_override: Option<String>,
+  provider_kind: Option<String>,
+  #[serde(default)]
   tools: Vec<String>,
+  #[serde(default)]
+  mcp_server_names: Vec<String>,
+  #[serde(default = "default_crew_agent_enabled")]
+  enabled: bool,
   allow_delegation: bool,
   verbose: bool,
   max_iterations: i32,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct CrewExecuteTaskRequest {
   id: String,
@@ -685,19 +771,66 @@ struct CrewExecuteTaskRequest {
   async_execution: bool,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct CrewExecuteRequest {
   id: String,
   name: String,
   description: String,
+  #[serde(default)]
+  execution_guidelines: String,
+  #[serde(default = "default_crew_output_mode")]
+  output_mode: String,
+  #[serde(default)]
+  stop_on_failure: bool,
+  #[serde(default)]
+  retry_count: i32,
+  #[serde(default = "default_manager_review_enabled")]
+  manager_review_enabled: bool,
+  #[serde(default)]
+  manager_review_guidelines: String,
+  #[serde(default = "default_share_all_task_outputs")]
+  share_all_task_outputs: bool,
+  #[serde(default)]
+  shared_output_char_limit: i32,
   process: String,
   manager_agent_id: Option<String>,
   verbose: bool,
   max_rpm: i32,
+  max_parallel_tasks: Option<i32>,
   agents: Vec<CrewExecuteAgentRequest>,
   tasks: Vec<CrewExecuteTaskRequest>,
   config: Option<OllamaConfig>,
+  #[serde(default)]
+  provider_configs: CrewProviderConfigsRequest,
+  #[serde(default)]
+  cwd: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+struct CrewProviderConfigsRequest {
+  #[serde(default)]
+  open_ai_compatible: Option<CrewExternalProviderConfigRequest>,
+  #[serde(default)]
+  open_router: Option<CrewExternalProviderConfigRequest>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct CrewExternalProviderConfigRequest {
+  base_url: String,
+  model: String,
+  #[serde(default)]
+  api_key: String,
+  timeout_ms: u64,
+}
+
+#[derive(Debug, Clone)]
+enum CrewTaskProviderConfig {
+  Ollama(Option<OllamaConfig>),
+  OpenAiCompatible(CrewExternalProviderConfigRequest),
+  OpenRouter(CrewExternalProviderConfigRequest),
 }
 
 #[derive(Debug, Deserialize)]
@@ -735,6 +868,323 @@ struct CrewExecutionResponse {
   task_results: Vec<CrewTaskExecutionRow>,
   logs: Vec<CrewExecutionLogRow>,
   error: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct CrewToolContext {
+  crew_id: String,
+  agent_id: String,
+  task_id: String,
+  cwd: Option<String>,
+  requested_tool_ids: Vec<String>,
+  mcp_server_names: HashSet<String>,
+}
+
+#[derive(Debug)]
+struct CrewChatExecutionResult {
+  assistant_message: String,
+  logs: Vec<CrewExecutionLogRow>,
+}
+
+#[derive(Debug)]
+struct CrewChatExecutionError {
+  message: String,
+  logs: Vec<CrewExecutionLogRow>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CrewRunHistoryRow {
+  id: String,
+  crew_id: String,
+  crew_name: String,
+  process: String,
+  status: String,
+  manager_agent_id: Option<String>,
+  error: Option<String>,
+  started_at: String,
+  finished_at: Option<String>,
+}
+
+fn default_crew_agent_enabled() -> bool {
+  true
+}
+
+fn default_crew_output_mode() -> String {
+  "standard".to_string()
+}
+
+fn default_manager_review_enabled() -> bool {
+  true
+}
+
+fn default_share_all_task_outputs() -> bool {
+  true
+}
+
+#[derive(Debug, Serialize)]
+struct OpenAiLikeChatMessage {
+  role: String,
+  content: String,
+}
+
+#[derive(Debug, Serialize)]
+struct OpenAiLikeChatRequest {
+  model: String,
+  messages: Vec<OpenAiLikeChatMessage>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiLikeChatResponse {
+  choices: Vec<OpenAiLikeChatChoice>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiLikeChatChoice {
+  message: OpenAiLikeChatChoiceMessage,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiLikeChatChoiceMessage {
+  content: Option<String>,
+}
+
+fn build_openai_like_messages(history: &[ChatMessage], prompt: &str) -> Vec<OpenAiLikeChatMessage> {
+  let mut messages = history
+    .iter()
+    .map(|message| {
+      let role = match message.role.as_str() {
+        "system" => "system",
+        "assistant" => "assistant",
+        _ => "user",
+      };
+      let content = if role == "user" && message.role != "user" {
+        format!("[{}]\n{}", message.role, message.content)
+      } else {
+        message.content.clone()
+      };
+      OpenAiLikeChatMessage {
+        role: role.to_string(),
+        content,
+      }
+    })
+    .collect::<Vec<_>>();
+
+  messages.push(OpenAiLikeChatMessage {
+    role: "user".to_string(),
+    content: prompt.to_string(),
+  });
+
+  messages
+}
+
+async fn chat_turn_openai_like(
+  config: CrewExternalProviderConfigRequest,
+  prompt: String,
+  history: Vec<ChatMessage>,
+  provider_label: &str,
+) -> Result<String, String> {
+  if config.api_key.trim().is_empty() {
+    return Err(format!("{} API-Key fehlt", provider_label));
+  }
+
+  if config.model.trim().is_empty() {
+    return Err(format!("{} Modell fehlt", provider_label));
+  }
+
+  let base_url = config.base_url.trim();
+  if base_url.is_empty() {
+    return Err(format!("{} Endpoint fehlt", provider_label));
+  }
+
+  let endpoint = if base_url.trim_end_matches('/').ends_with("/chat/completions") {
+    base_url.trim_end_matches('/').to_string()
+  } else {
+    format!("{}/chat/completions", base_url.trim_end_matches('/'))
+  };
+
+  Url::parse(&endpoint).map_err(|error| format!("{} Endpoint ungueltig: {}", provider_label, error))?;
+
+  let client = reqwest::Client::builder()
+    .timeout(Duration::from_millis(config.timeout_ms.max(1_000)))
+    .build()
+    .map_err(|error| error.to_string())?;
+
+  let payload = OpenAiLikeChatRequest {
+    model: config.model.trim().to_string(),
+    messages: build_openai_like_messages(&history, &prompt),
+  };
+
+  let mut request = client
+    .post(&endpoint)
+    .header("Authorization", format!("Bearer {}", config.api_key.trim()))
+    .header("Content-Type", "application/json")
+    .json(&payload);
+
+  if provider_label.eq_ignore_ascii_case("OpenRouter") {
+    request = request
+      .header("HTTP-Referer", "https://open-cowork.local")
+      .header("X-Title", "Open Cowork");
+  }
+
+  let response = request.send().await.map_err(|error| format!("{} Request fehlgeschlagen: {}", provider_label, error))?;
+  let status = response.status();
+  if !status.is_success() {
+    let body = response.text().await.unwrap_or_default();
+    let excerpt: String = body.chars().take(400).collect();
+    return Err(format!("{} antwortete mit {}: {}", provider_label, status, excerpt));
+  }
+
+  let payload: OpenAiLikeChatResponse = response
+    .json()
+    .await
+    .map_err(|error| format!("{} Antwort konnte nicht gelesen werden: {}", provider_label, error))?;
+
+  let content = payload
+    .choices
+    .into_iter()
+    .next()
+    .and_then(|choice| choice.message.content)
+    .unwrap_or_default();
+
+  if content.trim().is_empty() {
+    return Err(format!("{} lieferte keine Antwort", provider_label));
+  }
+
+  Ok(content)
+}
+
+async fn execute_crew_chat(
+  app: &tauri::AppHandle,
+  database: &Arc<Database>,
+  policy: &PolicyStatePayload,
+  task_config: CrewTaskProviderConfig,
+  prompt: String,
+  history: Vec<ChatMessage>,
+  tool_context: Option<&CrewToolContext>,
+  max_iterations: usize,
+) -> Result<CrewChatExecutionResult, CrewChatExecutionError> {
+  match task_config {
+    CrewTaskProviderConfig::Ollama(config) => {
+      let tool_defs = tool_context
+        .map(|context| build_crew_chat_tool_defs(policy, context))
+        .unwrap_or_default();
+
+      if tool_defs.is_empty() {
+        return chat_turn_internal(config, prompt, history, vec![])
+          .await
+          .map(|response| CrewChatExecutionResult {
+            assistant_message: response.assistant_message,
+            logs: Vec::new(),
+          })
+          .map_err(|error| CrewChatExecutionError {
+            message: map_ollama_error(error),
+            logs: Vec::new(),
+          });
+      }
+
+      let context = tool_context.expect("tool context missing for Ollama tool loop");
+      let mut current_history = history;
+      let mut current_prompt = prompt;
+      let mut logs = Vec::new();
+      let iteration_limit = max_iterations.max(1);
+
+      for _ in 0..iteration_limit {
+        let response = match chat_turn_internal(
+          config.clone(),
+          current_prompt.clone(),
+          current_history.clone(),
+          tool_defs.clone(),
+        )
+        .await
+        {
+          Ok(response) => response,
+          Err(error) => {
+            return Err(CrewChatExecutionError {
+              message: map_ollama_error(error),
+              logs,
+            });
+          }
+        };
+
+        let assistant_text = response.assistant_message.trim().to_string();
+        if response.tool_calls.is_empty() {
+          if assistant_text.is_empty() {
+            return Err(CrewChatExecutionError {
+              message: "Crew-Modell lieferte keinen finalen Antworttext".to_string(),
+              logs,
+            });
+          }
+
+          return Ok(CrewChatExecutionResult {
+            assistant_message: assistant_text,
+            logs,
+          });
+        }
+
+        let tool_summary = response
+          .tool_calls
+          .iter()
+          .map(format_crew_tool_call_summary)
+          .collect::<Vec<_>>()
+          .join("\n");
+        let assistant_history_entry = if assistant_text.is_empty() {
+          format!("Tool-Aufrufe:\n{}", tool_summary)
+        } else {
+          format!("{}\n\nTool-Aufrufe:\n{}", assistant_text, tool_summary)
+        };
+        current_history.push(ChatMessage {
+          role: "assistant".to_string(),
+          content: assistant_history_entry,
+        });
+
+        for tool_call in &response.tool_calls {
+          let (tool_result, tool_logs) = execute_crew_tool_call(app, database, policy, context, tool_call).await;
+          logs.extend(tool_logs);
+          current_history.push(ChatMessage {
+            role: "tool".to_string(),
+            content: format!(
+              "Tool {} Ergebnis:\n{}",
+              canonical_policy_tool_id(&tool_call.function.name),
+              tool_result
+            ),
+          });
+        }
+
+        current_prompt = "Nutze die Tool-Ergebnisse im Verlauf. Rufe nur dann weitere Tools auf, wenn sie fuer die Task-Antwort wirklich noetig sind. Wenn genug Informationen vorliegen, liefere jetzt die finale Antwort fuer den Task.".to_string();
+      }
+
+      Err(CrewChatExecutionError {
+        message: "Crew-Tool-Loop hat das Iterationslimit erreicht, ohne eine finale Antwort zu liefern".to_string(),
+        logs,
+      })
+    }
+    CrewTaskProviderConfig::OpenAiCompatible(config) => chat_turn_openai_like(
+      config,
+      prompt,
+      history,
+      "OpenAI-kompatibler Provider",
+    )
+    .await
+    .map(|assistant_message| CrewChatExecutionResult {
+      assistant_message,
+      logs: Vec::new(),
+    })
+    .map_err(|message| CrewChatExecutionError {
+      message,
+      logs: Vec::new(),
+    }),
+    CrewTaskProviderConfig::OpenRouter(config) => chat_turn_openai_like(config, prompt, history, "OpenRouter")
+      .await
+      .map(|assistant_message| CrewChatExecutionResult {
+        assistant_message,
+        logs: Vec::new(),
+      })
+      .map_err(|message| CrewChatExecutionError {
+        message,
+        logs: Vec::new(),
+      }),
+  }
 }
 
 fn value_to_step_text(value: &Value) -> String {
@@ -855,17 +1305,860 @@ async fn execute_pipeline_llm_step(
     .map_err(map_ollama_error)
 }
 
+fn build_crew_tool_context(
+  request: &CrewExecuteRequest,
+  agent: &CrewExecuteAgentRequest,
+  task_id: &str,
+  database: &Arc<Database>,
+) -> Result<CrewToolContext, String> {
+  let requested_tool_ids = normalize_policy_enabled_tool_ids(&agent.tools);
+  let requested_cwd = request.cwd.as_deref().map(str::trim).filter(|value| !value.is_empty());
+
+  if let Some(cwd) = requested_cwd {
+    if !Path::new(cwd).is_absolute() {
+      return Err("Crew-Arbeitsverzeichnis muss absolut sein".to_string());
+    }
+  }
+
+  let cwd = ensure_run_cwd(database, None, requested_cwd)?;
+
+  Ok(CrewToolContext {
+    crew_id: request.id.clone(),
+    agent_id: agent.id.clone(),
+    task_id: task_id.to_string(),
+    cwd,
+    requested_tool_ids,
+    mcp_server_names: agent.mcp_server_names.iter().cloned().collect(),
+  })
+}
+
+fn crew_tool_allowed_by_flags(policy: &PolicyStatePayload, tool_id: &str) -> bool {
+  match tool_id {
+    "bash" => policy.flags.allow_shell_execution,
+    "read_file" => policy.flags.allow_file_read_extraction,
+    "web_fetch" => policy.flags.allow_web_fetch,
+    "web_search" => policy.flags.allow_web_search,
+    "mcp" => policy.flags.allow_mcp_tool_calls,
+    _ => true,
+  }
+}
+
+fn crew_tool_available_for_agent(policy: &PolicyStatePayload, context: &CrewToolContext, tool_id: &str) -> bool {
+  if !context.requested_tool_ids.iter().any(|requested| requested == tool_id) {
+    return false;
+  }
+
+  if !crew_tool_allowed_by_flags(policy, tool_id) {
+    return false;
+  }
+
+  if !policy.flags.strict_policy_enforcement {
+    return true;
+  }
+
+  policy.enabled_tool_ids.iter().any(|enabled| enabled == tool_id)
+}
+
+fn build_crew_chat_tool_def(name: &str, description: &str, parameters: Value) -> ChatToolDef {
+  ChatToolDef {
+    kind: "function".to_string(),
+    function: ollama::ChatToolFunctionDef {
+      name: name.to_string(),
+      description: description.to_string(),
+      parameters,
+    },
+  }
+}
+
+fn build_crew_chat_tool_defs(policy: &PolicyStatePayload, context: &CrewToolContext) -> Vec<ChatToolDef> {
+  let mut tools = Vec::new();
+
+  if crew_tool_available_for_agent(policy, context, "bash") {
+    tools.push(build_crew_chat_tool_def(
+      "bash",
+      "Fuehrt einen Shell-Befehl im freigegebenen Arbeitsverzeichnis aus.",
+      serde_json::json!({
+        "type": "object",
+        "properties": {
+          "command": { "type": "string" },
+          "timeout_ms": { "type": "integer", "minimum": 500, "maximum": 120000 }
+        },
+        "required": ["command"]
+      }),
+    ));
+  }
+
+  if crew_tool_available_for_agent(policy, context, "read_file") {
+    tools.push(build_crew_chat_tool_def(
+      "read_file",
+      "Liest eine Datei und gibt Zeilen mit Nummern zurueck.",
+      serde_json::json!({
+        "type": "object",
+        "properties": {
+          "file_path": { "type": "string" },
+          "offset": { "type": "integer", "minimum": 0 },
+          "limit": { "type": "integer", "minimum": 1, "maximum": 400 }
+        },
+        "required": ["file_path"]
+      }),
+    ));
+  }
+
+  if crew_tool_available_for_agent(policy, context, "edit_file") {
+    tools.push(build_crew_chat_tool_def(
+      "edit_file",
+      "Ersetzt genau einen Textabschnitt in einer UTF-8-Textdatei.",
+      serde_json::json!({
+        "type": "object",
+        "properties": {
+          "file_path": { "type": "string" },
+          "old_string": { "type": "string" },
+          "new_string": { "type": "string" }
+        },
+        "required": ["file_path", "old_string", "new_string"]
+      }),
+    ));
+  }
+
+  if crew_tool_available_for_agent(policy, context, "create_directory") {
+    tools.push(build_crew_chat_tool_def(
+      "create_directory",
+      "Erstellt einen Ordner innerhalb der erlaubten Pfade.",
+      serde_json::json!({
+        "type": "object",
+        "properties": {
+          "path": { "type": "string" }
+        },
+        "required": ["path"]
+      }),
+    ));
+  }
+
+  if crew_tool_available_for_agent(policy, context, "move_path") {
+    tools.push(build_crew_chat_tool_def(
+      "move_path",
+      "Verschiebt oder benennt eine Datei oder einen Ordner um.",
+      serde_json::json!({
+        "type": "object",
+        "properties": {
+          "source_path": { "type": "string" },
+          "destination_path": { "type": "string" },
+          "overwrite": { "type": "boolean" }
+        },
+        "required": ["source_path", "destination_path"]
+      }),
+    ));
+  }
+
+  if crew_tool_available_for_agent(policy, context, "copy_path") {
+    tools.push(build_crew_chat_tool_def(
+      "copy_path",
+      "Kopiert eine Datei oder einen Ordner.",
+      serde_json::json!({
+        "type": "object",
+        "properties": {
+          "source_path": { "type": "string" },
+          "destination_path": { "type": "string" },
+          "overwrite": { "type": "boolean" }
+        },
+        "required": ["source_path", "destination_path"]
+      }),
+    ));
+  }
+
+  if crew_tool_available_for_agent(policy, context, "glob") {
+    tools.push(build_crew_chat_tool_def(
+      "glob",
+      "Sucht Dateien ueber ein einfaches Glob-Muster innerhalb des Arbeitsverzeichnisses oder eines angegebenen Basisordners.",
+      serde_json::json!({
+        "type": "object",
+        "properties": {
+          "pattern": { "type": "string" },
+          "path": { "type": "string" },
+          "limit": { "type": "integer", "minimum": 1, "maximum": 200 }
+        },
+        "required": ["pattern"]
+      }),
+    ));
+  }
+
+  if crew_tool_available_for_agent(policy, context, "grep") {
+    tools.push(build_crew_chat_tool_def(
+      "grep",
+      "Fuehrt eine einfache Textsuche ohne Regex ueber Dateien aus.",
+      serde_json::json!({
+        "type": "object",
+        "properties": {
+          "pattern": { "type": "string" },
+          "path": { "type": "string" },
+          "include": { "type": "string" },
+          "limit": { "type": "integer", "minimum": 1, "maximum": 200 }
+        },
+        "required": ["pattern"]
+      }),
+    ));
+  }
+
+  if crew_tool_available_for_agent(policy, context, "web_fetch") {
+    tools.push(build_crew_chat_tool_def(
+      "web_fetch",
+      "Laedt den bereinigten Inhalt einer Webseite.",
+      serde_json::json!({
+        "type": "object",
+        "properties": {
+          "url": { "type": "string" },
+          "max_chars": { "type": "integer", "minimum": 500, "maximum": 30000 }
+        },
+        "required": ["url"]
+      }),
+    ));
+  }
+
+  if crew_tool_available_for_agent(policy, context, "web_search") {
+    tools.push(build_crew_chat_tool_def(
+      "web_search",
+      "Sucht im Web und liefert die wichtigsten Treffer.",
+      serde_json::json!({
+        "type": "object",
+        "properties": {
+          "query": { "type": "string" },
+          "max_results": { "type": "integer", "minimum": 1, "maximum": 10 }
+        },
+        "required": ["query"]
+      }),
+    ));
+  }
+
+  if crew_tool_available_for_agent(policy, context, "todo") {
+    tools.push(build_crew_chat_tool_def(
+      "todo",
+      "Verwaltet interne Todo-Eintraege ueber create, list und update.",
+      serde_json::json!({
+        "type": "object",
+        "properties": {
+          "action": { "type": "string", "enum": ["create", "list", "update"] },
+          "task_id": { "type": "string" },
+          "title": { "type": "string" },
+          "prompt": { "type": "string" },
+          "status": { "type": "string" },
+          "limit": { "type": "integer", "minimum": 1, "maximum": 50 }
+        },
+        "required": ["action"]
+      }),
+    ));
+  }
+
+  if crew_tool_available_for_agent(policy, context, "mcp") && !context.mcp_server_names.is_empty() {
+    tools.push(build_crew_chat_tool_def(
+      "mcp",
+      "Ruft ein Tool auf einem freigegebenen und gestarteten MCP-Server auf.",
+      serde_json::json!({
+        "type": "object",
+        "properties": {
+          "server_name": { "type": "string" },
+          "tool_name": { "type": "string" },
+          "arguments": { "type": "object" }
+        },
+        "required": ["server_name", "tool_name"]
+      }),
+    ));
+  }
+
+  tools
+}
+
+fn build_crew_log_row(context: &CrewToolContext, action: String, result: String) -> CrewExecutionLogRow {
+  CrewExecutionLogRow {
+    id: uuid::Uuid::new_v4().to_string(),
+    crew_id: context.crew_id.clone(),
+    agent_id: context.agent_id.clone(),
+    task_id: context.task_id.clone(),
+    action,
+    result,
+    timestamp: chrono::Utc::now().timestamp_millis(),
+  }
+}
+
+fn format_crew_tool_call_summary(tool_call: &OllamaToolCall) -> String {
+  format!(
+    "- {} {}",
+    canonical_policy_tool_id(&tool_call.function.name),
+    serde_json::to_string(&Value::Object(tool_call.function.arguments.clone()))
+      .unwrap_or_else(|_| "{}".to_string())
+  )
+}
+
+fn tool_arg_string(arguments: &serde_json::Map<String, Value>, names: &[&str]) -> Option<String> {
+  names.iter().find_map(|name| {
+    arguments
+      .get(*name)
+      .and_then(|value| value.as_str())
+      .map(str::trim)
+      .filter(|value| !value.is_empty())
+      .map(|value| value.to_string())
+  })
+}
+
+fn tool_arg_u64(arguments: &serde_json::Map<String, Value>, names: &[&str]) -> Option<u64> {
+  names.iter().find_map(|name| arguments.get(*name).and_then(|value| value.as_u64()))
+}
+
+fn tool_arg_bool(arguments: &serde_json::Map<String, Value>, names: &[&str]) -> Option<bool> {
+  names.iter().find_map(|name| arguments.get(*name).and_then(|value| value.as_bool()))
+}
+
+fn tool_arg_object(
+  arguments: &serde_json::Map<String, Value>,
+  names: &[&str],
+) -> Option<serde_json::Map<String, Value>> {
+  names.iter().find_map(|name| {
+    arguments
+      .get(*name)
+      .and_then(|value| value.as_object())
+      .cloned()
+  })
+}
+
+fn resolve_crew_tool_path(path: &str, cwd: Option<&str>) -> Result<String, String> {
+  let trimmed = path.trim();
+  if trimmed.is_empty() {
+    return Err("Pfad darf nicht leer sein".to_string());
+  }
+
+  let candidate = PathBuf::from(trimmed);
+  if candidate.is_absolute() {
+    return Ok(candidate.display().to_string());
+  }
+
+  let base_cwd = cwd.ok_or_else(|| format!("Relativer Pfad ohne Arbeitsverzeichnis nicht moeglich: {}", trimmed))?;
+  Ok(Path::new(base_cwd).join(candidate).display().to_string())
+}
+
+fn normalize_path_for_match(path: &Path) -> String {
+  path.display().to_string().replace('\\', "/")
+}
+
+fn collect_crew_tool_paths(root: &Path, max_entries: usize, entries: &mut Vec<PathBuf>) -> Result<(), String> {
+  if entries.len() >= max_entries {
+    return Ok(());
+  }
+
+  if root.is_file() {
+    entries.push(root.to_path_buf());
+    return Ok(());
+  }
+
+  let read_dir = fs::read_dir(root).map_err(|err| err.to_string())?;
+  for child in read_dir {
+    let child = child.map_err(|err| err.to_string())?;
+    let child_path = child.path();
+    if child_path.is_dir() {
+      collect_crew_tool_paths(child_path.as_path(), max_entries, entries)?;
+    } else {
+      entries.push(child_path);
+    }
+
+    if entries.len() >= max_entries {
+      break;
+    }
+  }
+
+  Ok(())
+}
+
+fn crew_glob_matches(pattern: &str, path: &Path, base_path: &Path) -> bool {
+  let normalized_pattern = pattern.trim().replace('\\', "/");
+  let absolute_text = normalize_path_for_match(path);
+  let relative_text = path
+    .strip_prefix(base_path)
+    .ok()
+    .map(normalize_path_for_match)
+    .unwrap_or_else(|| absolute_text.clone());
+  let file_name = path.file_name().and_then(|value| value.to_str()).unwrap_or_default();
+
+  wildcard_match(&normalized_pattern, &relative_text)
+    || wildcard_match(&normalized_pattern, &absolute_text)
+    || wildcard_match(&normalized_pattern, file_name)
+}
+
+async fn execute_crew_tool_call(
+  app: &tauri::AppHandle,
+  database: &Arc<Database>,
+  policy: &PolicyStatePayload,
+  context: &CrewToolContext,
+  tool_call: &OllamaToolCall,
+) -> (String, Vec<CrewExecutionLogRow>) {
+  let tool_id = canonical_policy_tool_id(&tool_call.function.name);
+  let args_json = serde_json::to_string_pretty(&Value::Object(tool_call.function.arguments.clone()))
+    .unwrap_or_else(|_| "{}".to_string());
+  let mut logs = vec![build_crew_log_row(
+    context,
+    format!("Tool gestartet: {}", tool_id),
+    truncate_chars(&args_json, 1_200),
+  )];
+
+  match execute_crew_tool_inner(app, database, policy, context, &tool_id, &tool_call.function.arguments).await {
+    Ok(result) => {
+      logs.push(build_crew_log_row(
+        context,
+        format!("Tool abgeschlossen: {}", tool_id),
+        truncate_chars(&result, 1_200),
+      ));
+      (result, logs)
+    }
+    Err(error) => {
+      let error_text = format!("Fehler: {}", error);
+      logs.push(build_crew_log_row(
+        context,
+        format!("Tool fehlgeschlagen: {}", tool_id),
+        truncate_chars(&error_text, 1_200),
+      ));
+      (error_text, logs)
+    }
+  }
+}
+
+async fn execute_crew_tool_inner(
+  app: &tauri::AppHandle,
+  database: &Arc<Database>,
+  policy: &PolicyStatePayload,
+  context: &CrewToolContext,
+  tool_id: &str,
+  arguments: &serde_json::Map<String, Value>,
+) -> Result<String, String> {
+  if !context.requested_tool_ids.iter().any(|requested| requested == tool_id) {
+    return Err(format!("Tool {} ist fuer diesen Agenten nicht freigegeben", tool_id));
+  }
+
+  match tool_id {
+    "bash" => {
+      let command_text = tool_arg_string(arguments, &["command", "cmd"])
+        .ok_or_else(|| "bash benoetigt command".to_string())?;
+      enforce_tool_policy(policy, "bash", &command_text, policy.flags.allow_shell_execution)?;
+      enforce_shell_command_guard(database, None, &command_text, context.cwd.as_deref())?;
+      let timeout_ms = tool_arg_u64(arguments, &["timeout_ms", "timeout"])
+        .unwrap_or(20_000)
+        .clamp(500, 120_000);
+      let (shell_override, env_vars, runtime_mode) = resolve_exec_runtime(database, None, None)?;
+      let response = run_command_once(
+        app,
+        None,
+        &command_text,
+        context.cwd.as_deref(),
+        timeout_ms,
+        shell_override.as_deref(),
+        runtime_mode.as_deref(),
+        &env_vars,
+      )?;
+
+      Ok(format!(
+        "Status: {}\nExit-Code: {}\nCWD: {}\nTimed out: {}\n\nSTDOUT:\n{}\n\nSTDERR:\n{}",
+        response.normalized_status,
+        response.exit_code.map(|value| value.to_string()).unwrap_or_else(|| "none".to_string()),
+        response.current_cwd.unwrap_or_else(|| context.cwd.clone().unwrap_or_default()),
+        response.timed_out,
+        response.stdout,
+        response.stderr,
+      ))
+    }
+    "read_file" => {
+      let file_path = tool_arg_string(arguments, &["file_path", "path"])
+        .ok_or_else(|| "read_file benoetigt file_path".to_string())?;
+      let resolved_path = resolve_crew_tool_path(&file_path, context.cwd.as_deref())?;
+      let canonical_target = ensure_run_file_access(database, None, &resolved_path, false)?;
+      let target_text = canonical_target.display().to_string();
+      enforce_tool_policy(policy, "read_file", &target_text, policy.flags.allow_file_read_extraction)?;
+
+      let offset = tool_arg_u64(arguments, &["offset", "start_line", "startLine"]).unwrap_or(0) as usize;
+      let limit = tool_arg_u64(arguments, &["limit", "max_lines", "maxLines"]).unwrap_or(120).clamp(1, 400) as usize;
+      let text = artifact_pipeline::extract_text_for_llm(canonical_target.as_path())?;
+      let lines = text.lines().collect::<Vec<_>>();
+      let excerpt = lines
+        .iter()
+        .enumerate()
+        .skip(offset)
+        .take(limit)
+        .map(|(index, line)| format!("{:>4}: {}", index + 1, line))
+        .collect::<Vec<_>>();
+
+      if excerpt.is_empty() {
+        return Ok(format!("Datei: {}\nKeine Zeilen im angeforderten Bereich.", target_text));
+      }
+
+      let end_line = offset + excerpt.len();
+      Ok(format!(
+        "Datei: {}\nZeilen {} bis {} von {}\n\n{}",
+        target_text,
+        offset + 1,
+        end_line,
+        lines.len(),
+        excerpt.join("\n"),
+      ))
+    }
+    "edit_file" => {
+      let file_path = tool_arg_string(arguments, &["file_path", "path"])
+        .ok_or_else(|| "edit_file benoetigt file_path".to_string())?;
+      let old_string = tool_arg_string(arguments, &["old_string", "oldText", "old_text"])
+        .ok_or_else(|| "edit_file benoetigt old_string".to_string())?;
+      let new_string = tool_arg_string(arguments, &["new_string", "newText", "new_text"])
+        .ok_or_else(|| "edit_file benoetigt new_string".to_string())?;
+      let resolved_path = resolve_crew_tool_path(&file_path, context.cwd.as_deref())?;
+      let canonical_target = ensure_run_file_access(database, None, &resolved_path, true)?;
+      let target_text = canonical_target.display().to_string();
+      enforce_tool_policy(policy, "edit_file", &target_text, true)?;
+
+      let current_content = fs::read_to_string(&canonical_target).map_err(|err| err.to_string())?;
+      let occurrences = current_content.matches(&old_string).count();
+      if occurrences == 0 {
+        return Err("old_string wurde nicht gefunden".to_string());
+      }
+      if occurrences > 1 {
+        return Err("old_string ist nicht eindeutig und kommt mehrfach vor".to_string());
+      }
+
+      let next_content = current_content.replacen(&old_string, &new_string, 1);
+      let app_data_dir = app.path().app_data_dir().map_err(|err| err.to_string())?;
+      let response = file_safety::write_text_file(&app_data_dir, &canonical_target, &next_content, true)?;
+      let details = file_safety::write_file_audit_details(
+        &response.path,
+        response.backup_path.as_deref(),
+        response.bytes_written,
+      );
+      let _ = audit::append_audit_event(app_data_dir, "file_safety", "write_text_file", Some(details));
+
+      Ok(format!("Datei aktualisiert: {}\n{}", response.path, truncate_chars(&response.diff, 4_000)))
+    }
+    "create_directory" => {
+      let path_text = tool_arg_string(arguments, &["path", "directory_path", "dir"])
+        .ok_or_else(|| "create_directory benoetigt path".to_string())?;
+      let resolved_path = resolve_crew_tool_path(&path_text, context.cwd.as_deref())?;
+      let canonical_target = ensure_run_file_access(database, None, &resolved_path, true)?;
+      let target_text = canonical_target.display().to_string();
+      enforce_tool_policy(policy, "create_directory", &target_text, true)?;
+      let response = file_safety::create_directory(&canonical_target)?;
+
+      let app_data_dir = app.path().app_data_dir().map_err(|err| err.to_string())?;
+      let details = file_safety::create_directory_audit_details(&response.path, response.created);
+      let _ = audit::append_audit_event(app_data_dir, "file_safety", "create_directory", Some(details));
+
+      Ok(serde_json::to_string_pretty(&serde_json::json!({
+        "path": response.path,
+        "created": response.created,
+      }))
+      .unwrap_or_else(|_| "{}".to_string()))
+    }
+    "move_path" => {
+      let source_path = tool_arg_string(arguments, &["source_path", "from", "path"])
+        .ok_or_else(|| "move_path benoetigt source_path".to_string())?;
+      let destination_path = tool_arg_string(arguments, &["destination_path", "to"])
+        .ok_or_else(|| "move_path benoetigt destination_path".to_string())?;
+      let overwrite = tool_arg_bool(arguments, &["overwrite"]).unwrap_or(false);
+      let resolved_source = resolve_crew_tool_path(&source_path, context.cwd.as_deref())?;
+      let resolved_destination = resolve_crew_tool_path(&destination_path, context.cwd.as_deref())?;
+      let canonical_source = ensure_run_file_access(database, None, &resolved_source, true)?;
+      let canonical_destination = ensure_run_file_access(database, None, &resolved_destination, true)?;
+      enforce_tool_policy(
+        policy,
+        "move_path",
+        &format!("{} -> {}", canonical_source.display(), canonical_destination.display()),
+        true,
+      )?;
+      let response = file_safety::move_path(&canonical_source, &canonical_destination, overwrite)?;
+
+      let app_data_dir = app.path().app_data_dir().map_err(|err| err.to_string())?;
+      let details = file_safety::mutate_path_audit_details(
+        "move",
+        &response.source_path,
+        &response.destination_path,
+        &response.item_kind,
+        response.created_parent,
+        response.replaced_existing,
+      );
+      let _ = audit::append_audit_event(app_data_dir, "file_safety", "move_path", Some(details));
+
+      Ok(serde_json::to_string_pretty(&serde_json::json!({
+        "sourcePath": response.source_path,
+        "destinationPath": response.destination_path,
+        "itemKind": response.item_kind,
+        "createdParent": response.created_parent,
+        "replacedExisting": response.replaced_existing,
+      }))
+      .unwrap_or_else(|_| "{}".to_string()))
+    }
+    "copy_path" => {
+      let source_path = tool_arg_string(arguments, &["source_path", "from", "path"])
+        .ok_or_else(|| "copy_path benoetigt source_path".to_string())?;
+      let destination_path = tool_arg_string(arguments, &["destination_path", "to"])
+        .ok_or_else(|| "copy_path benoetigt destination_path".to_string())?;
+      let overwrite = tool_arg_bool(arguments, &["overwrite"]).unwrap_or(false);
+      let resolved_source = resolve_crew_tool_path(&source_path, context.cwd.as_deref())?;
+      let resolved_destination = resolve_crew_tool_path(&destination_path, context.cwd.as_deref())?;
+      let canonical_source = ensure_run_file_access(database, None, &resolved_source, false)?;
+      let canonical_destination = ensure_run_file_access(database, None, &resolved_destination, true)?;
+      enforce_tool_policy(
+        policy,
+        "copy_path",
+        &format!("{} -> {}", canonical_source.display(), canonical_destination.display()),
+        true,
+      )?;
+      let response = file_safety::copy_path(&canonical_source, &canonical_destination, overwrite)?;
+
+      let app_data_dir = app.path().app_data_dir().map_err(|err| err.to_string())?;
+      let details = file_safety::mutate_path_audit_details(
+        "copy",
+        &response.source_path,
+        &response.destination_path,
+        &response.item_kind,
+        response.created_parent,
+        response.replaced_existing,
+      );
+      let _ = audit::append_audit_event(app_data_dir, "file_safety", "copy_path", Some(details));
+
+      Ok(serde_json::to_string_pretty(&serde_json::json!({
+        "sourcePath": response.source_path,
+        "destinationPath": response.destination_path,
+        "itemKind": response.item_kind,
+        "createdParent": response.created_parent,
+        "replacedExisting": response.replaced_existing,
+      }))
+      .unwrap_or_else(|_| "{}".to_string()))
+    }
+    "glob" => {
+      let pattern = tool_arg_string(arguments, &["pattern", "glob"])
+        .ok_or_else(|| "glob benoetigt pattern".to_string())?;
+      let base_input = tool_arg_string(arguments, &["path", "base_path", "basePath"]).unwrap_or_else(|| ".".to_string());
+      let resolved_base = resolve_crew_tool_path(&base_input, context.cwd.as_deref())?;
+      let canonical_base = ensure_run_file_access(database, None, &resolved_base, false)?;
+      enforce_tool_policy(
+        policy,
+        "glob",
+        &format!("{}:{}", canonical_base.display(), pattern),
+        true,
+      )?;
+
+      let limit = tool_arg_u64(arguments, &["limit", "max_results", "maxResults"]).unwrap_or(50).clamp(1, 200) as usize;
+      let scan_limit = limit.saturating_mul(20).clamp(200, 2_000);
+      let mut entries = Vec::new();
+      collect_crew_tool_paths(canonical_base.as_path(), scan_limit, &mut entries)?;
+
+      let matches = entries
+        .into_iter()
+        .filter(|path| crew_glob_matches(&pattern, path.as_path(), canonical_base.as_path()))
+        .take(limit)
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>();
+
+      Ok(serde_json::to_string_pretty(&matches).unwrap_or_else(|_| "[]".to_string()))
+    }
+    "grep" => {
+      let pattern = tool_arg_string(arguments, &["pattern", "query", "text"])
+        .ok_or_else(|| "grep benoetigt pattern".to_string())?;
+      let base_input = tool_arg_string(arguments, &["path", "base_path", "basePath"]).unwrap_or_else(|| ".".to_string());
+      let include_pattern = tool_arg_string(arguments, &["include", "include_pattern", "includePattern"])
+        .unwrap_or_else(|| "*".to_string());
+      let resolved_base = resolve_crew_tool_path(&base_input, context.cwd.as_deref())?;
+      let canonical_base = ensure_run_file_access(database, None, &resolved_base, false)?;
+      enforce_tool_policy(
+        policy,
+        "grep",
+        &format!("{}:{}", canonical_base.display(), pattern),
+        true,
+      )?;
+
+      let limit = tool_arg_u64(arguments, &["limit", "max_results", "maxResults"]).unwrap_or(50).clamp(1, 200) as usize;
+      let scan_limit = limit.saturating_mul(20).clamp(200, 2_000);
+      let mut entries = Vec::new();
+      collect_crew_tool_paths(canonical_base.as_path(), scan_limit, &mut entries)?;
+
+      let pattern_lower = pattern.to_lowercase();
+      let mut matches = Vec::new();
+
+      for path in entries {
+        if !crew_glob_matches(&include_pattern, path.as_path(), canonical_base.as_path()) {
+          continue;
+        }
+
+        let text = match artifact_pipeline::extract_text_for_llm_limited(path.as_path(), 20_000) {
+          Ok((text, _)) => text,
+          Err(_) => continue,
+        };
+
+        for (index, line) in text.lines().enumerate() {
+          if line.to_lowercase().contains(&pattern_lower) {
+            matches.push(serde_json::json!({
+              "path": path.display().to_string(),
+              "line": index + 1,
+              "content": truncate_chars(line.trim(), 400),
+            }));
+
+            if matches.len() >= limit {
+              break;
+            }
+          }
+        }
+
+        if matches.len() >= limit {
+          break;
+        }
+      }
+
+      Ok(serde_json::to_string_pretty(&matches).unwrap_or_else(|_| "[]".to_string()))
+    }
+    "web_fetch" => {
+      let requested_url = tool_arg_string(arguments, &["url"])
+        .ok_or_else(|| "web_fetch benoetigt url".to_string())?;
+      let max_chars = tool_arg_u64(arguments, &["max_chars", "maxChars"]).unwrap_or(4_000).clamp(500, 30_000) as usize;
+      enforce_tool_policy(policy, "web_fetch", &requested_url, policy.flags.allow_web_fetch)?;
+      let result = execute_pipeline_web_fetch(&requested_url).await?;
+      Ok(truncate_chars(&result, max_chars))
+    }
+    "web_search" => {
+      let query = tool_arg_string(arguments, &["query", "q"])
+        .ok_or_else(|| "web_search benoetigt query".to_string())?;
+      enforce_tool_policy(policy, "web_search", &query, policy.flags.allow_web_search)?;
+      execute_pipeline_web_search(&query).await
+    }
+    "todo" => {
+      let action = tool_arg_string(arguments, &["action"])
+        .ok_or_else(|| "todo benoetigt action".to_string())?
+        .to_ascii_lowercase();
+      enforce_tool_policy(policy, "todo", &action, true)?;
+
+      match action.as_str() {
+        "create" => {
+          let title = tool_arg_string(arguments, &["title"])
+            .ok_or_else(|| "todo create benoetigt title".to_string())?;
+          let prompt = tool_arg_string(arguments, &["prompt", "description"]).unwrap_or_default();
+          let task_id = uuid::Uuid::new_v4().to_string();
+          let created_at = chrono::Utc::now().to_rfc3339();
+          database
+            .insert_task(&task_id, &title, &prompt, "todo", None, &created_at)
+            .map_err(|err| err.to_string())?;
+          Ok(serde_json::to_string_pretty(&serde_json::json!({
+            "taskId": task_id,
+            "title": title,
+            "prompt": prompt,
+            "status": "todo",
+          }))
+          .unwrap_or_else(|_| "{}".to_string()))
+        }
+        "list" => {
+          let limit = tool_arg_u64(arguments, &["limit", "max_results", "maxResults"]).unwrap_or(20).clamp(1, 50) as usize;
+          let tasks = database
+            .list_tasks()
+            .map_err(|err| err.to_string())?
+            .into_iter()
+            .take(limit)
+            .map(|(id, title, prompt, status, thread_id, created_at, updated_at, error)| {
+              serde_json::json!({
+                "id": id,
+                "title": title,
+                "prompt": prompt,
+                "status": status,
+                "threadId": thread_id,
+                "createdAt": created_at,
+                "updatedAt": updated_at,
+                "error": error,
+              })
+            })
+            .collect::<Vec<_>>();
+          Ok(serde_json::to_string_pretty(&tasks).unwrap_or_else(|_| "[]".to_string()))
+        }
+        "update" => {
+          let task_id = tool_arg_string(arguments, &["task_id", "id"])
+            .ok_or_else(|| "todo update benoetigt task_id".to_string())?;
+          let status = tool_arg_string(arguments, &["status"])
+            .ok_or_else(|| "todo update benoetigt status".to_string())?;
+          database.update_task_status(&task_id, &status).map_err(|err| err.to_string())?;
+          Ok(serde_json::to_string_pretty(&serde_json::json!({
+            "taskId": task_id,
+            "status": status,
+          }))
+          .unwrap_or_else(|_| "{}".to_string()))
+        }
+        _ => Err(format!("todo action {} wird nicht unterstuetzt", action)),
+      }
+    }
+    "mcp" => {
+      let server_name = tool_arg_string(arguments, &["server_name", "name"])
+        .ok_or_else(|| "mcp benoetigt server_name".to_string())?;
+      let tool_name = tool_arg_string(arguments, &["tool_name", "tool"])
+        .ok_or_else(|| "mcp benoetigt tool_name".to_string())?;
+      let tool_args = tool_arg_object(arguments, &["arguments", "tool_args", "toolArgs"])
+        .unwrap_or_default()
+        .into_iter()
+        .collect::<HashMap<_, _>>();
+
+      if !context.mcp_server_names.contains(&server_name) {
+        return Err(format!("MCP-Server {} ist fuer diesen Agenten nicht freigegeben", server_name));
+      }
+
+      enforce_tool_policy(
+        policy,
+        "mcp",
+        &format!("{}::{}", server_name, tool_name),
+        policy.flags.allow_mcp_tool_calls,
+      )?;
+
+      if !runtime_has_server(&server_name) {
+        return Err(format!("MCP-Server {} ist nicht gestartet", server_name));
+      }
+
+      let response = runtime_call_tool(&server_name, &tool_name, tool_args).map_err(map_mcp_error)?;
+      Ok(response.result)
+    }
+    "ask_user" => Err("ask_user ist in synchronen Crew-Laeufen derzeit nicht interaktiv verfuegbar".to_string()),
+    _ => Err(format!("Unbekanntes Crew-Tool: {}", tool_id)),
+  }
+}
+
 fn build_crew_system_prompt(request: &CrewExecuteRequest, agent: &CrewExecuteAgentRequest) -> String {
   let manager_hint = request.manager_agent_id.as_ref().map_or(String::new(), |manager_id| {
     if manager_id == &agent.id {
-      "Du bist zusaetzlich der koordinierende Manager-Agent dieser Crew.".to_string()
+      if request.process.eq_ignore_ascii_case("hierarchical") {
+        "Du bist der koordinierende Manager-Agent dieser Crew und darfst Aufgaben priorisieren, Ergebnisse bewerten und bei Bedarf Eskalationen formulieren.".to_string()
+      } else {
+        "Du bist zusaetzlich der koordinierende Manager-Agent dieser Crew.".to_string()
+      }
     } else {
-      format!("Der koordinierende Manager-Agent hat die ID {}.", manager_id)
+      format!("Der koordinierende Manager-Agent hat die ID {} und kann Rueckfragen sowie Eskalationen ausloesen.", manager_id)
     }
   });
+  let provider_hint = agent.provider_kind.as_deref().unwrap_or("ollama");
+  let mcp_scope = if agent.mcp_server_names.is_empty() {
+    "keine MCP-Server freigegeben".to_string()
+  } else {
+    format!("freigegebene MCP-Server: {}", agent.mcp_server_names.join(", "))
+  };
+  let personality_hint = agent
+    .personality_id
+    .as_ref()
+    .map(|id| format!("Persoenlichkeitsprofil: {}", id))
+    .unwrap_or_else(|| "Persoenlichkeitsprofil: keines".to_string());
+  let skills_hint = if agent.skills_markdown.trim().is_empty() {
+    "kein skills.md hinterlegt".to_string()
+  } else {
+    agent.skills_markdown.trim().to_string()
+  };
+  let execution_guidelines = if request.execution_guidelines.trim().is_empty() {
+    "keine zusaetzlichen Crew-Anweisungen".to_string()
+  } else {
+    request.execution_guidelines.trim().to_string()
+  };
+  let workdir_hint = request
+    .cwd
+    .as_deref()
+    .map(str::trim)
+    .filter(|value| !value.is_empty())
+    .unwrap_or("(nicht gesetzt)");
+  let output_mode_hint = match request.output_mode.trim() {
+    "bullet-report" => "Liefere die Antwort als klar gegliederten Stichpunkt-Report mit Ergebnissen, Risiken und naechsten Schritten.",
+    "json" => "Liefere die Antwort als valides JSON-Objekt ohne Markdown-Codeblock.",
+    _ => "Liefere eine direkte, umsetzbare Antwort auf Deutsch.",
+  };
 
   format!(
-    "Du arbeitest als Agent in der Crew \"{}\".\nBeschreibung: {}\nProzess: {}\n{}\n\nAgent:\n- Name: {}\n- Rolle: {}\n- Ziel: {}\n- Hintergrund: {}\n- Tools: {}\n- Delegation erlaubt: {}\n- Verbose: {}\n- Max Iterationen: {}\n- Max RPM der Crew: {}\n\nLiefere eine direkte, umsetzbare Antwort auf Deutsch.",
+    "Du arbeitest als Agent in der Crew \"{}\".\nBeschreibung: {}\nProzess: {}\n{}\n\nAgent:\n- Name: {}\n- Rolle: {}\n- Ziel: {}\n- Hintergrund: {}\n- skills.md: {}\n- {}\n- Provider: {}\n- Tools: {}\n- MCP-Zugriffe: {}\n- Arbeitsverzeichnis: {}\n- Delegation erlaubt: {}\n- Verbose: {}\n- Max Iterationen: {}\n- Max RPM der Crew: {}\n- Max parallele Tasks der Crew: {}\n- Verbose Crew-Kontext: {}\n- Crew-Zusatzanweisungen: {}\n- Gewuenschtes Ausgabeformat: {}\n- Stoppt nach erstem Fehler: {}\n- Retry-Versuche pro Task: {}\n- Manager-Review aktiv: {}\n- Teilt alle bisherigen Task-Ergebnisse global: {}\n- Zeichenlimit fuer geteilte Ergebnisse: {}\n\n{}",
     request.name,
     request.description,
     request.process,
@@ -874,11 +2167,551 @@ fn build_crew_system_prompt(request: &CrewExecuteRequest, agent: &CrewExecuteAge
     agent.role,
     agent.goal,
     agent.backstory,
+    skills_hint,
+    personality_hint,
+    provider_hint,
     agent.tools.join(", "),
+    mcp_scope,
+    workdir_hint,
     agent.allow_delegation,
     agent.verbose,
     agent.max_iterations,
     request.max_rpm,
+    request.max_parallel_tasks.unwrap_or(1).max(1),
+    request.verbose,
+    execution_guidelines,
+    request.output_mode,
+    request.stop_on_failure,
+    request.retry_count.max(0),
+    request.manager_review_enabled,
+    request.share_all_task_outputs,
+    request.shared_output_char_limit.max(0),
+    output_mode_hint,
+  )
+}
+
+fn truncate_shared_output(output: &str, limit: i32) -> String {
+  if limit <= 0 {
+    return output.to_string();
+  }
+
+  output.chars().take(limit as usize).collect()
+}
+
+fn build_crew_task_prompt(request: &CrewExecuteRequest, task: &CrewExecuteTaskRequest) -> String {
+  let manager_mode_hint = if request.process.eq_ignore_ascii_case("hierarchical") {
+    "Manager-Modus aktiv: Ergebnisse sollen fuer nachgelagerte Delegation oder Bewertung klar strukturiert sein."
+  } else {
+    ""
+  };
+  let output_mode_hint = match request.output_mode.trim() {
+    "bullet-report" => "Ausgabeformat fuer diesen Task: Stichpunkt-Report.",
+    "json" => "Ausgabeformat fuer diesen Task: valides JSON ohne Markdown-Codeblock.",
+    _ => "Ausgabeformat fuer diesen Task: Standardantwort.",
+  };
+  let execution_guidelines = if request.execution_guidelines.trim().is_empty() {
+    String::new()
+  } else {
+    format!("\nCrew-Zusatzanweisungen: {}", request.execution_guidelines.trim())
+  };
+  let workdir_hint = request
+    .cwd
+    .as_deref()
+    .map(str::trim)
+    .filter(|value| !value.is_empty())
+    .map(|value| format!("\nArbeitsverzeichnis: {}", value))
+    .unwrap_or_default();
+
+  format!(
+    "Crew: {}\nTask-ID: {}\nBeschreibung: {}\nErwartetes Ergebnis: {}\nAsynchrone Ausfuehrung erlaubt: {}\nCrew stoppt bei Fehler: {}\nRetry-Versuche fuer diesen Task: {}\n{}\n{}{}{}\n\nLiefere das Task-Ergebnis direkt.",
+    request.name,
+    task.id,
+    task.description,
+    if task.expected_output.trim().is_empty() { "(nicht angegeben)" } else { &task.expected_output },
+    task.async_execution,
+    request.stop_on_failure,
+    request.retry_count.max(0),
+    manager_mode_hint,
+    output_mode_hint,
+    workdir_hint,
+    execution_guidelines,
+  )
+}
+
+fn mark_skipped_crew_tasks(
+  request: &CrewExecuteRequest,
+  tasks: Vec<CrewExecuteTaskRequest>,
+  task_results: &mut Vec<CrewTaskExecutionRow>,
+  logs: &mut Vec<CrewExecutionLogRow>,
+  reason: &str,
+) {
+  for task in tasks {
+    task_results.push(CrewTaskExecutionRow {
+      task_id: task.id.clone(),
+      agent_id: task.agent_id.clone(),
+      status: "failed".to_string(),
+      output: Some(reason.to_string()),
+    });
+    logs.push(CrewExecutionLogRow {
+      id: uuid::Uuid::new_v4().to_string(),
+      crew_id: request.id.clone(),
+      agent_id: task.agent_id,
+      task_id: task.id,
+      action: "Task uebersprungen".to_string(),
+      result: reason.to_string(),
+      timestamp: chrono::Utc::now().timestamp_millis(),
+    });
+  }
+}
+
+fn build_crew_task_history(
+  request: &CrewExecuteRequest,
+  agent: &CrewExecuteAgentRequest,
+  task: &CrewExecuteTaskRequest,
+  task_outputs: &HashMap<String, String>,
+) -> Vec<ChatMessage> {
+  let mut history = vec![ChatMessage {
+    role: "system".to_string(),
+    content: build_crew_system_prompt(request, agent),
+  }];
+
+  for context_line in &task.context {
+    if !context_line.trim().is_empty() {
+      history.push(ChatMessage {
+        role: "context".to_string(),
+        content: context_line.clone(),
+      });
+    }
+  }
+
+  for dependency in &task.dependencies {
+    if let Some(output) = task_outputs.get(dependency) {
+      history.push(ChatMessage {
+        role: "dependency".to_string(),
+        content: format!(
+          "Ergebnis aus {}:\n{}",
+          dependency,
+          truncate_shared_output(output, request.shared_output_char_limit)
+        ),
+      });
+    }
+  }
+
+  if request.process.eq_ignore_ascii_case("hierarchical") {
+    if let Some(manager_id) = &request.manager_agent_id {
+      history.push(ChatMessage {
+        role: "manager".to_string(),
+        content: format!("Arbeite kompatibel mit dem Manager-Agenten {} und gib ein delegierbares Ergebnis zurueck.", manager_id),
+      });
+    }
+  }
+
+  if request.share_all_task_outputs {
+    for (task_id, output) in task_outputs {
+      if task_id != &task.id && !task.dependencies.contains(task_id) {
+        history.push(ChatMessage {
+          role: "memory".to_string(),
+          content: format!(
+            "Vorheriges Crew-Ergebnis aus {}:\n{}",
+            task_id,
+            truncate_shared_output(output, request.shared_output_char_limit)
+          ),
+        });
+      }
+    }
+  }
+
+  history
+}
+
+fn detect_crew_cycle(
+  task_id: &str,
+  dependency_graph: &HashMap<String, Vec<String>>,
+  visiting: &mut HashSet<String>,
+  visited: &mut HashSet<String>,
+) -> bool {
+  if visited.contains(task_id) {
+    return false;
+  }
+
+  if !visiting.insert(task_id.to_string()) {
+    return true;
+  }
+
+  if let Some(dependencies) = dependency_graph.get(task_id) {
+    for dependency in dependencies {
+      if detect_crew_cycle(dependency, dependency_graph, visiting, visited) {
+        return true;
+      }
+    }
+  }
+
+  visiting.remove(task_id);
+  visited.insert(task_id.to_string());
+  false
+}
+
+fn validate_crew_request(
+  request: &CrewExecuteRequest,
+  enabled_agents: &HashMap<String, CrewExecuteAgentRequest>,
+) -> Result<(), String> {
+  let mut task_ids = HashSet::new();
+  let mut dependency_graph: HashMap<String, Vec<String>> = HashMap::new();
+
+  if request.process.eq_ignore_ascii_case("hierarchical") {
+    if let Some(manager_id) = &request.manager_agent_id {
+      if !enabled_agents.contains_key(manager_id) {
+        return Err(format!("Manager-Agent {} ist nicht aktiv oder nicht vorhanden", manager_id));
+      }
+    } else {
+      return Err("Hierarchische Crew benoetigt einen aktiven Manager-Agenten".to_string());
+    }
+  }
+
+  for task in &request.tasks {
+    if !enabled_agents.contains_key(&task.agent_id) {
+      return Err(format!("Task {} verweist auf einen inaktiven oder fehlenden Agenten {}", task.id, task.agent_id));
+    }
+
+    if !task_ids.insert(task.id.clone()) {
+      return Err(format!("Task-ID {} ist mehrfach vorhanden", task.id));
+    }
+
+    if task.dependencies.iter().any(|dependency| dependency == &task.id) {
+      return Err(format!("Task {} darf nicht von sich selbst abhaengen", task.id));
+    }
+
+    dependency_graph.insert(task.id.clone(), task.dependencies.clone());
+  }
+
+  for task in &request.tasks {
+    for dependency in &task.dependencies {
+      if !task_ids.contains(dependency) {
+        return Err(format!("Task {} verweist auf unbekannte Abhaengigkeit {}", task.id, dependency));
+      }
+    }
+  }
+
+  let mut visiting = HashSet::new();
+  let mut visited = HashSet::new();
+  for task in &request.tasks {
+    if detect_crew_cycle(&task.id, &dependency_graph, &mut visiting, &mut visited) {
+      return Err(format!("Zyklische Task-Abhaengigkeit erkannt, ausgehend von {}", task.id));
+    }
+  }
+
+  Ok(())
+}
+
+async fn execute_manager_review(
+  app: &tauri::AppHandle,
+  database: &Arc<Database>,
+  policy: &PolicyStatePayload,
+  request: &CrewExecuteRequest,
+  manager_agent: CrewExecuteAgentRequest,
+  batch_summary: &str,
+) -> Vec<CrewExecutionLogRow> {
+  let history = vec![
+    ChatMessage {
+      role: "system".to_string(),
+      content: build_crew_system_prompt(request, &manager_agent),
+    },
+    ChatMessage {
+      role: "context".to_string(),
+      content: "Du bist im hierarchischen Crew-Modus fuer Review, Priorisierung und Eskalation zustaendig.".to_string(),
+    },
+  ];
+
+  let prompt = format!(
+    "Bewerte die folgenden Crew-Ergebnisse knapp und praxisnah. Benenne Risiken, notwendige Folgeaktionen und Eskalationen.{}\n\n{}",
+    if request.manager_review_guidelines.trim().is_empty() {
+      String::new()
+    } else {
+      format!("\nZusaetzliche Review-Anweisungen: {}", request.manager_review_guidelines.trim())
+    },
+    batch_summary,
+  );
+  let review_task_id = request
+    .manager_agent_id
+    .clone()
+    .unwrap_or_else(|| "manager-review".to_string());
+  let task_config = match resolve_crew_task_config(request, &manager_agent) {
+    Ok(config) => config,
+    Err(error) => {
+      return vec![CrewExecutionLogRow {
+        id: uuid::Uuid::new_v4().to_string(),
+        crew_id: request.id.clone(),
+        agent_id: manager_agent.id,
+        task_id: review_task_id,
+        action: "Manager Review fehlgeschlagen".to_string(),
+        result: error.chars().take(1200).collect(),
+        timestamp: chrono::Utc::now().timestamp_millis(),
+      }];
+    }
+  };
+
+  let tool_context = match build_crew_tool_context(request, &manager_agent, &review_task_id, database) {
+    Ok(context) => context,
+    Err(error) => {
+      return vec![CrewExecutionLogRow {
+        id: uuid::Uuid::new_v4().to_string(),
+        crew_id: request.id.clone(),
+        agent_id: manager_agent.id,
+        task_id: review_task_id,
+        action: "Manager Review fehlgeschlagen".to_string(),
+        result: error.chars().take(1200).collect(),
+        timestamp: chrono::Utc::now().timestamp_millis(),
+      }];
+    }
+  };
+
+  match execute_crew_chat(
+    app,
+    database,
+    policy,
+    task_config,
+    prompt,
+    history,
+    Some(&tool_context),
+    manager_agent.max_iterations.max(1) as usize,
+  )
+  .await
+  {
+    Ok(response) => {
+      let mut logs = response.logs;
+      logs.push(CrewExecutionLogRow {
+        id: uuid::Uuid::new_v4().to_string(),
+        crew_id: request.id.clone(),
+        agent_id: manager_agent.id,
+        task_id: review_task_id,
+        action: "Manager Review".to_string(),
+        result: response.assistant_message.chars().take(1200).collect(),
+        timestamp: chrono::Utc::now().timestamp_millis(),
+      });
+      logs
+    }
+    Err(error) => {
+      let mut logs = error.logs;
+      logs.push(CrewExecutionLogRow {
+        id: uuid::Uuid::new_v4().to_string(),
+        crew_id: request.id.clone(),
+        agent_id: manager_agent.id,
+        task_id: review_task_id,
+        action: "Manager Review fehlgeschlagen".to_string(),
+        result: error.message.chars().take(1200).collect(),
+        timestamp: chrono::Utc::now().timestamp_millis(),
+      });
+      logs
+    }
+  }
+}
+
+fn resolve_crew_task_config(
+  request: &CrewExecuteRequest,
+  agent: &CrewExecuteAgentRequest,
+) -> Result<CrewTaskProviderConfig, String> {
+  match agent.provider_kind.as_deref().unwrap_or("ollama") {
+    "openai-compatible" => {
+      let mut config = request
+        .provider_configs
+        .open_ai_compatible
+        .clone()
+        .ok_or_else(|| "Kein OpenAI-kompatibles Crew-Profil konfiguriert".to_string())?;
+      if let Some(model_override) = agent.model_override.clone().filter(|value| !value.trim().is_empty()) {
+        config.model = model_override;
+      }
+      Ok(CrewTaskProviderConfig::OpenAiCompatible(config))
+    }
+    "openrouter" => {
+      let mut config = request
+        .provider_configs
+        .open_router
+        .clone()
+        .ok_or_else(|| "Kein OpenRouter-Crew-Profil konfiguriert".to_string())?;
+      if let Some(model_override) = agent.model_override.clone().filter(|value| !value.trim().is_empty()) {
+        config.model = model_override;
+      }
+      Ok(CrewTaskProviderConfig::OpenRouter(config))
+    }
+    _ => {
+      let mut task_config = request.config.clone();
+      if let Some(model_override) = agent.model_override.clone().filter(|value| !value.trim().is_empty()) {
+        let mut config = task_config.unwrap_or_default();
+        config.model = model_override;
+        task_config = Some(config);
+      }
+      Ok(CrewTaskProviderConfig::Ollama(task_config))
+    }
+  }
+}
+
+fn sanitize_crew_request_snapshot(request: &CrewExecuteRequest) -> CrewExecuteRequest {
+  let mut snapshot = request.clone();
+
+  if let Some(config) = snapshot.provider_configs.open_ai_compatible.as_mut() {
+    if !config.api_key.trim().is_empty() {
+      config.api_key = "***redacted***".to_string();
+    }
+  }
+
+  if let Some(config) = snapshot.provider_configs.open_router.as_mut() {
+    if !config.api_key.trim().is_empty() {
+      config.api_key = "***redacted***".to_string();
+    }
+  }
+
+  snapshot
+}
+
+async fn execute_crew_task(
+  app: tauri::AppHandle,
+  database: Arc<Database>,
+  policy: PolicyStatePayload,
+  request: CrewExecuteRequest,
+  agent: CrewExecuteAgentRequest,
+  task: CrewExecuteTaskRequest,
+  task_outputs: HashMap<String, String>,
+) -> (CrewTaskExecutionRow, Vec<CrewExecutionLogRow>, Option<String>) {
+  let mut logs = vec![CrewExecutionLogRow {
+    id: uuid::Uuid::new_v4().to_string(),
+    crew_id: request.id.clone(),
+    agent_id: agent.id.clone(),
+    task_id: task.id.clone(),
+    action: format!("Task gestartet: {}", task.description.chars().take(80).collect::<String>()),
+    result: format!("Agent: {} [{}]", agent.name, agent.provider_kind.clone().unwrap_or_else(|| "ollama".to_string())),
+    timestamp: chrono::Utc::now().timestamp_millis(),
+  }];
+
+  let history = build_crew_task_history(&request, &agent, &task, &task_outputs);
+  let prompt = build_crew_task_prompt(&request, &task);
+  let tool_context = match build_crew_tool_context(&request, &agent, &task.id, &database) {
+    Ok(context) => context,
+    Err(error) => {
+      logs.push(CrewExecutionLogRow {
+        id: uuid::Uuid::new_v4().to_string(),
+        crew_id: request.id.clone(),
+        agent_id: agent.id.clone(),
+        task_id: task.id.clone(),
+        action: "Task fehlgeschlagen".to_string(),
+        result: error.chars().take(200).collect(),
+        timestamp: chrono::Utc::now().timestamp_millis(),
+      });
+      return (
+        CrewTaskExecutionRow {
+          task_id: task.id,
+          agent_id: agent.id,
+          status: "failed".to_string(),
+          output: Some(error),
+        },
+        logs,
+        None,
+      );
+    }
+  };
+  let task_config = match resolve_crew_task_config(&request, &agent) {
+    Ok(config) => config,
+    Err(error) => {
+      logs.push(CrewExecutionLogRow {
+        id: uuid::Uuid::new_v4().to_string(),
+        crew_id: request.id.clone(),
+        agent_id: agent.id.clone(),
+        task_id: task.id.clone(),
+        action: "Task fehlgeschlagen".to_string(),
+        result: error.chars().take(200).collect(),
+        timestamp: chrono::Utc::now().timestamp_millis(),
+      });
+      return (
+        CrewTaskExecutionRow {
+          task_id: task.id,
+          agent_id: agent.id,
+          status: "failed".to_string(),
+          output: Some(error),
+        },
+        logs,
+        None,
+      );
+    }
+  };
+  let max_attempts = request.retry_count.max(0) as usize + 1;
+  let mut last_error_text = String::new();
+
+  for attempt in 1..=max_attempts {
+    match execute_crew_chat(
+      &app,
+      &database,
+      &policy,
+      task_config.clone(),
+      prompt.clone(),
+      history.clone(),
+      Some(&tool_context),
+      agent.max_iterations.max(1) as usize,
+    )
+    .await
+    {
+      Ok(response) => {
+        let output = response.assistant_message;
+        logs.extend(response.logs);
+        logs.push(CrewExecutionLogRow {
+          id: uuid::Uuid::new_v4().to_string(),
+          crew_id: request.id.clone(),
+          agent_id: agent.id.clone(),
+          task_id: task.id.clone(),
+          action: if attempt > 1 {
+            format!("Task abgeschlossen nach Retry {}", attempt - 1)
+          } else {
+            "Task abgeschlossen".to_string()
+          },
+          result: output.chars().take(200).collect(),
+          timestamp: chrono::Utc::now().timestamp_millis(),
+        });
+        return (
+          CrewTaskExecutionRow {
+            task_id: task.id,
+            agent_id: agent.id,
+            status: "completed".to_string(),
+            output: Some(output.clone()),
+          },
+          logs,
+          Some(output),
+        );
+      }
+      Err(error) => {
+        logs.extend(error.logs);
+        last_error_text = error.message;
+        if attempt < max_attempts {
+          logs.push(CrewExecutionLogRow {
+            id: uuid::Uuid::new_v4().to_string(),
+            crew_id: request.id.clone(),
+            agent_id: agent.id.clone(),
+            task_id: task.id.clone(),
+            action: format!("Retry {} geplant", attempt),
+            result: last_error_text.chars().take(200).collect(),
+            timestamp: chrono::Utc::now().timestamp_millis(),
+          });
+          continue;
+        }
+      }
+    }
+  }
+
+  logs.push(CrewExecutionLogRow {
+    id: uuid::Uuid::new_v4().to_string(),
+    crew_id: request.id,
+    agent_id: agent.id.clone(),
+    task_id: task.id.clone(),
+    action: "Task fehlgeschlagen".to_string(),
+    result: last_error_text.chars().take(200).collect(),
+    timestamp: chrono::Utc::now().timestamp_millis(),
+  });
+  (
+    CrewTaskExecutionRow {
+      task_id: task.id,
+      agent_id: agent.id,
+      status: "failed".to_string(),
+      output: Some(last_error_text),
+    },
+    logs,
+    None,
   )
 }
 
@@ -981,14 +2814,33 @@ async fn pipeline_execute(
   })
 }
 
-#[tauri::command]
-async fn crew_execute(
-  registry: tauri::State<'_, CrewExecutionRegistry>,
+async fn crew_execute_internal(
+  app: &tauri::AppHandle,
+  database: &Arc<Database>,
+  registry: &CrewExecutionRegistry,
   request: CrewExecuteRequest,
 ) -> Result<CrewExecutionResponse, String> {
+  let started_at = chrono::Utc::now().to_rfc3339();
+  let run_id = uuid::Uuid::new_v4().to_string();
+
   if request.tasks.is_empty() {
     return Err("Crew enthaelt keine Tasks".to_string());
   }
+
+  let enabled_agents: HashMap<String, CrewExecuteAgentRequest> = request
+    .agents
+    .iter()
+    .filter(|agent| agent.enabled)
+    .cloned()
+    .map(|agent| (agent.id.clone(), agent))
+    .collect();
+
+  if enabled_agents.is_empty() {
+    return Err("Crew enthaelt keine aktiven Agenten".to_string());
+  }
+
+  validate_crew_request(&request, &enabled_agents)?;
+  let policy = load_policy_state(database)?;
 
   if let Ok(mut canceled) = registry.canceled.lock() {
     canceled.remove(&request.id);
@@ -999,130 +2851,246 @@ async fn crew_execute(
   let mut logs = Vec::new();
   let mut overall_status = "completed".to_string();
   let mut overall_error: Option<String> = None;
+  let mut remaining_tasks = request.tasks.clone();
 
-  for task in &request.tasks {
+  while !remaining_tasks.is_empty() {
     if is_crew_canceled(&registry, &request.id) {
       overall_status = "canceled".to_string();
       overall_error = Some("Crew-Ausfuehrung abgebrochen".to_string());
       break;
     }
 
-    let Some(agent) = request.agents.iter().find(|entry| entry.id == task.agent_id) else {
-      let error = format!("Agent {} fuer Task {} nicht gefunden", task.agent_id, task.id);
-      task_results.push(CrewTaskExecutionRow {
-        task_id: task.id.clone(),
-        agent_id: task.agent_id.clone(),
-        status: "failed".to_string(),
-        output: Some(error.clone()),
-      });
-      overall_status = "failed".to_string();
-      overall_error = Some(error);
-      continue;
-    };
+    let mut ready_tasks = Vec::new();
+    let mut waiting_tasks = Vec::new();
 
-    logs.push(CrewExecutionLogRow {
-      id: uuid::Uuid::new_v4().to_string(),
-      crew_id: request.id.clone(),
-      agent_id: agent.id.clone(),
-      task_id: task.id.clone(),
-      action: format!("Task gestartet: {}", task.description.chars().take(80).collect::<String>()),
-      result: format!("Agent: {}", agent.name),
-      timestamp: chrono::Utc::now().timestamp_millis(),
-    });
-
-    let mut history = vec![ChatMessage {
-      role: "system".to_string(),
-      content: build_crew_system_prompt(&request, agent),
-    }];
-
-    for context_line in &task.context {
-      if !context_line.trim().is_empty() {
-        history.push(ChatMessage {
-          role: "context".to_string(),
-          content: context_line.clone(),
-        });
-      }
-    }
-
-    for dependency in &task.dependencies {
-      if let Some(output) = task_outputs.get(dependency) {
-        history.push(ChatMessage {
-          role: "dependency".to_string(),
-          content: format!("Ergebnis aus {}:\n{}", dependency, output),
-        });
-      }
-    }
-
-    let prompt = format!(
-      "Crew: {}\nTask-ID: {}\nBeschreibung: {}\nErwartetes Ergebnis: {}\nAsynchrone Ausfuehrung erlaubt: {}\n\nLiefere das Task-Ergebnis direkt.",
-      request.name,
-      task.id,
-      task.description,
-      if task.expected_output.trim().is_empty() { "(nicht angegeben)" } else { &task.expected_output },
-      task.async_execution,
-    );
-
-    let mut task_config = request.config.clone();
-    if let Some(model_override) = agent.model_override.clone() {
-      let mut config = task_config.unwrap_or_default();
-      config.model = model_override;
-      task_config = Some(config);
-    }
-
-    match chat_turn_internal(task_config, prompt, history, vec![]).await {
-      Ok(response) => {
-        let output = response.assistant_message;
-        task_outputs.insert(task.id.clone(), output.clone());
+    for task in remaining_tasks.into_iter() {
+      if !enabled_agents.contains_key(&task.agent_id) {
+        let error = format!("Agent {} fuer Task {} ist deaktiviert oder nicht vorhanden", task.agent_id, task.id);
         task_results.push(CrewTaskExecutionRow {
           task_id: task.id.clone(),
-          agent_id: agent.id.clone(),
-          status: "completed".to_string(),
-          output: Some(output.clone()),
-        });
-        logs.push(CrewExecutionLogRow {
-          id: uuid::Uuid::new_v4().to_string(),
-          crew_id: request.id.clone(),
-          agent_id: agent.id.clone(),
-          task_id: task.id.clone(),
-          action: "Task abgeschlossen".to_string(),
-          result: output.chars().take(200).collect(),
-          timestamp: chrono::Utc::now().timestamp_millis(),
-        });
-      }
-      Err(error) => {
-        let error_text = map_ollama_error(error);
-        task_results.push(CrewTaskExecutionRow {
-          task_id: task.id.clone(),
-          agent_id: agent.id.clone(),
+          agent_id: task.agent_id.clone(),
           status: "failed".to_string(),
-          output: Some(error_text.clone()),
+          output: Some(error.clone()),
         });
         logs.push(CrewExecutionLogRow {
           id: uuid::Uuid::new_v4().to_string(),
           crew_id: request.id.clone(),
-          agent_id: agent.id.clone(),
+          agent_id: task.agent_id.clone(),
           task_id: task.id.clone(),
-          action: "Task fehlgeschlagen".to_string(),
-          result: error_text.chars().take(200).collect(),
+          action: "Task blockiert".to_string(),
+          result: error.clone(),
           timestamp: chrono::Utc::now().timestamp_millis(),
         });
         overall_status = "failed".to_string();
-        overall_error = Some(error_text);
+        if overall_error.is_none() {
+          overall_error = Some(error);
+        }
+        continue;
+      }
+
+      if task.dependencies.iter().all(|dependency| task_outputs.contains_key(dependency)) {
+        ready_tasks.push(task);
+      } else {
+        waiting_tasks.push(task);
       }
     }
+
+    if ready_tasks.is_empty() {
+      let unresolved = waiting_tasks
+        .iter()
+        .map(|task| task.id.clone())
+        .collect::<Vec<_>>()
+        .join(", ");
+      let error = format!("Keine ausfuehrbaren Tasks mehr. Unerfuellte Abhaengigkeiten fuer: {}", unresolved);
+      for task in waiting_tasks {
+        task_results.push(CrewTaskExecutionRow {
+          task_id: task.id.clone(),
+          agent_id: task.agent_id.clone(),
+          status: "failed".to_string(),
+          output: Some(error.clone()),
+        });
+        logs.push(CrewExecutionLogRow {
+          id: uuid::Uuid::new_v4().to_string(),
+          crew_id: request.id.clone(),
+          agent_id: task.agent_id,
+          task_id: task.id,
+          action: "Task blockiert".to_string(),
+          result: error.clone(),
+          timestamp: chrono::Utc::now().timestamp_millis(),
+        });
+      }
+      overall_status = "failed".to_string();
+      if overall_error.is_none() {
+        overall_error = Some(error);
+      }
+      break;
+    }
+
+    if request.process.eq_ignore_ascii_case("parallel") {
+      let mut pending_parallel = ready_tasks;
+      let max_parallel = request.max_parallel_tasks.unwrap_or(1).max(1) as usize;
+
+      while !pending_parallel.is_empty() {
+        let batch_size = pending_parallel.len().min(max_parallel);
+        let current_batch = pending_parallel.drain(0..batch_size).collect::<Vec<_>>();
+        let mut batch_review_summary = Vec::new();
+        let batch_results = join_all(current_batch.into_iter().map(|task| {
+          let app_handle = app.clone();
+          let database = Arc::clone(database);
+          let policy = policy.clone();
+          let request_clone = request.clone();
+          let task_outputs_clone = task_outputs.clone();
+          let agent = enabled_agents
+            .get(&task.agent_id)
+            .cloned()
+            .expect("enabled agent missing for ready task");
+          async move { execute_crew_task(app_handle, database, policy, request_clone, agent, task, task_outputs_clone).await }
+        })).await;
+
+        for (task_row, task_logs, output) in batch_results {
+          batch_review_summary.push(format!(
+            "Task {} [{}]: {}",
+            task_row.task_id,
+            task_row.status,
+            task_row.output.clone().unwrap_or_default()
+          ));
+          if task_row.status == "completed" {
+            if let Some(text) = output {
+              task_outputs.insert(task_row.task_id.clone(), text);
+            }
+          } else {
+            overall_status = "failed".to_string();
+            if overall_error.is_none() {
+              overall_error = task_row.output.clone();
+            }
+          }
+          task_results.push(task_row);
+          logs.extend(task_logs);
+        }
+
+        if request.stop_on_failure && overall_status == "failed" {
+          let reason = overall_error
+            .clone()
+            .unwrap_or_else(|| "Crew wurde nach einem Task-Fehler gestoppt".to_string());
+          let mut skipped_tasks = pending_parallel.drain(..).collect::<Vec<_>>();
+          skipped_tasks.extend(waiting_tasks.drain(..));
+          mark_skipped_crew_tasks(&request, skipped_tasks, &mut task_results, &mut logs, &reason);
+          break;
+        }
+
+        if request.process.eq_ignore_ascii_case("hierarchical") && request.manager_review_enabled {
+          if let Some(manager_id) = &request.manager_agent_id {
+            if let Some(manager_agent) = enabled_agents.get(manager_id).cloned() {
+              if !batch_review_summary.is_empty() {
+                logs.extend(
+                  execute_manager_review(app, database, &policy, &request, manager_agent, &batch_review_summary.join("\n\n")).await,
+                );
+              }
+            }
+          }
+        }
+      }
+    } else {
+      let mut batch_review_summary = Vec::new();
+      let mut pending_ready = ready_tasks.into_iter();
+      while let Some(task) = pending_ready.next() {
+        let Some(agent) = enabled_agents.get(&task.agent_id).cloned() else {
+          continue;
+        };
+        let (task_row, task_logs, output) = execute_crew_task(
+          app.clone(),
+          Arc::clone(database),
+          policy.clone(),
+          request.clone(),
+          agent,
+          task,
+          task_outputs.clone(),
+        ).await;
+        batch_review_summary.push(format!(
+          "Task {} [{}]: {}",
+          task_row.task_id,
+          task_row.status,
+          task_row.output.clone().unwrap_or_default()
+        ));
+        if task_row.status == "completed" {
+          if let Some(text) = output {
+            task_outputs.insert(task_row.task_id.clone(), text);
+          }
+        } else {
+          overall_status = "failed".to_string();
+          if overall_error.is_none() {
+            overall_error = task_row.output.clone();
+          }
+        }
+        task_results.push(task_row);
+        logs.extend(task_logs);
+
+        if request.stop_on_failure && overall_status == "failed" {
+          let reason = overall_error
+            .clone()
+            .unwrap_or_else(|| "Crew wurde nach einem Task-Fehler gestoppt".to_string());
+          let mut skipped_tasks = pending_ready.collect::<Vec<_>>();
+          skipped_tasks.extend(waiting_tasks.drain(..));
+          mark_skipped_crew_tasks(&request, skipped_tasks, &mut task_results, &mut logs, &reason);
+          break;
+        }
+      }
+
+      if request.process.eq_ignore_ascii_case("hierarchical") && request.manager_review_enabled {
+        if let Some(manager_id) = &request.manager_agent_id {
+          if let Some(manager_agent) = enabled_agents.get(manager_id).cloned() {
+            if !batch_review_summary.is_empty() {
+              logs.extend(
+                execute_manager_review(app, database, &policy, &request, manager_agent, &batch_review_summary.join("\n\n")).await,
+              );
+            }
+          }
+        }
+      }
+    }
+
+    remaining_tasks = waiting_tasks;
   }
 
   if let Ok(mut canceled) = registry.canceled.lock() {
     canceled.remove(&request.id);
   }
 
-  Ok(CrewExecutionResponse {
-    crew_id: request.id,
+  let finished_at = chrono::Utc::now().to_rfc3339();
+  let crew_snapshot_json = serde_json::to_string(&sanitize_crew_request_snapshot(&request)).unwrap_or_else(|_| "{}".to_string());
+  let response = CrewExecutionResponse {
+    crew_id: request.id.clone(),
     status: overall_status,
     task_results,
     logs,
     error: overall_error,
-  })
+  };
+
+  let _ = database.insert_crew_run(
+    &run_id,
+    &request.id,
+    &request.name,
+    &request.process,
+    &response.status,
+    request.manager_agent_id.as_deref(),
+    response.error.as_deref(),
+    &crew_snapshot_json,
+    &started_at,
+    Some(&finished_at),
+  );
+  let _ = database.insert_crew_run_logs(&run_id, &response.logs);
+
+  Ok(response)
+}
+
+#[tauri::command]
+async fn crew_execute(
+  app: tauri::AppHandle,
+  registry: tauri::State<'_, CrewExecutionRegistry>,
+  request: CrewExecuteRequest,
+) -> Result<CrewExecutionResponse, String> {
+  let database = app.state::<Arc<Database>>();
+  crew_execute_internal(&app, database.inner(), &registry, request).await
 }
 
 #[tauri::command]
@@ -1133,6 +3101,55 @@ fn crew_stop(
   let mut canceled = registry.canceled.lock().map_err(|_| "Crew-Registry gesperrt".to_string())?;
   canceled.insert(request.crew_id);
   Ok(())
+}
+
+#[tauri::command]
+fn crew_runs_list(
+  state: tauri::State<'_, Arc<Database>>,
+  crew_id: Option<String>,
+  limit: Option<u32>,
+) -> Result<Vec<CrewRunHistoryRow>, String> {
+  state
+    .list_crew_runs(crew_id.as_deref(), limit.unwrap_or(20).clamp(1, 100) as i64)
+    .map_err(|err| err.to_string())
+    .map(|rows| {
+      rows
+        .into_iter()
+        .map(|(id, crew_id, crew_name, process, status, manager_agent_id, error, started_at, finished_at)| CrewRunHistoryRow {
+          id,
+          crew_id,
+          crew_name,
+          process,
+          status,
+          manager_agent_id,
+          error,
+          started_at,
+          finished_at,
+        })
+        .collect()
+    })
+}
+
+#[tauri::command]
+fn crew_run_logs_list(
+  state: tauri::State<'_, Arc<Database>>,
+  run_id: String,
+) -> Result<Vec<CrewExecutionLogRow>, String> {
+  state.list_crew_run_logs(&run_id).map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+fn crew_run_snapshot_get(
+  state: tauri::State<'_, Arc<Database>>,
+  run_id: String,
+) -> Result<Option<CrewExecuteRequest>, String> {
+  let snapshot = state.get_crew_run_snapshot(&run_id).map_err(|err| err.to_string())?;
+  match snapshot {
+    Some(snapshot_json) => serde_json::from_str::<CrewExecuteRequest>(&snapshot_json)
+      .map(Some)
+      .map_err(|err| err.to_string()),
+    None => Ok(None),
+  }
 }
 
 // -- Ollama commands --------------------------------------------------------
@@ -2703,15 +4720,36 @@ fn exec_command(
 // -- Persistence commands ---------------------------------------------------
 
 #[tauri::command]
-fn db_save_thread(state: tauri::State<'_, Arc<Database>>, id: String, title: String, created_at: String) -> Result<(), String> {
-  state.insert_thread(&id, &title, &created_at).map_err(|e| e.to_string())
+fn db_save_thread(
+  state: tauri::State<'_, Arc<Database>>,
+  id: String,
+  title: String,
+  created_at: String,
+  provider_settings_json: Option<String>,
+) -> Result<(), String> {
+  state.insert_thread(&id, &title, &created_at, provider_settings_json.as_deref()).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn db_list_threads(state: tauri::State<'_, Arc<Database>>) -> Result<Vec<ThreadRow>, String> {
   state.list_threads().map_err(|e| e.to_string()).map(|rows| {
-    rows.into_iter().map(|(id, title, ca, ua)| ThreadRow { id, title, created_at: ca, updated_at: ua }).collect()
+    rows.into_iter().map(|(id, title, ca, ua, provider_settings_json)| ThreadRow {
+      id,
+      title,
+      created_at: ca,
+      updated_at: ua,
+      provider_settings_json,
+    }).collect()
   })
+}
+
+#[tauri::command]
+fn db_update_thread_provider_settings(
+  state: tauri::State<'_, Arc<Database>>,
+  id: String,
+  provider_settings_json: Option<String>,
+) -> Result<(), String> {
+  state.update_thread_provider_settings(&id, provider_settings_json.as_deref()).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -3781,14 +5819,20 @@ fn fs_generate_office_workflow(
 }
 
 fn map_scheduled_task_row(
-  row: (String, String, String, String, bool, Option<String>, Option<String>, String, String),
+  row: (String, String, String, String, String, Option<String>, Option<String>, Option<String>, i64, String, bool, Option<String>, Option<String>, String, String),
 ) -> ScheduledTaskRow {
-  let (id, name, prompt, schedule_expr, active, last_run_at, next_run_at, created_at, updated_at) = row;
+  let (id, name, prompt, schedule_expr, task_kind, crew_id, crew_snapshot_json, model_config_json, priority, depends_on_task_ids_json, active, last_run_at, next_run_at, created_at, updated_at) = row;
   ScheduledTaskRow {
     id,
     name,
     prompt,
     schedule_expr,
+    task_kind,
+    crew_id,
+    crew_snapshot_json,
+    model_config_json,
+    priority,
+    depends_on_task_ids: serde_json::from_str::<Vec<String>>(&depends_on_task_ids_json).unwrap_or_default(),
     active,
     last_run_at,
     next_run_at,
@@ -3804,27 +5848,88 @@ fn run_scheduled_task_once(
   task_name: &str,
   task_prompt: &str,
   schedule_expr: &str,
+  task_kind: &str,
+  crew_id: Option<&str>,
+  crew_snapshot_json: Option<&str>,
+  model_config_json: Option<&str>,
 ) {
   let started_at = chrono::Utc::now().to_rfc3339();
   let run_id = uuid::Uuid::new_v4().to_string();
-  let plan_result = tauri::async_runtime::block_on(generate_plan_internal(None, task_prompt.to_string()));
+  let execution_result: Result<(String, Option<String>, Option<String>), String> = if task_kind.eq_ignore_ascii_case("crew") {
+    let snapshot = crew_snapshot_json
+      .filter(|value| !value.trim().is_empty())
+      .ok_or_else(|| "crewSnapshotJson fehlt fuer geplanten Crew-Job".to_string());
+
+    match snapshot {
+      Ok(snapshot_json) => match serde_json::from_str::<CrewExecuteRequest>(snapshot_json) {
+        Ok(request) => {
+          let registry = app.state::<CrewExecutionRegistry>();
+          match tauri::async_runtime::block_on(crew_execute_internal(&app, database, &registry, request)) {
+            Ok(response) => {
+              let status = if response.status == "completed" { "succeeded".to_string() } else { response.status.clone() };
+              let result_json = serde_json::to_string(&response).unwrap_or_else(|_| String::new());
+              Ok((status, Some(result_json), response.error))
+            }
+            Err(error) => Err(error),
+          }
+        }
+        Err(error) => Err(format!("Crew-Snapshot ungueltig: {}", error)),
+      },
+      Err(error) => Err(error),
+    }
+  } else {
+    let runtime_config = match model_config_json.filter(|value| !value.trim().is_empty()) {
+      Some(raw_json) => serde_json::from_str::<ScheduledPromptRuntimeConfig>(raw_json)
+        .map(Some)
+        .map_err(|error| format!("modelConfigJson ungueltig: {}", error)),
+      None => Ok(None),
+    };
+
+    match runtime_config {
+      Ok(runtime_config) => {
+        let config = runtime_config.as_ref().map(|entry| entry.config.clone());
+        let history = runtime_config
+          .as_ref()
+          .and_then(|entry| entry.cwd.as_deref())
+          .map(str::trim)
+          .filter(|value| !value.is_empty())
+          .map(|value| vec![ChatMessage {
+            role: "system".to_string(),
+            content: format!("Arbeitsverzeichnis: {}", value),
+          }])
+          .unwrap_or_default();
+
+        tauri::async_runtime::block_on(chat_turn_internal(
+          config,
+          task_prompt.to_string(),
+          history,
+          vec![],
+        ))
+        .map(|response| {
+          ("succeeded".to_string(), Some(response.assistant_message), None)
+        })
+        .map_err(|error| error.to_string())
+      }
+      Err(error) => Err(error),
+    }
+  };
+
   let finished_at = chrono::Utc::now().to_rfc3339();
 
   let next_run_at = scheduler::next_run_from_expression(schedule_expr, chrono::Utc::now())
     .ok()
     .map(|next| next.to_rfc3339());
 
-  match plan_result {
-    Ok(plan) => {
-      let result_json = serde_json::to_string(&plan).unwrap_or_else(|_| String::new());
+  match execution_result {
+    Ok((status, result_json, error_json)) => {
       let _ = database.insert_scheduled_run(
         &run_id,
         task_id,
-        "succeeded",
+        &status,
         &started_at,
         Some(&finished_at),
-        Some(&result_json),
-        None,
+        result_json.as_deref(),
+        error_json.as_deref(),
       );
       let _ = database.update_scheduled_task_runtime(task_id, Some(&finished_at), next_run_at.as_deref());
 
@@ -3833,7 +5938,9 @@ fn run_scheduled_task_once(
           "taskId": task_id,
           "taskName": task_name,
           "runId": run_id,
-          "status": "succeeded",
+          "taskKind": task_kind,
+          "crewId": crew_id,
+          "status": status,
         });
         let _ = audit::append_audit_event(app_data_dir, "scheduler", "task_run_completed", Some(details));
       }
@@ -3856,6 +5963,8 @@ fn run_scheduled_task_once(
           "taskId": task_id,
           "taskName": task_name,
           "runId": run_id,
+          "taskKind": task_kind,
+          "crewId": crew_id,
           "status": "failed",
           "error": error_text,
         });
@@ -3865,13 +5974,54 @@ fn run_scheduled_task_once(
   }
 }
 
+fn scheduled_task_dependencies_ready(
+  database: &Arc<Database>,
+  depends_on_task_ids_json: &str,
+  task_last_run_at: Option<&str>,
+) -> bool {
+  let dependency_ids = serde_json::from_str::<Vec<String>>(depends_on_task_ids_json).unwrap_or_default();
+  if dependency_ids.is_empty() {
+    return true;
+  }
+
+  dependency_ids.into_iter().all(|dependency_id| {
+    match database.latest_scheduled_run_status(&dependency_id) {
+      Ok(Some((status, finished_at))) if status == "succeeded" => {
+        if let Some(current_last_run) = task_last_run_at {
+          finished_at.as_deref().map(|value| value > current_last_run).unwrap_or(false)
+        } else {
+          true
+        }
+      }
+      _ => false,
+    }
+  })
+}
+
 fn start_scheduler_worker(app: tauri::AppHandle, database: Arc<Database>) {
   std::thread::spawn(move || loop {
     let now = chrono::Utc::now().to_rfc3339();
-    if let Ok(due_tasks) = database.list_due_scheduled_tasks(&now) {
-      for (task_id, task_name, task_prompt, schedule_expr, _) in due_tasks {
-        run_scheduled_task_once(&app, &database, &task_id, &task_name, &task_prompt, &schedule_expr);
+    let due_tasks: Vec<(String, String, String, String, Option<String>, String, Option<String>, Option<String>, Option<String>, i64, String, Option<String>)> =
+      database.list_due_scheduled_tasks(&now).unwrap_or_default();
+    for (task_id, task_name, task_prompt, schedule_expr, _, task_kind, crew_id, crew_snapshot_json, model_config_json, _, depends_on_task_ids_json, task_last_run_at) in due_tasks {
+      if !scheduled_task_dependencies_ready(&database, &depends_on_task_ids_json, task_last_run_at.as_deref()) {
+        continue;
       }
+      let crew_id_ref: Option<&str> = crew_id.as_deref();
+      let crew_snapshot_json_ref: Option<&str> = crew_snapshot_json.as_deref();
+      let model_config_json_ref: Option<&str> = model_config_json.as_deref();
+      run_scheduled_task_once(
+        &app,
+        &database,
+        &task_id,
+        &task_name,
+        &task_prompt,
+        &schedule_expr,
+        &task_kind,
+        crew_id_ref,
+        crew_snapshot_json_ref,
+        model_config_json_ref,
+      );
     }
 
     std::thread::sleep(Duration::from_secs(30));
@@ -3883,11 +6033,12 @@ fn scheduler_upsert_task(
   state: tauri::State<'_, Arc<Database>>,
   request: ScheduledTaskUpsertRequest,
 ) -> Result<ScheduledTaskRow, String> {
+  let database = state.inner().clone();
   let now = chrono::Utc::now();
   let now_text = now.to_rfc3339();
-  let existing_task = state
+  let existing_task = database
     .list_scheduled_tasks()
-    .map_err(|err| err.to_string())?
+    .map_err(|err: rusqlite::Error| err.to_string())?
     .into_iter()
     .find(|row| row.0 == request.id);
 
@@ -3901,24 +6052,34 @@ fn scheduler_upsert_task(
     None
   };
 
-  let last_run_at = existing_task.and_then(|row| row.5);
+  let last_run_at = existing_task.and_then(|row| row.11);
+  let task_kind = request.task_kind.unwrap_or_else(|| "prompt".to_string());
+  let priority = request.priority.unwrap_or(100).clamp(1, 1000);
+  let depends_on_task_ids_json = serde_json::to_string(&request.depends_on_task_ids.unwrap_or_default())
+    .map_err(|err| err.to_string())?;
 
-  state
+  database
     .upsert_scheduled_task(
       &request.id,
       &request.name,
       &request.prompt,
       &request.schedule_expr,
+      &task_kind,
+      request.crew_id.as_deref(),
+      request.crew_snapshot_json.as_deref(),
+      request.model_config_json.as_deref(),
+      priority,
+      &depends_on_task_ids_json,
       request.active,
       last_run_at.as_deref(),
       next_run_at.as_deref(),
       &now_text,
     )
-    .map_err(|err| err.to_string())?;
+    .map_err(|err: rusqlite::Error| err.to_string())?;
 
-  state
+  database
     .list_scheduled_tasks()
-    .map_err(|err| err.to_string())?
+    .map_err(|err: rusqlite::Error| err.to_string())?
     .into_iter()
     .find(|row| row.0 == request.id)
     .map(map_scheduled_task_row)
@@ -3927,15 +6088,17 @@ fn scheduler_upsert_task(
 
 #[tauri::command]
 fn scheduler_list_tasks(state: tauri::State<'_, Arc<Database>>) -> Result<Vec<ScheduledTaskRow>, String> {
-  state
+  let database = state.inner().clone();
+  database
     .list_scheduled_tasks()
-    .map_err(|err| err.to_string())
-    .map(|rows| rows.into_iter().map(map_scheduled_task_row).collect())
+    .map_err(|err: rusqlite::Error| err.to_string())
+    .map(|rows| rows.into_iter().map(map_scheduled_task_row).collect::<Vec<_>>())
 }
 
 #[tauri::command]
 fn scheduler_delete_task(state: tauri::State<'_, Arc<Database>>, id: String) -> Result<(), String> {
-  state.delete_scheduled_task(&id).map_err(|err| err.to_string())
+  let database = state.inner().clone();
+  database.delete_scheduled_task(&id).map_err(|err: rusqlite::Error| err.to_string())
 }
 
 #[tauri::command]
@@ -3943,9 +6106,10 @@ fn scheduler_set_task_active(
   state: tauri::State<'_, Arc<Database>>,
   request: ScheduledTaskToggleRequest,
 ) -> Result<(), String> {
-  let task_row = state
+  let database = state.inner().clone();
+  let task_row = database
     .list_scheduled_tasks()
-    .map_err(|err| err.to_string())?
+    .map_err(|err: rusqlite::Error| err.to_string())?
     .into_iter()
     .find(|row| row.0 == request.id)
     .ok_or_else(|| "scheduled task not found".to_string())?;
@@ -3960,9 +6124,9 @@ fn scheduler_set_task_active(
     None
   };
 
-  state
+  database
     .set_scheduled_task_active(&request.id, request.active, next_run_at.as_deref())
-    .map_err(|err| err.to_string())
+    .map_err(|err: rusqlite::Error| err.to_string())
 }
 
 #[tauri::command]
@@ -3971,15 +6135,25 @@ fn scheduler_run_task_now(
   state: tauri::State<'_, Arc<Database>>,
   id: String,
 ) -> Result<(), String> {
-  let task_row = state
+  let database = state.inner().clone();
+  let task_row = database
     .list_scheduled_tasks()
-    .map_err(|err| err.to_string())?
+    .map_err(|err: rusqlite::Error| err.to_string())?
     .into_iter()
     .find(|row| row.0 == id)
     .ok_or_else(|| "scheduled task not found".to_string())?;
-
-  let database = state.inner().clone();
-  run_scheduled_task_once(&app, &database, &task_row.0, &task_row.1, &task_row.2, &task_row.3);
+  run_scheduled_task_once(
+    &app,
+    &database,
+    &task_row.0,
+    &task_row.1,
+    &task_row.2,
+    &task_row.3,
+    &task_row.4,
+    task_row.5.as_deref(),
+    task_row.6.as_deref(),
+    task_row.7.as_deref(),
+  );
   Ok(())
 }
 
@@ -3989,9 +6163,10 @@ fn scheduler_list_runs(
   limit: Option<u32>,
 ) -> Result<Vec<ScheduledRunRow>, String> {
   let bounded_limit = limit.unwrap_or(30).clamp(1, 200) as i64;
-  state
+  let database = state.inner().clone();
+  database
     .list_scheduled_runs(bounded_limit)
-    .map_err(|err| err.to_string())
+    .map_err(|err: rusqlite::Error| err.to_string())
     .map(|rows| {
       rows
         .into_iter()
@@ -4004,7 +6179,7 @@ fn scheduler_list_runs(
           result,
           error,
         })
-        .collect()
+        .collect::<Vec<_>>()
     })
 }
 
@@ -4064,6 +6239,142 @@ fn interpret_connector_status(status: StatusCode) -> (bool, String) {
     _ if status.is_server_error() => (false, format!("Endpoint antwortet mit Serverfehler ({})", status)),
     _ => (true, format!("Endpoint erreichbar, antwortet mit Status {}", status)),
   }
+}
+
+fn build_provider_probe_url(provider_kind: &str, base_url: &str) -> Result<String, String> {
+  let trimmed = base_url.trim().trim_end_matches('/');
+  if trimmed.is_empty() {
+    return Err("baseUrl ist erforderlich".to_string());
+  }
+
+  let url = match provider_kind {
+    "openai-compatible" | "openrouter" => {
+      if trimmed.ends_with("/chat/completions") {
+        format!("{}{}", trimmed.trim_end_matches("/chat/completions"), "/models")
+      } else if trimmed.ends_with("/models") {
+        trimmed.to_string()
+      } else {
+        format!("{}/models", trimmed)
+      }
+    }
+    _ => trimmed.to_string(),
+  };
+
+  Url::parse(&url)
+    .map(|parsed| parsed.to_string())
+    .map_err(|error| format!("ungueltige URL: {}", error))
+}
+
+#[tauri::command]
+async fn crew_provider_health_check(
+  request: CrewProviderHealthCheckRequest,
+) -> Result<CrewProviderHealthCheckResponse, String> {
+  let checked_at = chrono::Utc::now().to_rfc3339();
+
+  if request.provider_kind.eq_ignore_ascii_case("ollama") {
+    let health = check_health(Some(OllamaConfig {
+      base_url: request.base_url.trim().to_string(),
+      model: String::new(),
+      timeout_ms: 12_000,
+    }))
+    .await
+    .map_err(map_ollama_error)?;
+
+    return Ok(CrewProviderHealthCheckResponse {
+      reachable: health.ok,
+      status: None,
+      endpoint: health.endpoint,
+      message: health.error.unwrap_or_else(|| format!("Ollama erreichbar, {} Modell(e) gefunden", health.models.len())),
+      checked_at,
+    });
+  }
+
+  let probe_url = build_provider_probe_url(&request.provider_kind, &request.base_url)?;
+  let client = reqwest::Client::builder()
+    .timeout(Duration::from_secs(12))
+    .build()
+    .map_err(|error| error.to_string())?;
+
+  let api_key = request.api_key.as_deref();
+  let status = if request.provider_kind.eq_ignore_ascii_case("openrouter") {
+    let mut request_builder = client
+      .get(&probe_url)
+      .header("User-Agent", "Open-Cowork/1.0")
+      .header("HTTP-Referer", "https://open-cowork.local")
+      .header("X-Title", "Open Cowork");
+    if let Some(key) = api_key.filter(|value| !value.trim().is_empty()) {
+      request_builder = request_builder.header("Authorization", format!("Bearer {}", key.trim()));
+    }
+    request_builder
+      .send()
+      .await
+      .map(|response| response.status())
+      .map_err(|error| error.to_string())?
+  } else {
+    match probe_connector_method(&client, &probe_url, Method::HEAD, api_key).await {
+      Ok(status) => status,
+      Err(_) => probe_connector_method(&client, &probe_url, Method::GET, api_key).await?,
+    }
+  };
+
+  let (reachable, message) = interpret_connector_status(status);
+
+  Ok(CrewProviderHealthCheckResponse {
+    reachable,
+    status: Some(status.as_u16()),
+    endpoint: probe_url,
+    message,
+    checked_at,
+  })
+}
+
+#[tauri::command]
+async fn crew_provider_models_list(
+  request: CrewProviderModelsRequest,
+) -> Result<CrewProviderModelsResponse, String> {
+  let endpoint = build_provider_probe_url(&request.provider_kind, &request.base_url)?;
+  let client = reqwest::Client::builder()
+    .timeout(Duration::from_secs(20))
+    .build()
+    .map_err(|error| error.to_string())?;
+
+  let mut call = client.get(&endpoint).header("User-Agent", "Open-Cowork/1.0");
+  if let Some(api_key) = request.api_key.filter(|value| !value.trim().is_empty()) {
+    call = call.header("Authorization", format!("Bearer {}", api_key.trim()));
+  }
+  if request.provider_kind.eq_ignore_ascii_case("openrouter") {
+    call = call
+      .header("HTTP-Referer", "https://open-cowork.local")
+      .header("X-Title", "Open Cowork");
+  }
+
+  let response = call.send().await.map_err(|error| error.to_string())?;
+  let status = response.status();
+  if !status.is_success() {
+    let body = response.text().await.unwrap_or_default();
+    let excerpt: String = body.chars().take(400).collect();
+    return Err(format!("Provider antwortete mit {}: {}", status, excerpt));
+  }
+
+  let payload: OpenAiModelsResponse = response.json().await.map_err(|error| error.to_string())?;
+  let mut models = payload
+    .data
+    .into_iter()
+    .filter_map(|entry| {
+      entry
+        .id
+        .or(entry.name)
+        .map(|value| value.trim().to_string())
+    })
+    .filter(|entry| !entry.trim().is_empty())
+    .collect::<Vec<_>>();
+  models.sort();
+  models.dedup();
+
+  Ok(CrewProviderModelsResponse {
+    endpoint,
+    models,
+  })
 }
 
 #[tauri::command]
@@ -4148,6 +6459,10 @@ fn policy_set(
 
   state
     .replace_policy_deny_rules(&request.deny_rules)
+    .map_err(|err| err.to_string())?;
+
+  state
+    .replace_policy_tool_states(&build_policy_tool_states(&normalize_policy_enabled_tool_ids(&request.enabled_tool_ids)))
     .map_err(|err| err.to_string())?;
 
   load_policy_state(&state)
@@ -4590,6 +6905,15 @@ fn default_policy_flags() -> PolicyFlagsPayload {
   }
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ScheduledPromptRuntimeConfig {
+  #[serde(flatten)]
+  config: OllamaConfig,
+  #[serde(default)]
+  cwd: Option<String>,
+}
+
 fn wildcard_match(pattern: &str, text: &str) -> bool {
   if pattern == "*" {
     return true;
@@ -4656,26 +6980,85 @@ fn matches_deny_rule(rule: &str, tool: &str, target: &str) -> bool {
   wildcard_match(rule_tool, tool) && wildcard_match(rule_target, target)
 }
 
+fn canonical_policy_tool_id(tool: &str) -> String {
+  let trimmed = tool.trim();
+  let normalized = trimmed.to_ascii_lowercase();
+
+  match normalized.as_str() {
+    "shell" | "bash" | "bashtool" => "bash".to_string(),
+    "read" | "read_file" | "filereadtool" => "read_file".to_string(),
+    "edit" | "edit_file" | "fileedittool" | "write" | "multiedit" | "append" => "edit_file".to_string(),
+    "createdirectory" | "create_directory" | "mkdir" | "make_dir" => "create_directory".to_string(),
+    "movepath" | "move_path" | "rename_path" => "move_path".to_string(),
+    "copypath" | "copy_path" => "copy_path".to_string(),
+    "glob" => "glob".to_string(),
+    "grep" | "search" => "grep".to_string(),
+    "webfetch" | "web_fetch" => "web_fetch".to_string(),
+    "websearch" | "web_search" => "web_search".to_string(),
+    "mcptool" | "mcp" | "mcp_call" => "mcp".to_string(),
+    "askuser" | "ask_user" => "ask_user".to_string(),
+    "taskcreate" | "tasklist" | "taskupdate" | "todo" => "todo".to_string(),
+    _ if normalized.is_empty() => trimmed.to_string(),
+    _ => normalized,
+  }
+}
+
+fn default_policy_enabled_tool_ids_vec() -> Vec<String> {
+  DEFAULT_POLICY_ENABLED_TOOL_IDS
+    .iter()
+    .map(|tool_id| (*tool_id).to_string())
+    .collect()
+}
+
+fn normalize_policy_enabled_tool_ids(enabled_tool_ids: &[String]) -> Vec<String> {
+  let requested = enabled_tool_ids
+    .iter()
+    .map(|tool_id| canonical_policy_tool_id(tool_id))
+    .filter(|tool_id| DEFAULT_POLICY_ENABLED_TOOL_IDS.contains(&tool_id.as_str()))
+    .collect::<HashSet<_>>();
+
+  DEFAULT_POLICY_ENABLED_TOOL_IDS
+    .iter()
+    .filter(|tool_id| requested.contains(**tool_id))
+    .map(|tool_id| (*tool_id).to_string())
+    .collect()
+}
+
+fn build_policy_tool_states(enabled_tool_ids: &[String]) -> Vec<(String, bool)> {
+  let enabled = enabled_tool_ids.iter().cloned().collect::<HashSet<_>>();
+
+  DEFAULT_POLICY_ENABLED_TOOL_IDS
+    .iter()
+    .map(|tool_id| ((*tool_id).to_string(), enabled.contains(*tool_id)))
+    .collect()
+}
+
 fn enforce_tool_policy(
   policy: &PolicyStatePayload,
   tool: &str,
   target: &str,
   tool_allowed_by_flag: bool,
 ) -> Result<(), String> {
+  let canonical_tool = canonical_policy_tool_id(tool);
+
+  if !tool_allowed_by_flag {
+    return Err(format!("policy blockiert {}", canonical_tool));
+  }
+
   if !policy.flags.strict_policy_enforcement {
     return Ok(());
   }
 
-  if !tool_allowed_by_flag {
-    return Err(format!("policy blockiert {}", tool));
+  if !policy.enabled_tool_ids.iter().any(|enabled_tool_id| enabled_tool_id == &canonical_tool) {
+    return Err(format!("tool {} ist im Profil deaktiviert", canonical_tool));
   }
 
   if policy
     .deny_rules
     .iter()
-    .any(|rule| matches_deny_rule(rule, tool, target))
+    .any(|rule| matches_deny_rule(rule, canonical_tool.as_str(), target))
   {
-    return Err(format!("deny rule blockiert {}:{}", tool, target));
+    return Err(format!("deny rule blockiert {}:{}", canonical_tool, target));
   }
 
   Ok(())
@@ -4985,7 +7368,22 @@ fn load_policy_state(state: &Arc<Database>) -> Result<PolicyStatePayload, String
     .list_policy_deny_rules()
     .map_err(|err| err.to_string())?;
 
-  Ok(PolicyStatePayload { flags, deny_rules })
+  let stored_tool_states = state
+    .list_policy_tool_states()
+    .map_err(|err| err.to_string())?;
+
+  let enabled_tool_ids = if stored_tool_states.is_empty() {
+    default_policy_enabled_tool_ids_vec()
+  } else {
+    let stored_tool_states = stored_tool_states.into_iter().collect::<HashMap<_, _>>();
+    DEFAULT_POLICY_ENABLED_TOOL_IDS
+      .iter()
+      .filter(|tool_id| stored_tool_states.get(**tool_id).copied().unwrap_or(false))
+      .map(|tool_id| (*tool_id).to_string())
+      .collect()
+  };
+
+  Ok(PolicyStatePayload { flags, deny_rules, enabled_tool_ids })
 }
 
 fn map_ollama_error(err: OllamaError) -> String {
@@ -6119,6 +8517,7 @@ pub fn run() {
       exec_command,
       db_save_thread,
       db_list_threads,
+      db_update_thread_provider_settings,
       db_delete_thread,
       db_save_message,
       db_update_message_content,
@@ -6163,6 +8562,9 @@ pub fn run() {
       scheduler_set_task_active,
       scheduler_run_task_now,
       scheduler_list_runs,
+      crew_runs_list,
+      crew_run_logs_list,
+      crew_run_snapshot_get,
       export_save_text_file,
       policy_get,
       policy_set,
@@ -6249,6 +8651,8 @@ pub fn run() {
       tool_gateway_list,
       tool_gateway_delete,
       connector_test_reachability,
+      crew_provider_health_check,
+      crew_provider_models_list,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

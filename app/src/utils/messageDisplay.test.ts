@@ -30,6 +30,15 @@ describe('resolveAssistantPresentation', () => {
 
     expect(result.content).toBe('Fertige Antwort')
   })
+
+  it('extracts OpenWebUI-style reasoning tags from assistant text', () => {
+    const result = resolveAssistantPresentation('<thinking>Analyse</thinking>\nFinale Antwort', {
+      verboseMode: false,
+    })
+
+    expect(result.content).toBe('Finale Antwort')
+    expect(result.thinkingContent).toBe('Analyse')
+  })
 })
 
 describe('resolveDisplayedThinkingContent', () => {
@@ -49,6 +58,15 @@ describe('resolveDisplayedThinkingContent', () => {
     })
 
     expect(result).toBe('abgeschlossene analyse')
+  })
+
+  it('keeps message thinking when live thinking belongs to a different thread', () => {
+    const result = resolveDisplayedThinkingContent('thinking aus aktivem chat', 'thinking aus anderem chat', {
+      streaming: true,
+      preferLive: false,
+    })
+
+    expect(result).toBe('thinking aus aktivem chat')
   })
 })
 

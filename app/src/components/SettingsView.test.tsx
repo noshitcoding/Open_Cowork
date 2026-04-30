@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
+import { render, screen, fireEvent, act, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import SettingsView from './SettingsView'
 import { useConfigStore } from '../stores/configStore'
@@ -46,6 +46,60 @@ function resetConfigStore() {
       timeoutMs: 200000,
       contextWindow: 128000,
       temperature: 0.1,
+    },
+    openAIComputerUse: {
+      apiKey: 'sk-test',
+      baseUrl: 'https://api.openai.com/v1',
+      model: 'computer-use-preview',
+      maxSteps: 40,
+      actionDelayMs: 900,
+      launchDelayMs: 2000,
+      autoAcknowledgeSafetyChecks: false,
+    },
+    llmProfiles: [
+      {
+        id: 'default-ollama',
+        name: 'Lokales Ollama',
+        provider: 'ollama',
+        baseUrl: 'http://192.168.178.82:11434',
+        model: 'gpt-oss:20b',
+        apiKey: '',
+        timeoutMs: 200000,
+        contextWindow: 128000,
+        temperature: 0.1,
+      },
+      {
+        id: 'default-openai-compatible',
+        name: 'OpenAI-kompatibel',
+        provider: 'openai-compatible',
+        baseUrl: 'https://api.openai.com/v1',
+        model: 'gpt-4.1-mini',
+        apiKey: '',
+        timeoutMs: 600000,
+        contextWindow: null,
+        temperature: null,
+      },
+      {
+        id: 'default-openrouter',
+        name: 'OpenRouter',
+        provider: 'openrouter',
+        baseUrl: 'https://openrouter.ai/api/v1',
+        model: '',
+        apiKey: '',
+        timeoutMs: 600000,
+        contextWindow: null,
+        temperature: null,
+      },
+    ],
+    defaultLlmProfileIds: {
+      ollama: 'default-ollama',
+      'openai-compatible': 'default-openai-compatible',
+      openrouter: 'default-openrouter',
+    },
+    llmProfileModels: {
+      'default-ollama': [],
+      'default-openai-compatible': [],
+      'default-openrouter': [],
     },
     preferences: {
       autoApproveSafeTools: true,
@@ -196,27 +250,55 @@ describe('SettingsView', () => {
     expect(screen.getByText('Verbose Logging')).toBeInTheDocument()
   })
 
-  /* ── 11. Ollama endpoint input updates store ── */
-  it('updates Ollama endpoint on input change', async () => {
+  /* ── 11. Legacy Ollama config section removed ── */
+  it('does not render the legacy Ollama Konfiguration section', async () => {
     await act(async () => { render(<SettingsView />) })
-    // ModelSwitcher also shows the URL; pick the first input
-    const inputs = screen.getAllByDisplayValue('http://192.168.178.82:11434')
-    fireEvent.change(inputs[0], { target: { value: 'http://localhost:11434' } })
+    expect(screen.queryByRole('heading', { level: 2, name: /Ollama Konfiguration/ })).not.toBeInTheDocument()
+  })
+
+  /* ── 12. Default Ollama profile endpoint updates store ── */
+  it('updates default Ollama profile endpoint on input change', async () => {
+    await act(async () => { render(<SettingsView />) })
+    const profileCard = screen.getByText('Lokales Ollama', { selector: 'strong' }).closest('.card') as HTMLElement
+    const endpointInput = within(profileCard).getByLabelText('Endpoint')
+    fireEvent.change(endpointInput, { target: { value: 'http://localhost:11434' } })
     expect(useConfigStore.getState().ollama.baseUrl).toBe('http://localhost:11434')
+    expect(useConfigStore.getState().llmProfiles.find((profile) => profile.id === 'default-ollama')?.baseUrl).toBe('http://localhost:11434')
   })
 
-  /* ── 12. Ollama model input updates store ── */
-  it('updates Ollama model on input change', async () => {
-    useConfigStore.setState({ availableModels: ['gpt-oss:20b', 'mistral:7b'] })
+  /* ── 13. Default Ollama profile model updates store ── */
+  it('updates default Ollama profile model on input change', async () => {
+    useConfigStore.getState().setLlmProfileModels('default-ollama', ['gpt-oss:20b', 'mistral:7b'])
     await act(async () => { render(<SettingsView />) })
-    const modelControls = screen.getAllByDisplayValue('gpt-oss:20b')
-    const modelSelect = modelControls.find((element) => element.tagName === 'SELECT')
-    expect(modelSelect).toBeTruthy()
-    fireEvent.change(modelSelect!, { target: { value: 'mistral:7b' } })
+    const profileCard = screen.getByText('Lokales Ollama', { selector: 'strong' }).closest('.card') as HTMLElement
+    const modelControl = within(profileCard).getByLabelText('Modell')
+    expect(modelControl.tagName).toBe('SELECT')
+    fireEvent.change(modelControl, { target: { value: 'mistral:7b' } })
     expect(useConfigStore.getState().ollama.model).toBe('mistral:7b')
+    expect(useConfigStore.getState().llmProfiles.find((profile) => profile.id === 'default-ollama')?.model).toBe('mistral:7b')
   })
 
-  /* ── 13. Toggle updates preference ── */
+  it('renders OpenAI Computer Use settings and keeps profile normalization separate', async () => {
+    await act(async () => { render(<SettingsView />) })
+
+    const section = screen.getByRole('heading', { level: 2, name: /OpenAI Computer Use/ }).closest('.panel') as HTMLElement
+    const modelInput = within(section).getByLabelText('Modell')
+    fireEvent.change(modelInput, { target: { value: 'computer-use-2025-03' } })
+
+    expect(useConfigStore.getState().openAIComputerUse.model).toBe('computer-use-2025-03')
+
+    await act(async () => {
+      useConfigStore.getState().updateLlmProfile('default-openai-compatible', {
+        model: 'computer-use-preview',
+      })
+    })
+
+    expect(
+      useConfigStore.getState().llmProfiles.find((profile) => profile.id === 'default-openai-compatible')?.model,
+    ).toBe('gpt-4.1-mini')
+  })
+
+  /* ── 14. Toggle updates preference ── */
   it('toggles autoApproveSafeTools preference', async () => {
     await act(async () => { render(<SettingsView />) })
     await act(async () => { fireEvent.click(screen.getByText('Agent & Skills')) })
@@ -226,31 +308,13 @@ describe('SettingsView', () => {
     expect(useConfigStore.getState().preferences.autoApproveSafeTools).toBe(false)
   })
 
-  /* ── 14. Health check invokes backend ── */
-  it('uses engine store health and model refresh on button click', async () => {
+  /* ── 15. Model dropdown with Ollama profile models ── */
+  it('renders model dropdown when Ollama profile models are set', async () => {
+    useConfigStore.getState().setLlmProfileModels('default-ollama', ['gpt-oss:20b', 'mistral:7b', 'codellama:13b'])
     await act(async () => { render(<SettingsView />) })
-    await act(async () => { fireEvent.click(screen.getByText('🔍 Health Check')) })
-    await waitFor(() => expect(screen.getByText('✓ Verbunden')).toBeInTheDocument())
-    expect(checkOllamaStatusMock).toHaveBeenCalled()
-    expect(fetchOllamaModelsMock).toHaveBeenCalled()
-  })
-
-  /* ── 15. Health check error ── */
-  it('shows error message on health check failure', async () => {
-    checkOllamaStatusMock.mockRejectedValue(new Error('Connection refused'))
-    await act(async () => { render(<SettingsView />) })
-    await act(async () => { fireEvent.click(screen.getByText('🔍 Health Check')) })
-    await waitFor(() => expect(screen.getByText('Connection refused')).toBeInTheDocument())
-  })
-
-  /* ── 16. Model dropdown with available models ── */
-  it('renders model dropdown when availableModels are set', async () => {
-    useConfigStore.setState({ availableModels: ['gpt-oss:20b', 'mistral:7b', 'codellama:13b'] })
-    await act(async () => { render(<SettingsView />) })
-    // The first select we find for model in the Ollama config section
-    const selects = screen.getAllByDisplayValue('gpt-oss:20b')
-    const selectEl = selects.find((el) => el.tagName === 'SELECT')
-    expect(selectEl).toBeTruthy()
+    const profileCard = screen.getByText('Lokales Ollama', { selector: 'strong' }).closest('.card') as HTMLElement
+    const modelControl = within(profileCard).getByLabelText('Modell')
+    expect(modelControl.tagName).toBe('SELECT')
   })
 
   /* ── 17. Number input for maxToolCalls ── */

@@ -134,6 +134,38 @@ describe('chatStore', () => {
     expect(assistantMessage?.streaming).toBe(true)
   })
 
+  it('keeps provider settings isolated per thread', () => {
+    const firstThreadId = useChatStore.getState().addThread('Erster Chat', {
+      provider: 'ollama',
+      model: 'llama3',
+    })
+    const secondThreadId = useChatStore.getState().addThread('Zweiter Chat', {
+      provider: 'openrouter',
+      model: 'anthropic/claude-sonnet-4',
+      profileId: 'default-openrouter',
+    })
+
+    useChatStore.getState().setThreadProviderSettings(firstThreadId, {
+      provider: 'openai-compatible',
+      model: 'gpt-4.1-mini',
+      profileId: 'default-openai-compatible',
+    })
+
+    const firstThread = useChatStore.getState().threads.find((thread) => thread.id === firstThreadId)
+    const secondThread = useChatStore.getState().threads.find((thread) => thread.id === secondThreadId)
+
+    expect(firstThread?.providerSettings).toEqual({
+      provider: 'openai-compatible',
+      model: 'gpt-4.1-mini',
+      profileId: 'default-openai-compatible',
+    })
+    expect(secondThread?.providerSettings).toEqual({
+      provider: 'openrouter',
+      model: 'anthropic/claude-sonnet-4',
+      profileId: 'default-openrouter',
+    })
+  })
+
   it('updates live tool calls without persisting message content', () => {
     const threadId = useChatStore.getState().addThread('Tool Chat')
     const assistantMessageId = useChatStore.getState().addMessage(threadId, {

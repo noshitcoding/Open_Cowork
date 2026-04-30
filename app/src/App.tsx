@@ -10,23 +10,33 @@ import { useCoworkStore } from './stores/coworkStore'
 import { writeAuditEvent } from './utils/audit'
 import { seedDefaultPersonalities, seedDefaultMemory } from './utils/defaultSeeds'
 import { startScheduledWorker, stopScheduledWorker } from './engine/scheduledWorker'
+import { safeInvoke } from './utils/safeInvoke'
 import './App.css'
 
-const WelcomeScreen = lazy(() => import('./components/WelcomeScreen'))
 const CoworkView = lazy(() => import('./components/CoworkView'))
 const SettingsView = lazy(() => import('./components/SettingsView'))
+const TasksView = lazy(() => import('./components/TasksView'))
+
+type BackendPolicyState = {
+  flags: Record<string, boolean>
+  denyRules: string[]
+  enabledToolIds: string[]
+}
 
 function AppRoutes() {
-  const activeThreadId = useChatStore((s) => s.activeThreadId)
-
   return (
     <Suspense fallback={<div className="main-content" style={{ padding: 24 }}>Ansicht wird geladen...</div>}>
       <Routes>
         <Route path="/" element={<Layout />}>
-          <Route index element={activeThreadId ? <CoworkView /> : <WelcomeScreen />} />
+          <Route index element={<CoworkView />} />
           <Route path="settings" element={
             <div className="code-mode" style={{ overflow: 'auto', height: '100%' }}>
               <SettingsView />
+            </div>
+          } />
+          <Route path="tasks" element={
+            <div className="code-mode" style={{ overflow: 'auto', height: '100%' }}>
+              <TasksView />
             </div>
           } />
           <Route path="*" element={<Navigate to="/" replace />} />
@@ -45,6 +55,7 @@ function App() {
   const addLog = useLogStore((s) => s.addLog)
   const loadScheduledTasks = useCoworkStore((s) => s.loadScheduledTasks)
   const loadScheduledRuns = useCoworkStore((s) => s.loadScheduledRuns)
+  const setPolicySnapshot = useCoworkStore((s) => s.setPolicySnapshot)
 
   useEffect(() => {
     const startedAt = performance.now()
@@ -52,6 +63,12 @@ function App() {
     loadTasksFromDb()
     void loadScheduledTasks()
     void loadScheduledRuns(20)
+    void safeInvoke<BackendPolicyState | null>('policy_get', undefined, null)
+      .then((policy) => {
+        if (!policy) return
+        setPolicySnapshot(policy.flags, policy.denyRules ?? [], policy.enabledToolIds ?? [])
+      })
+      .catch(() => {})
     seedDefaultPersonalities().catch(() => {})
     seedDefaultMemory().catch(() => {})
     addLog({
@@ -66,7 +83,7 @@ function App() {
     // Start scheduled tasks worker
     startScheduledWorker()
     return () => stopScheduledWorker()
-  }, [addLog, loadChatFromDb, loadScheduledRuns, loadScheduledTasks, loadTasksFromDb])
+  }, [addLog, loadChatFromDb, loadScheduledRuns, loadScheduledTasks, loadTasksFromDb, setPolicySnapshot])
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme

@@ -7,6 +7,7 @@ import { persist } from 'zustand/middleware'
 import { invoke } from '@tauri-apps/api/core'
 import {
   QueryEngine,
+  type EngineBackend,
   type EngineConfig,
   type EngineEvent,
   type Message,
@@ -39,11 +40,12 @@ import {
 } from '../engine'
 import { useConfigStore } from './configStore'
 import { parsePersistedSessionMessage } from '../utils/sessionThreads'
+import { getChatProviderState, normalizeChatProvider, type ChatProviderKind, type ChatProviderSelection } from '../utils/chatProvider'
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
 export type EngineStatus = 'idle' | 'streaming' | 'tool_running' | 'waiting_approval' | 'error'
-export type EngineProvider = 'ollama' | 'engine'
+export type EngineProvider = ChatProviderKind
 
 export type ToolExecution = {
   id: string
@@ -57,6 +59,7 @@ export type ToolExecution = {
 export type EngineStoreConfig = {
   apiKey: string
   model: string
+  systemPrompt: string
   maxTurns: number
   maxBudgetUsd: number
   permissionMode: 'default' | 'plan' | 'bypass' | 'strict'
@@ -148,6 +151,7 @@ export type EngineStoreState = {
     cwd: string,
     onEvent?: (event: EngineEvent) => void,
     historySeed?: ConversationHistorySeed,
+    providerSelection?: ChatProviderSelection,
   ) => Promise<void>
   abort: () => void
   resolveApproval: (result: ApprovalResult) => void
@@ -166,7 +170,7 @@ export type EngineStoreState = {
 
   // ── Internal ───────────────────────────────────────────────────────────
   _engine: QueryEngine | null
-  _initEngine: (cwd: string) => QueryEngine
+  _initEngine: (cwd: string, providerSelection?: ChatProviderSelection) => QueryEngine
 }
 
 // ── Store ──────────────────────────────────────────────────────────────────
@@ -219,6 +223,63 @@ function mapChatHistorySeedToEngineMessages(
   }, [])
 }
 
+function getResolvedProvider(provider: unknown): EngineBackend {
+  return normalizeChatProvider(provider)
+}
+
+function buildChatEngineConfig(
+  provider: EngineBackend,
+  config: EngineStoreConfig,
+  cwd: string,
+  runId?: string,
+  sessionId?: string,
+  providerSelection?: ChatProviderSelection,
+): EngineConfig {
+  const configState = useConfigStore.getState()
+  const providerState = getChatProviderState(configState, provider, providerSelection)
+  const ollamaConfig = configState.ollama
+  const effectiveThinkingEnabled = true
+  const effectiveOllamaTimeoutMs = Math.max(providerState.timeoutMs, MIN_THINKING_TIMEOUT_MS)
+
+  return {
+    backend: provider,
+    anthropic: {
+      apiKey: config.apiKey,
+      model: config.model,
+      thinking: effectiveThinkingEnabled
+        ? { type: 'enabled', budgetTokens: config.thinkingBudget }
+        : { type: 'disabled' },
+    },
+    ollama: {
+      baseUrl: providerState.provider === 'ollama' ? providerState.endpoint : ollamaConfig.baseUrl,
+      model: providerState.provider === 'ollama' ? providerState.model : ollamaConfig.model,
+      temperature: ollamaConfig.temperature,
+      contextWindow: ollamaConfig.contextWindow,
+      timeoutMs: effectiveOllamaTimeoutMs,
+      thinkingEnabled: effectiveThinkingEnabled,
+    },
+    openAiCompatible: provider === 'openai-compatible' || provider === 'openrouter'
+      ? {
+          provider,
+          apiKey: providerState.apiKey,
+          baseUrl: providerState.endpoint,
+          model: providerState.model,
+          timeoutMs: providerState.timeoutMs,
+        }
+      : undefined,
+    cwd,
+    systemPrompt: config.systemPrompt || DEFAULT_SYSTEM_PROMPT,
+    maxTurns: config.maxTurns,
+    maxBudgetUsd: config.maxBudgetUsd,
+    permissionMode: config.permissionMode,
+    commands: getAllCommands(),
+    agentDefinitions: DEFAULT_AGENTS,
+    appendSystemPrompt: config.appendSystemPrompt,
+    runId,
+    sessionId,
+  }
+}
+
 export const useEngineStore = create<EngineStoreState>()(
   persist(
     (set, get) => ({
@@ -248,6 +309,7 @@ export const useEngineStore = create<EngineStoreState>()(
       config: {
         apiKey: '',
         model: 'claude-sonnet-4-20250514',
+        systemPrompt: DEFAULT_SYSTEM_PROMPT,
         maxTurns: 25,
         maxBudgetUsd: 0,
         permissionMode: 'default' as const,
@@ -263,48 +325,24 @@ export const useEngineStore = create<EngineStoreState>()(
       _engine: null,
 
       // ── Config ───────────────────────────────────────────────────────────
-      setActiveProvider: () => set({ activeProvider: 'ollama' }),
+      setActiveProvider: (provider) => set({ activeProvider: normalizeChatProvider(provider) }),
       setConfig: (patch) => set((s) => ({ config: { ...s.config, ...patch } })),
       setApiKey: (apiKey) => set((s) => ({ config: { ...s.config, apiKey } })),
 
       // ── Init Engine ──────────────────────────────────────────────────────
-      _initEngine: (cwd: string): QueryEngine => {
+      _initEngine: (cwd: string, providerSelection?: ChatProviderSelection): QueryEngine => {
         ensureCommandsRegistered()
 
-        const { config } = get()
-        const configState = useConfigStore.getState()
-        const ollamaConfig = configState.ollama
-        const effectiveThinkingEnabled = true
-        const effectiveTimeoutMs = Math.max(ollamaConfig.timeoutMs, MIN_THINKING_TIMEOUT_MS)
-
-        const engineConfig: EngineConfig = {
-          backend: 'ollama',
-          anthropic: {
-            apiKey: config.apiKey,
-            model: config.model,
-            thinking: effectiveThinkingEnabled
-              ? { type: 'enabled', budgetTokens: config.thinkingBudget }
-              : { type: 'disabled' },
-          },
-          ollama: {
-            baseUrl: ollamaConfig.baseUrl,
-            model: ollamaConfig.model,
-            temperature: ollamaConfig.temperature,
-            contextWindow: ollamaConfig.contextWindow,
-            timeoutMs: effectiveTimeoutMs,
-            thinkingEnabled: effectiveThinkingEnabled,
-          },
+        const { config, activeProvider, currentRunId, currentSessionId } = get()
+        const providerState = getChatProviderState(useConfigStore.getState(), activeProvider, providerSelection)
+        const engineConfig = buildChatEngineConfig(
+          getResolvedProvider(providerState.provider),
+          config,
           cwd,
-          systemPrompt: DEFAULT_SYSTEM_PROMPT,
-          maxTurns: config.maxTurns,
-          maxBudgetUsd: config.maxBudgetUsd,
-          permissionMode: config.permissionMode,
-          commands: getAllCommands(),
-          agentDefinitions: DEFAULT_AGENTS,
-          appendSystemPrompt: config.appendSystemPrompt,
-          runId: get().currentRunId ?? undefined,
-          sessionId: get().currentSessionId ?? undefined,
-        }
+          currentRunId ?? undefined,
+          currentSessionId ?? undefined,
+          providerSelection,
+        )
 
         const engine = new QueryEngine(engineConfig)
 
@@ -318,7 +356,7 @@ export const useEngineStore = create<EngineStoreState>()(
       },
 
       // ── Send Message ─────────────────────────────────────────────────────
-      sendMessage: async (userInput, cwd, onEvent, historySeed) => {
+      sendMessage: async (userInput, cwd, onEvent, historySeed, providerSelection) => {
         const queuedRun = sendMessageQueue
           .catch(() => undefined)
           .then(async () => {
@@ -344,38 +382,22 @@ export const useEngineStore = create<EngineStoreState>()(
             })
 
             // Get or create engine
-            const configState = useConfigStore.getState()
-            const ollamaConfig = configState.ollama
             const latestStore = get()
-            const effectiveThinkingEnabled = true
-            const effectiveTimeoutMs = Math.max(ollamaConfig.timeoutMs, MIN_THINKING_TIMEOUT_MS)
             const userInputText = extractUserInputText(userInput)
+            const providerState = getChatProviderState(useConfigStore.getState(), latestStore.activeProvider, providerSelection)
+            const provider = getResolvedProvider(providerState.provider)
             let engine = state._engine
             if (!engine) {
-              engine = state._initEngine(cwd)
+              engine = state._initEngine(cwd, providerSelection)
             } else {
-              // Update config on existing engine with latest Ollama settings
-              engine.updateConfig({
-                backend: 'ollama',
+              engine.updateConfig(buildChatEngineConfig(
+                provider,
+                latestStore.config,
                 cwd,
-                anthropic: {
-                  apiKey: latestStore.config.apiKey,
-                  model: latestStore.config.model,
-                  thinking: effectiveThinkingEnabled
-                    ? { type: 'enabled', budgetTokens: latestStore.config.thinkingBudget }
-                    : { type: 'disabled' },
-                },
-                ollama: {
-                  baseUrl: ollamaConfig.baseUrl,
-                  model: ollamaConfig.model,
-                  temperature: ollamaConfig.temperature,
-                  contextWindow: ollamaConfig.contextWindow,
-                  timeoutMs: effectiveTimeoutMs,
-                  thinkingEnabled: effectiveThinkingEnabled,
-                },
                 runId,
-                sessionId: latestStore.currentSessionId ?? undefined,
-              })
+                latestStore.currentSessionId ?? undefined,
+                providerSelection,
+              ))
             }
 
             const shouldHydrateHistory = Boolean(
@@ -389,7 +411,7 @@ export const useEngineStore = create<EngineStoreState>()(
             )
 
             if (shouldHydrateHistory) {
-              const hydratedMessages = mapChatHistorySeedToEngineMessages(historySeed!.messages, ollamaConfig.model)
+              const hydratedMessages = mapChatHistorySeedToEngineMessages(historySeed!.messages, providerState.model)
               set({
                 messages: hydratedMessages,
                 conversationThreadId: historySeed?.threadId ?? null,
@@ -404,7 +426,7 @@ export const useEngineStore = create<EngineStoreState>()(
             try {
               const { systemPrompt, memoryContent } = await buildSystemPromptWithMemory(
                 cwd,
-                DEFAULT_SYSTEM_PROMPT,
+                latestStore.config.systemPrompt || DEFAULT_SYSTEM_PROMPT,
                 { userInput: userInputText },
               )
               engine.updateConfig({
@@ -424,8 +446,8 @@ export const useEngineStore = create<EngineStoreState>()(
                 status: 'running',
                 phase: 'llm_turn',
                 cwd,
-                model: ollamaConfig.model,
-                provider: 'ollama',
+                model: providerState.model,
+                provider,
                 metadataJson: JSON.stringify({
                   permissionMode: latestStore.config.permissionMode,
                   maxTurns: latestStore.config.maxTurns,
@@ -763,6 +785,19 @@ export const useEngineStore = create<EngineStoreState>()(
         currentSessionId: state.currentSessionId,
         currentRunId: state.currentRunId,
       }),
+      merge: (persistedState, currentState) => {
+        const typedState = persistedState as Partial<EngineStoreState> | undefined
+        return {
+          ...currentState,
+          ...typedState,
+          activeProvider: normalizeChatProvider(typedState?.activeProvider),
+          config: {
+            ...currentState.config,
+            ...(typedState?.config ?? {}),
+            systemPrompt: typedState?.config?.systemPrompt || currentState.config.systemPrompt,
+          },
+        }
+      },
     },
   ),
 )

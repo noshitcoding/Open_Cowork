@@ -65,40 +65,6 @@ type DesktopScreenshotResponse = {
   coordinateOverlay?: boolean
 }
 
-function resolveDisplayRelativePoint(
-  display: DesktopDisplayInfo,
-  x: number,
-  y: number,
-  inputWidth = display.width,
-  inputHeight = display.height,
-): { x: number; y: number } {
-  const scaleX = inputWidth > 0 ? display.width / inputWidth : 1
-  const scaleY = inputHeight > 0 ? display.height / inputHeight : 1
-  return {
-    x: Math.round(x * scaleX) + display.x,
-    y: Math.round(y * scaleY) + display.y,
-  }
-}
-
-function displayFromScreenshot(screenshot: DesktopScreenshotResponse): DesktopDisplayInfo {
-  return {
-    primary: screenshot.primary,
-    x: screenshot.x,
-    y: screenshot.y,
-    width: screenshot.width,
-    height: screenshot.height,
-    deviceName: screenshot.deviceName,
-    scaleFactor: screenshot.scaleFactor,
-  }
-}
-
-function screenshotInputSize(screenshot: DesktopScreenshotResponse): { width: number; height: number } {
-  return {
-    width: screenshot.imageWidth ?? screenshot.width,
-    height: screenshot.imageHeight ?? screenshot.height,
-  }
-}
-
 type DesktopLaunchResponse = {
   pid: number
   path: string
@@ -140,6 +106,40 @@ type OpenAIResponse = {
   output: ResponseOutputItem[]
 }
 
+function resolveDisplayRelativePoint(
+  display: DesktopDisplayInfo,
+  x: number,
+  y: number,
+  inputWidth = display.width,
+  inputHeight = display.height,
+): { x: number; y: number } {
+  const scaleX = inputWidth > 0 ? display.width / inputWidth : 1
+  const scaleY = inputHeight > 0 ? display.height / inputHeight : 1
+  return {
+    x: Math.round(x * scaleX) + display.x,
+    y: Math.round(y * scaleY) + display.y,
+  }
+}
+
+function displayFromScreenshot(screenshot: DesktopScreenshotResponse): DesktopDisplayInfo {
+  return {
+    primary: screenshot.primary,
+    x: screenshot.x,
+    y: screenshot.y,
+    width: screenshot.width,
+    height: screenshot.height,
+    deviceName: screenshot.deviceName,
+    scaleFactor: screenshot.scaleFactor,
+  }
+}
+
+function screenshotInputSize(screenshot: DesktopScreenshotResponse): { width: number; height: number } {
+  return {
+    width: screenshot.imageWidth ?? screenshot.width,
+    height: screenshot.imageHeight ?? screenshot.height,
+  }
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms))
 }
@@ -155,10 +155,8 @@ function extractResponseText(response: OpenAIResponse): string {
 
     if (Array.isArray(item.content)) {
       for (const part of item.content) {
-        if (part.type === 'output_text' || part.type === 'text') {
-          if (typeof part.text === 'string' && part.text.trim()) {
-            chunks.push(part.text)
-          }
+        if ((part.type === 'output_text' || part.type === 'text') && typeof part.text === 'string' && part.text.trim()) {
+          chunks.push(part.text)
         }
       }
     }
@@ -313,19 +311,34 @@ function buildInstructions(goal: string, target: ComputerUseRunResult['windowTar
     .join('\n')
 }
 
-export async function runComputerUseAppTest(options: ComputerUseRunOptions): Promise<ComputerUseRunResult> {
-  const {
-    openAIComputerUse,
-  } = useConfigStore.getState()
+function resolveComputerUseConfig() {
+  const state = useConfigStore.getState()
+  const profile = state.llmProfiles.find(
+    (entry) => entry.id === state.defaultLlmProfileIds['openai-compatible'] && entry.provider === 'openai-compatible',
+  ) ?? state.llmProfiles.find((entry) => entry.provider === 'openai-compatible')
 
-  if (!openAIComputerUse.apiKey.trim()) {
+  return {
+    apiKey: state.openAIComputerUse.apiKey.trim() || profile?.apiKey?.trim() || '',
+    baseUrl: state.openAIComputerUse.baseUrl.trim() || profile?.baseUrl?.trim() || 'https://api.openai.com/v1',
+    model: state.openAIComputerUse.model.trim() || 'computer-use-preview',
+    maxSteps: state.openAIComputerUse.maxSteps,
+    actionDelayMs: state.openAIComputerUse.actionDelayMs,
+    launchDelayMs: state.openAIComputerUse.launchDelayMs,
+    autoAcknowledgeSafetyChecks: state.openAIComputerUse.autoAcknowledgeSafetyChecks,
+  }
+}
+
+export async function runComputerUseAppTest(options: ComputerUseRunOptions): Promise<ComputerUseRunResult> {
+  const computerUseConfig = resolveComputerUseConfig()
+
+  if (!computerUseConfig.apiKey.trim()) {
     throw new Error('OpenAI API key for Computer Use is not configured.')
   }
 
-  const autoAcknowledge = options.autoAcknowledgeSafetyChecks ?? openAIComputerUse.autoAcknowledgeSafetyChecks
-  const maxSteps = options.maxSteps ?? openAIComputerUse.maxSteps
-  const actionDelayMs = options.actionDelayMs ?? openAIComputerUse.actionDelayMs
-  const launchDelayMs = options.launchDelayMs ?? openAIComputerUse.launchDelayMs
+  const autoAcknowledge = options.autoAcknowledgeSafetyChecks ?? computerUseConfig.autoAcknowledgeSafetyChecks
+  const maxSteps = options.maxSteps ?? computerUseConfig.maxSteps
+  const actionDelayMs = options.actionDelayMs ?? computerUseConfig.actionDelayMs
+  const launchDelayMs = options.launchDelayMs ?? computerUseConfig.launchDelayMs
 
   const windowTarget: ComputerUseRunResult['windowTarget'] = {
     windowTitle: options.windowTitle,
@@ -364,8 +377,8 @@ export async function runComputerUseAppTest(options: ComputerUseRunOptions): Pro
   let actionDisplay = displayFromScreenshot(screenshot)
   let actionInputSize = screenshotInputSize(screenshot)
 
-  let response = await createResponse(openAIComputerUse.apiKey, openAIComputerUse.baseUrl, {
-    model: openAIComputerUse.model,
+  let response = await createResponse(computerUseConfig.apiKey, computerUseConfig.baseUrl, {
+    model: computerUseConfig.model,
     truncation: 'auto',
     reasoning: { summary: 'concise' },
     tools: [{
@@ -420,8 +433,8 @@ export async function runComputerUseAppTest(options: ComputerUseRunOptions): Pro
       safetyChecks: safetyChecks.map((check) => check.code),
     })
 
-    response = await createResponse(openAIComputerUse.apiKey, openAIComputerUse.baseUrl, {
-      model: openAIComputerUse.model,
+    response = await createResponse(computerUseConfig.apiKey, computerUseConfig.baseUrl, {
+      model: computerUseConfig.model,
       previous_response_id: response.id,
       truncation: 'auto',
       tools: [{

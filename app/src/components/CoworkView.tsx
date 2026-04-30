@@ -16,7 +16,7 @@ import { useSkillStore } from '../stores/skillStore'
 import { useCrewStore } from '../stores/crewStore'
 import { useEngineStore } from '../stores/engineStore'
 import { useUiStore } from '../stores/uiStore'
-import type { ContentBlock } from '../engine'
+import type { ContentBlock, ToolUIRequest } from '../engine'
 import type { ToolProgressData } from '../engine/types'
 import { checkOllamaConnection } from '../engine/api/ollamaClient'
 import {
@@ -52,6 +52,15 @@ import {
 import { useCommandRegistry } from '../stores/commandRegistryStore'
 import { hasTauriRuntime, safeInvoke, safeInvokeVoid } from '../utils/safeInvoke'
 import { parseScheduledTaskInput, SCHEDULE_HELP_TEXT } from '../utils/schedulerUtils'
+import { showDesktopNotification } from '../utils/notifications'
+import {
+  CHAT_PROVIDER_LABELS,
+  CHAT_PROVIDER_OPTIONS,
+  createChatProviderSelection,
+  getChatProviderFailureHint,
+  getChatProviderState,
+  normalizeChatProvider,
+} from '../utils/chatProvider'
 
 type WebFetchResponse = {
   url: string
@@ -83,6 +92,19 @@ type SlashCommandSuggestion = {
   args?: string
   description: string
   source: 'built-in' | 'plugin'
+}
+
+type AskUserOption = {
+  id: string
+  label: string
+}
+
+type AskUserPromptModel = {
+  question: string
+  options: AskUserOption[]
+  allowMultiple: boolean
+  freeTextLabel: string
+  freeTextPlaceholder: string
 }
 
 const VALID_PERMISSION_MODES: ClaudePermissionMode[] = [
@@ -355,11 +377,240 @@ function findLiveToolCallId(calls: LiveToolCall[], toolName: string, input: Reco
   if (exact) return exact.id
 
   const active = [...calls].reverse().find((call) =>
-    call.toolName === toolName && (call.status === 'requested' || call.status === 'running' || call.status === 'approval')
+    call.toolName === toolName && (
+      call.status === 'requested' ||
+      call.status === 'running' ||
+      call.status === 'approval' ||
+      call.status === 'waiting_input'
+    )
   )
   if (active) return active.id
 
   return `approval-${toolName}-${Date.now()}`
+}
+
+function getToolUiInput(ui: ToolUIRequest): Record<string, unknown> {
+  const detailsInput = ui.details?.input
+  if (detailsInput && typeof detailsInput === 'object' && !Array.isArray(detailsInput)) {
+    return detailsInput as Record<string, unknown>
+  }
+
+  return ui.toolName === 'AskUser'
+    ? { question: ui.content }
+    : { content: ui.content }
+}
+
+function normalizeAskUserOptions(rawOptions: unknown): AskUserOption[] {
+  if (!Array.isArray(rawOptions)) {
+    return []
+  }
+
+  return rawOptions
+    .map((item, index): AskUserOption | null => {
+      if (typeof item === 'string') {
+        const label = item.trim()
+        return label ? { id: `option-${index}`, label } : null
+      }
+
+      if (item && typeof item === 'object') {
+        const record = item as Record<string, unknown>
+        const label = typeof record.label === 'string'
+          ? record.label.trim()
+          : typeof record.value === 'string'
+            ? record.value.trim()
+            : ''
+        const id = typeof record.value === 'string' && record.value.trim()
+          ? record.value.trim()
+          : `option-${index}`
+        return label ? { id, label } : null
+      }
+
+      return null
+    })
+    .filter((option): option is AskUserOption => option !== null)
+}
+
+function parseNumberedAskUserOptions(question: string): { question: string; options: AskUserOption[] } {
+  const matches = Array.from(question.matchAll(/(?:^|\s)(\d+)[.)]\s+/g))
+  if (matches.length < 2) {
+    return { question, options: [] }
+  }
+
+  const options = matches
+    .map((match, index): AskUserOption => {
+      const start = (match.index ?? 0) + match[0].length
+      const end = index + 1 < matches.length ? matches[index + 1].index ?? question.length : question.length
+      return {
+        id: `option-${match[1]}`,
+        label: question.slice(start, end).trim().replace(/[;,.]\s*$/, ''),
+      }
+    })
+    .filter((option) => option.label.length > 0)
+
+  if (options.length < 2) {
+    return { question, options: [] }
+  }
+
+  const firstMarkerIndex = matches[0].index ?? 0
+  const cleanedQuestion = question.slice(0, firstMarkerIndex).trim().replace(/[:;,]\s*$/, '')
+  return {
+    question: cleanedQuestion || question,
+    options,
+  }
+}
+
+function shouldDefaultToSingleChoice(question: string): boolean {
+  return /\b(eine|einer|eines|one)\b[^.?!]{0,40}\b(option|optionen|auswahl|choice|choices)\b/i.test(question)
+}
+
+function resolveAskUserPromptModel(question: string | null, input: Record<string, unknown> | null): AskUserPromptModel | null {
+  const rawQuestion = typeof input?.question === 'string' && input.question.trim()
+    ? input.question.trim()
+    : question?.trim() ?? ''
+
+  if (!rawQuestion) {
+    return null
+  }
+
+  const structuredOptions = normalizeAskUserOptions(input?.options)
+  const parsed = structuredOptions.length > 0
+    ? { question: rawQuestion, options: structuredOptions }
+    : parseNumberedAskUserOptions(rawQuestion)
+
+  const allowMultiple = typeof input?.allow_multiple === 'boolean'
+    ? input.allow_multiple
+    : typeof input?.allowMultiple === 'boolean'
+      ? input.allowMultiple
+      : parsed.options.length > 0 && !shouldDefaultToSingleChoice(rawQuestion)
+
+  return {
+    question: parsed.question,
+    options: parsed.options,
+    allowMultiple,
+    freeTextLabel: typeof input?.free_text_label === 'string' && input.free_text_label.trim()
+      ? input.free_text_label.trim()
+      : 'Freitext',
+    freeTextPlaceholder: typeof input?.free_text_placeholder === 'string' && input.free_text_placeholder.trim()
+      ? input.free_text_placeholder.trim()
+      : 'Optional ergaenzen...',
+  }
+}
+
+function parseAskUserResult(result?: string): string | null {
+  const normalized = result?.trim()
+  if (!normalized) return null
+
+  const match = normalized.match(/^\[Warte auf Benutzerantwort:\s*([\s\S]*?)\]$/)
+  if (match?.[1]?.trim()) {
+    return match[1].trim()
+  }
+
+  return null
+}
+
+function getAskUserQuestionFromMessage(message: ChatMessage | undefined): string | null {
+  if (!message || message.role !== 'assistant') return null
+
+  const liveToolCalls = Array.isArray(message.liveToolCalls) ? message.liveToolCalls : []
+  const askUserCall = [...liveToolCalls]
+    .reverse()
+    .find((call) =>
+      call.toolName === 'AskUser' &&
+      (
+        call.status === 'waiting_input' ||
+        (call.status === 'completed' && parseAskUserResult(call.result) !== null)
+      )
+    )
+
+  if (askUserCall) {
+    const inputQuestion = askUserCall.input?.question
+    if (typeof inputQuestion === 'string' && inputQuestion.trim()) {
+      return inputQuestion.trim()
+    }
+
+    return parseAskUserResult(askUserCall.result)
+  }
+
+  const content = typeof message.content === 'string' ? message.content.trim() : ''
+  const contentMatch = content.match(/^Rueckfrage:\s*([\s\S]+)$/)
+  return contentMatch?.[1]?.trim() || null
+}
+
+function getAskUserInputFromMessage(message: ChatMessage | undefined): Record<string, unknown> | null {
+  if (!message || message.role !== 'assistant') return null
+
+  const liveToolCalls = Array.isArray(message.liveToolCalls) ? message.liveToolCalls : []
+  const askUserCall = [...liveToolCalls]
+    .reverse()
+    .find((call) =>
+      call.toolName === 'AskUser' &&
+      (
+        call.status === 'waiting_input' ||
+        (call.status === 'completed' && parseAskUserResult(call.result) !== null)
+      )
+    )
+
+  if (!askUserCall) return null
+  return askUserCall.input && typeof askUserCall.input === 'object' ? askUserCall.input : null
+}
+
+function getPendingAskUserQuestion(messages: ChatMessage[]): string | null {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]
+
+    if (message.role === 'system' && !message.visibleInChat) {
+      continue
+    }
+
+    if (message.role === 'user') {
+      return null
+    }
+
+    if (message.role === 'assistant') {
+      return getAskUserQuestionFromMessage(message)
+    }
+  }
+
+  return null
+}
+
+function getPendingAskUserInput(messages: ChatMessage[]): Record<string, unknown> | null {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]
+
+    if (message.role === 'system' && !message.visibleInChat) {
+      continue
+    }
+
+    if (message.role === 'user') {
+      return null
+    }
+
+    if (message.role === 'assistant') {
+      return getAskUserInputFromMessage(message)
+    }
+  }
+
+  return null
+}
+
+function normalizeLiveToolCallForDisplay(call: LiveToolCall): LiveToolCall {
+  if (call.toolName !== 'AskUser') {
+    return call
+  }
+
+  const inputQuestion = call.input?.question
+  const hasQuestionInput = typeof inputQuestion === 'string' && inputQuestion.trim().length > 0
+  const hasWaitingResult = parseAskUserResult(call.result) !== null
+
+  if ((hasQuestionInput || hasWaitingResult) && call.status === 'completed') {
+    return {
+      ...call,
+      status: 'waiting_input',
+    }
+  }
+
+  return call
 }
 
 function formatToolPayload(value: unknown): string {
@@ -380,6 +631,8 @@ function getToolStatusLabel(status: LiveToolCallStatus): string {
       return 'Tool laeuft'
     case 'approval':
       return 'Freigabe erforderlich'
+    case 'waiting_input':
+      return 'Wartet auf Antwort'
     case 'completed':
       return 'Abgeschlossen'
     case 'failed':
@@ -395,6 +648,8 @@ function getToolStatusIcon(status: LiveToolCallStatus) {
       return <Loader2 size={15} className="tool-call-spin" />
     case 'approval':
       return <ShieldAlert size={15} />
+    case 'waiting_input':
+      return <Clock3 size={15} />
     case 'completed':
       return <CheckCircle2 size={15} />
     case 'failed':
@@ -408,29 +663,30 @@ function LiveToolCalls({ calls }: { calls?: LiveToolCall[] }) {
   return (
     <div className="live-tool-call-list" aria-label="Live Tool Calls">
       {calls.map((call) => {
-        const inputPreview = formatToolPayload(call.input)
-        const resultPreview = formatToolPayload(call.error ?? call.result)
+        const displayCall = normalizeLiveToolCallForDisplay(call)
+        const inputPreview = formatToolPayload(displayCall.input)
+        const resultPreview = formatToolPayload(displayCall.error ?? displayCall.result)
         return (
-          <div key={call.id} className={`live-tool-call ${call.status}`}>
+          <div key={displayCall.id} className={`live-tool-call ${displayCall.status}`}>
             <div className="live-tool-call-header">
               <span className="live-tool-call-icon" aria-hidden="true">
-                {getToolStatusIcon(call.status)}
+                {getToolStatusIcon(displayCall.status)}
               </span>
               <span className="live-tool-call-name">
                 <Wrench size={14} aria-hidden="true" />
-                {call.toolName}
+                {displayCall.toolName}
               </span>
-              <span className="live-tool-call-status">{getToolStatusLabel(call.status)}</span>
+              <span className="live-tool-call-status">{getToolStatusLabel(displayCall.status)}</span>
             </div>
             {inputPreview && (
-              <details className="live-tool-call-detail" open={call.status === 'requested' || call.status === 'running' || call.status === 'approval'}>
+              <details className="live-tool-call-detail" open={displayCall.status === 'requested' || displayCall.status === 'running' || displayCall.status === 'approval' || displayCall.status === 'waiting_input'}>
                 <summary>Input</summary>
                 <pre>{inputPreview}</pre>
               </details>
             )}
             {resultPreview && (
-              <details className="live-tool-call-detail" open={call.status === 'failed'}>
-                <summary>{call.error ? 'Fehler' : 'Ergebnis'}</summary>
+              <details className="live-tool-call-detail" open={displayCall.status === 'failed'}>
+                <summary>{displayCall.error ? 'Fehler' : 'Ergebnis'}</summary>
                 <pre>{resultPreview}</pre>
               </details>
             )}
@@ -449,6 +705,9 @@ export default function CoworkView() {
   const [historyIndex, setHistoryIndex] = useState(-1)
   const [showScrollToBottom, setShowScrollToBottom] = useState(false)
   const [inputValue, setInputValue] = useState('')
+  const [dismissedAskUserQuestion, setDismissedAskUserQuestion] = useState<string | null>(null)
+  const [selectedAskUserOptionIds, setSelectedAskUserOptionIds] = useState<string[]>([])
+  const [askUserFreeText, setAskUserFreeText] = useState('')
   const [slashSuggestionsOpen, setSlashSuggestionsOpen] = useState(false)
   const [activeSlashSuggestionIndex, setActiveSlashSuggestionIndex] = useState(0)
   const [shellPanelOpen, setShellPanelOpen] = useState(false)
@@ -457,7 +716,11 @@ export default function CoworkView() {
   const ollama = useConfigStore((s) => s.ollama)
   const availableModels = useConfigStore((s) => s.availableModels)
   const setOllama = useConfigStore((s) => s.setOllama)
+  const llmProfiles = useConfigStore((s) => s.llmProfiles)
+  const defaultLlmProfileIds = useConfigStore((s) => s.defaultLlmProfileIds)
+  const llmProfileModels = useConfigStore((s) => s.llmProfileModels)
   const mcpServer = useConfigStore((s) => s.mcpServer)
+  const activeProvider = useEngineStore((s) => s.activeProvider)
   const engineSendMessage = useEngineStore((s) => s.sendMessage)
   const enginePermissionMode = useEngineStore((s) => s.config.permissionMode)
   const setEngineConfig = useEngineStore((s) => s.setConfig)
@@ -469,6 +732,7 @@ export default function CoworkView() {
   const contextWarning = useEngineStore((s) => s.contextWarning)
   const compactionCount = useEngineStore((s) => s.compactionCount)
   const liveThinkingText = useEngineStore((s) => s.thinkingText)
+  const liveThinkingThreadId = useEngineStore((s) => s.conversationThreadId)
   const workingFolder = useUiStore((s) => s.workingFolder)
   const workingPathKind = useUiStore((s) => s.workingPathKind)
   const showTimestamps = useConfigStore((s) => s.preferences.showTimestamps)
@@ -478,6 +742,7 @@ export default function CoworkView() {
   const superVerboseAuditLogging = useConfigStore((s) => s.preferences.superVerboseAuditLogging)
   const autoPilotAllTools = useConfigStore((s) => s.preferences.autoPilotAllTools)
   const workspaceDefaultPath = useConfigStore((s) => s.preferences.workspaceDefaultPath)
+  const desktopNotificationsEnabled = useConfigStore((s) => s.preferences.notificationsEnabled)
   const {
     activeThreadId,
     pendingApproval,
@@ -485,6 +750,7 @@ export default function CoworkView() {
     error,
     addThread,
     setActiveThread,
+    setThreadProviderSettings,
     addMessage,
     updateMessage,
     setPendingApproval,
@@ -508,18 +774,66 @@ export default function CoworkView() {
   const activeThread = useChatStore(getActiveThread)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const logRef = useRef<HTMLDivElement>(null)
+  const notifiedAskUserQuestionRef = useRef<string | null>(null)
+  const emptyThreadBootstrapRef = useRef<string | null>(null)
   const activeMessages = Array.isArray(activeThread?.messages) ? activeThread.messages : []
   const lastActiveMessage = activeMessages[activeMessages.length - 1]
-  const selectableModels = Array.isArray(availableModels) ? availableModels : []
+  const providerContext = useMemo(
+    () => ({
+      ollama,
+      availableModels,
+      llmProfiles,
+      defaultLlmProfileIds,
+      llmProfileModels,
+    }),
+    [availableModels, defaultLlmProfileIds, llmProfileModels, llmProfiles, ollama],
+  )
+  const providerState = useMemo(
+    () => getChatProviderState(providerContext, activeProvider, activeThread?.providerSettings),
+    [activeProvider, activeThread?.providerSettings, providerContext],
+  )
+  const selectableModels = providerState.selectableModels
+
+  useEffect(() => {
+    if (activeThread) {
+      emptyThreadBootstrapRef.current = null
+      return
+    }
+
+    const current = useChatStore.getState()
+    if (current.activeThreadId && current.threads.some((thread) => thread.id === current.activeThreadId)) {
+      return
+    }
+
+    const bootstrappedThreadId = emptyThreadBootstrapRef.current
+    if (bootstrappedThreadId && current.threads.some((thread) => thread.id === bootstrappedThreadId)) {
+      setActiveThread(bootstrappedThreadId)
+      return
+    }
+
+    const threadId = addThread('Neuer Chat', createChatProviderSelection(providerState))
+    emptyThreadBootstrapRef.current = threadId
+    setActiveThread(threadId)
+  }, [activeThread, addThread, providerState, setActiveThread])
+
   const approvalSteps = Array.isArray(pendingApproval) ? pendingApproval : []
+  const pendingAskUserQuestion = getPendingAskUserQuestion(activeMessages)
+  const pendingAskUserInput = getPendingAskUserInput(activeMessages)
   const isAskUserPrompt =
     currentToolUI?.toolName === 'AskUser' &&
-    currentToolUI.type === 'approval' &&
+    currentToolUI.type === 'input' &&
     typeof currentToolUI.content === 'string' &&
     currentToolUI.content.trim().length > 0
-  const askUserQuestion = isAskUserPrompt ? currentToolUI.content.trim() : null
+  const askUserQuestion = isAskUserPrompt ? currentToolUI.content.trim() : pendingAskUserQuestion
+  const askUserInput = isAskUserPrompt && currentToolUI ? getToolUiInput(currentToolUI) : pendingAskUserInput
+  const askUserPromptModel = useMemo(
+    () => resolveAskUserPromptModel(askUserQuestion, askUserInput),
+    [askUserInput, askUserQuestion],
+  )
   const awaitingHumanInput = approvalSteps.length > 0 || Boolean(askUserQuestion)
   const uiLocked = busy && !awaitingHumanInput
+  const showAskUserPrompt = Boolean(askUserQuestion && dismissedAskUserQuestion !== askUserQuestion)
+  const askUserHasStructuredResponse = selectedAskUserOptionIds.length > 0 || askUserFreeText.trim().length > 0
 
   useEffect(() => {
     if (!activeThreadId || !currentToolUI) return
@@ -529,9 +843,11 @@ export default function CoworkView() {
       .find((message) => message.role === 'assistant' && message.streaming)
     if (!activeAssistant) return
 
-    const toolCallId = `tool-ui-${currentToolUI.toolName}`
+    const toolUiInput = getToolUiInput(currentToolUI)
+    const toolCallId = findLiveToolCallId(activeAssistant.liveToolCalls ?? [], currentToolUI.toolName, toolUiInput)
+    const toolCallStatus: LiveToolCallStatus = currentToolUI.type === 'input' ? 'waiting_input' : 'approval'
     const existing = activeAssistant.liveToolCalls?.find((call) => call.id === toolCallId)
-    if (existing?.status === 'approval' && existing.result === currentToolUI.content) {
+    if (existing?.status === toolCallStatus && existing.result === currentToolUI.content) {
       return
     }
 
@@ -539,8 +855,8 @@ export default function CoworkView() {
       liveToolCalls: upsertLiveToolCall(activeAssistant.liveToolCalls ?? [], {
         id: toolCallId,
         toolName: currentToolUI.toolName,
-        input: { content: currentToolUI.content },
-        status: 'approval',
+        input: toolUiInput,
+        status: toolCallStatus,
         result: currentToolUI.content,
       }),
     })
@@ -644,11 +960,28 @@ export default function CoworkView() {
   }, [awaitingHumanInput, busy])
 
   useEffect(() => {
-    if (!askUserQuestion || busy) return
-    window.requestAnimationFrame(() => {
-      inputRef.current?.focus()
-    })
-  }, [askUserQuestion, busy])
+    setSelectedAskUserOptionIds([])
+    setAskUserFreeText('')
+    setDismissedAskUserQuestion(null)
+  }, [askUserQuestion])
+
+  useEffect(() => {
+    if (!askUserQuestion || !desktopNotificationsEnabled) return
+    if (notifiedAskUserQuestionRef.current === askUserQuestion) return
+
+    notifiedAskUserQuestionRef.current = askUserQuestion
+    void showDesktopNotification('Open Cowork wartet auf deine Antwort', askUserQuestion)
+      .then((shown) => {
+        addLog({
+          level: shown ? 'info' : 'warn',
+          area: 'ui',
+          message: shown
+            ? 'Desktop-Benachrichtigung fuer Rueckfrage gesendet'
+            : 'Desktop-Benachrichtigung fuer Rueckfrage konnte nicht gesendet werden',
+          details: { question: askUserQuestion },
+        })
+      })
+  }, [addLog, askUserQuestion, desktopNotificationsEnabled])
 
   const visibleMessages = useMemo(
     () => activeMessages.filter((message) => message.role !== 'system' || message.visibleInChat),
@@ -796,7 +1129,7 @@ export default function CoworkView() {
 
     let threadId = activeThreadId
     if (!threadId) {
-      threadId = addThread(effectiveInput.slice(0, 50))
+      threadId = addThread(effectiveInput.slice(0, 50), createChatProviderSelection(providerState))
       setActiveThread(threadId)
     }
 
@@ -1335,10 +1668,14 @@ export default function CoworkView() {
       // ── Model & Config Commands ──
       if (slash.command === 'model') {
         if (!slash.args?.trim()) {
-          appendAssistantMessage(`Aktuelles Modell: ${ollama.model}\nVerfuegbar: ${selectableModels.join(', ') || '(keine geladen)'}\nNutze: /model <name>`)
+          appendAssistantMessage(`Aktueller Provider: ${providerState.label}\nAktuelles Modell: ${providerState.model || '(nicht gesetzt)'}\nVerfuegbar: ${selectableModels.join(', ') || '(keine geladen)'}\nNutze: /model <name>`)
         } else {
-          setOllama({ model: slash.args.trim() })
-          appendAssistantMessage(`Modell gewechselt: ${slash.args.trim()}`)
+          const nextModel = slash.args.trim()
+          setThreadProviderSettings(threadId, {
+            ...createChatProviderSelection(providerState),
+            model: nextModel,
+          })
+          appendAssistantMessage(`Modell fuer diesen Chat gewechselt: ${nextModel}`)
         }
         return
       }
@@ -1358,8 +1695,11 @@ export default function CoworkView() {
       if (slash.command === 'fast') {
         const fast = selectableModels.find(m => m.includes('tiny') || m.includes('mini') || m.includes('3b') || m.includes('phi')) ?? selectableModels[0]
         if (fast) {
-          setOllama({ model: fast })
-          appendAssistantMessage(`Schnell-Modus: ${fast}`)
+          setThreadProviderSettings(threadId, {
+            ...createChatProviderSelection(providerState),
+            model: fast,
+          })
+          appendAssistantMessage(`Schnell-Modus fuer diesen Chat: ${fast}`)
         } else {
           appendAssistantMessage('Kein schnelles Modell gefunden. Lade Modelle in den Einstellungen.')
         }
@@ -1369,8 +1709,11 @@ export default function CoworkView() {
       if (slash.command === 'powerup') {
         const power = selectableModels.find(m => m.includes('70b') || m.includes('405b') || m.includes('72b') || m.includes('llama3')) ?? selectableModels[selectableModels.length - 1]
         if (power) {
-          setOllama({ model: power })
-          appendAssistantMessage(`Power-Modus: ${power}`)
+          setThreadProviderSettings(threadId, {
+            ...createChatProviderSelection(providerState),
+            model: power,
+          })
+          appendAssistantMessage(`Power-Modus fuer diesen Chat: ${power}`)
         } else {
           appendAssistantMessage('Kein starkes Modell gefunden. Lade Modelle in den Einstellungen.')
         }
@@ -1432,7 +1775,7 @@ export default function CoworkView() {
         const charCount = activeMessages.reduce((a, m) => a + m.content.length, 0)
         const userMsgs = activeMessages.filter(m => m.role === 'user').length
         const assistantMsgs = activeMessages.filter(m => m.role === 'assistant').length
-        appendAssistantMessage(`Kontext:\n- Thread: "${activeThread?.title ?? 'Unbenannt'}"\n- ${msgCount} Nachrichten (${userMsgs} User, ${assistantMsgs} Assistent)\n- ${charCount} Zeichen gesamt\n- Modell: ${ollama.model}\n- Attachments: ${attachments.length}`)
+        appendAssistantMessage(`Kontext:\n- Thread: "${activeThread?.title ?? 'Unbenannt'}"\n- ${msgCount} Nachrichten (${userMsgs} User, ${assistantMsgs} Assistent)\n- ${charCount} Zeichen gesamt\n- Provider: ${providerState.label}\n- Modell: ${providerState.model || '(nicht gesetzt)'}\n- Attachments: ${attachments.length}`)
         return
       }
 
@@ -1537,7 +1880,7 @@ export default function CoworkView() {
         const procs = useProcessStore.getState().processes
         const backends = useTerminalStore.getState().backends
         const ollamaStatus = await getOllamaStatusText(ollama)
-        appendAssistantMessage(`Status:\n- Ollama: ${ollamaStatus}\n- Modell: ${ollama.model}\n- Threads: ${useChatStore.getState().threads.length}\n- Prozesse: ${procs.length}\n- Backends: ${backends.length}\n- Plan-Mode: ${claudePlanMode ? 'aktiv' : 'inaktiv'}\n- Permissions: ${claudePermissionMode}`)
+        appendAssistantMessage(`Status:\n- Ollama: ${ollamaStatus}\n- Aktiver Provider: ${providerState.label}\n- Modell: ${providerState.model || '(nicht gesetzt)'}\n- Threads: ${useChatStore.getState().threads.length}\n- Prozesse: ${procs.length}\n- Backends: ${backends.length}\n- Plan-Mode: ${claudePlanMode ? 'aktiv' : 'inaktiv'}\n- Permissions: ${claudePermissionMode}`)
         return
       }
 
@@ -1616,7 +1959,7 @@ export default function CoworkView() {
           const ollamaStatus = await getOllamaStatusText(ollama)
           const backends = useTerminalStore.getState().backends
           const entries = useMemoryStore.getState().entries
-          appendAssistantMessage(`System-Diagnose:\n- Ollama: ${ollamaStatus} (${ollama.baseUrl})\n- Modell: ${ollama.model}\n- DB: aktiv\n- MCP: ${mcpServer.command ? `konfiguriert (${mcpServer.name})` : 'nicht konfiguriert'}\n- Audit: aktiv\n- Terminal-Backends: ${backends.length}\n- Memory-Eintraege: ${entries.length}\n- Plugins: ${plugins.length}`)
+          appendAssistantMessage(`System-Diagnose:\n- Ollama: ${ollamaStatus} (${ollama.baseUrl})\n- Aktiver Provider: ${providerState.label} (${providerState.endpoint || 'nicht gesetzt'})\n- Modell: ${providerState.model || '(nicht gesetzt)'}\n- DB: aktiv\n- MCP: ${mcpServer.command ? `konfiguriert (${mcpServer.name})` : 'nicht konfiguriert'}\n- Audit: aktiv\n- Terminal-Backends: ${backends.length}\n- Memory-Eintraege: ${entries.length}\n- Plugins: ${plugins.length}`)
         } finally {
           setBusy(false)
         }
@@ -1692,6 +2035,12 @@ export default function CoworkView() {
           name: parsed.prompt.slice(0, 40),
           prompt: parsed.prompt,
           cronLike: parsed.scheduleExpr,
+          taskKind: 'prompt',
+          crewId: null,
+          crewSnapshotJson: null,
+          modelConfigJson: JSON.stringify(ollama),
+          priority: 100,
+          dependsOnTaskIds: [],
           active: true,
           lastRunAt: null,
           nextRunAt: null,
@@ -1911,13 +2260,13 @@ export default function CoworkView() {
 
       if (slash.command === 'local-model') {
         useUiStore.getState().setActiveMode('settings')
-        appendAssistantMessage(`Aktuelles lokales Modell: ${ollama.model}\nWechsle das Modell in den Einstellungen oder direkt mit /model <name>.`)
+        appendAssistantMessage(`Aktuelles Modell (${providerState.label}): ${providerState.model || '(nicht gesetzt)'}\nWechsle das Modell in den Einstellungen oder direkt mit /model <name>.`)
         return
       }
 
       if (slash.command === 'local-runtime') {
         useUiStore.getState().setActiveMode('settings')
-        appendAssistantMessage(`Lokale Runtime aktiv:\n- Backend: Ollama\n- Endpoint: ${ollama.baseUrl}\n- Modell: ${ollama.model}\n- Cloud-Aliasse wurden entfernt.`)
+        appendAssistantMessage(`Aktive Runtime:\n- Provider: ${providerState.label}\n- Endpoint: ${providerState.endpoint || '(nicht gesetzt)'}\n- Modell: ${providerState.model || '(nicht gesetzt)'}\n- Cloud-Aliasse wurden entfernt.`)
         return
       }
 
@@ -2090,9 +2439,10 @@ export default function CoworkView() {
         area: 'llm',
         message: 'LLM-Anfrage gestartet',
         details: {
-          endpoint: ollama.baseUrl,
-          model: ollama.model,
-          timeoutMs: ollama.timeoutMs,
+          provider: providerState.provider,
+          endpoint: providerState.endpoint,
+          model: providerState.model,
+          timeoutMs: providerState.timeoutMs,
           historyItems: history.length,
           compactedHistoryItems: compactedHistory.compacted.length,
           compactedDroppedItems: compactedHistory.droppedCount,
@@ -2139,6 +2489,7 @@ export default function CoworkView() {
       const toolNamesById = new Map<string, string>()
       let liveToolCalls: LiveToolCall[] = []
       let approvalSummary: string | null = null
+      let awaitingUserQuestion: string | null = null
       setShellPanelRunning(false)
       const createdAssistantMessageId = addMessage(threadId, {
         role: 'assistant',
@@ -2371,15 +2722,27 @@ export default function CoworkView() {
             }
             case 'tool_use_complete':
               usedToolNames.add(event.toolName)
-              updateLiveToolCall({
-                id: event.toolUseId,
-                toolName: event.toolName,
-                input: liveToolCalls.find((call) => call.id === event.toolUseId)?.input ?? {},
-                status: event.result.trim().toLowerCase().startsWith('fehler:') ? 'failed' : 'completed',
-                result: event.result,
-                error: event.result.trim().toLowerCase().startsWith('fehler:') ? event.result : undefined,
-                finishedAt: Date.now(),
-              })
+              {
+                const toolFailed = event.result.trim().toLowerCase().startsWith('fehler:')
+                const completedToolInput = liveToolCalls.find((call) => call.id === event.toolUseId)?.input ?? {}
+                if (event.toolName === 'AskUser' && typeof completedToolInput.question === 'string') {
+                  awaitingUserQuestion = completedToolInput.question
+                }
+                const nextStatus: LiveToolCallStatus = toolFailed
+                  ? 'failed'
+                  : event.toolName === 'AskUser'
+                    ? 'waiting_input'
+                    : 'completed'
+                updateLiveToolCall({
+                  id: event.toolUseId,
+                  toolName: event.toolName,
+                  input: completedToolInput,
+                  status: nextStatus,
+                  result: event.result,
+                  error: toolFailed ? event.result : undefined,
+                  finishedAt: Date.now(),
+                })
+              }
               if (event.toolName === 'Bash') {
                 setShellPanelRunning(false)
                 const shellCompletionLine = extractShellPanelCompletionLine(event.result)
@@ -2454,10 +2817,12 @@ export default function CoworkView() {
             content: typeof message.content === 'string' ? message.content : '',
             debugContent: message.debugContent,
           })),
-        })
+        }, createChatProviderSelection(providerState))
 
         const fallbackText = engineErrorMessage
-          ? `LLM-Anfrage fehlgeschlagen: ${engineErrorMessage}\n\nPrüfe unter Einstellungen den Ollama-Endpoint, das Modell und den Timeout.`
+          ? `LLM-Anfrage fehlgeschlagen: ${engineErrorMessage}\n\n${getChatProviderFailureHint(providerState.provider)}`
+          : awaitingUserQuestion
+            ? `Rueckfrage: ${awaitingUserQuestion}`
           : approvalSummary
             ? `Freigabe erforderlich: ${approvalSummary}`
             : usedToolNames.size > 0
@@ -2483,8 +2848,9 @@ export default function CoworkView() {
           area: 'llm',
           message: engineErrorMessage ? 'Engine-Anfrage ohne sichtbare Antwort abgeschlossen' : 'Engine-Anfrage erfolgreich',
           details: {
-            provider: 'ollama',
-            model: ollama.model,
+            provider: providerState.provider,
+            endpoint: providerState.endpoint,
+            model: providerState.model,
             durationMs: Date.now() - started,
             usedToolNames: Array.from(usedToolNames),
             hadThinkingOnlyFallback: !sanitizeAssistantContent(rawAssistantMessage, verboseMode) && !!rawThinkingMessage,
@@ -2500,9 +2866,10 @@ export default function CoworkView() {
         area: 'llm',
         message: 'LLM-Anfrage fehlgeschlagen',
         details: {
-          endpoint: ollama.baseUrl,
-          model: ollama.model,
-          timeoutMs: ollama.timeoutMs,
+          provider: providerState.provider,
+          endpoint: providerState.endpoint,
+          model: providerState.model,
+          timeoutMs: providerState.timeoutMs,
           error: message,
           source: 'chat',
         },
@@ -2514,10 +2881,12 @@ export default function CoworkView() {
           prompt: rawPrompt,
           promptWithAttachments,
           error: message,
-          ollama,
+          provider: providerState.provider,
+          endpoint: providerState.endpoint,
+          model: providerState.model,
         })
       }
-      const failureContent = `LLM-Anfrage fehlgeschlagen: ${message}\n\nPrüfe unter Einstellungen den Ollama-Endpoint, das Modell und den Timeout.`
+      const failureContent = `LLM-Anfrage fehlgeschlagen: ${message}\n\n${getChatProviderFailureHint(providerState.provider)}`
       if (assistantMessageId) {
         updateMessage(threadId, assistantMessageId, { content: failureContent, streaming: false }, { persist: true })
       } else {
@@ -2535,6 +2904,59 @@ export default function CoworkView() {
   const handleSend = async (event: FormEvent) => {
     event.preventDefault()
     await submitPrompt(inputValue, attachments)
+  }
+
+  const toggleAskUserOption = (optionId: string) => {
+    setSelectedAskUserOptionIds((current) => {
+      if (current.includes(optionId)) {
+        return current.filter((id) => id !== optionId)
+      }
+
+      if (!askUserPromptModel?.allowMultiple) {
+        return [optionId]
+      }
+
+      return [...current, optionId]
+    })
+  }
+
+  const buildStructuredAskUserAnswer = (): string => {
+    if (!askUserPromptModel) {
+      return inputValue.trim()
+    }
+
+    const selectedOptions = askUserPromptModel.options
+      .filter((option) => selectedAskUserOptionIds.includes(option.id))
+      .map((option) => option.label)
+
+    const freeText = askUserFreeText.trim() || inputValue.trim()
+    const parts = ['Rueckfrage beantwortet.']
+
+    if (selectedOptions.length > 0) {
+      parts.push(`Auswahl:\n${selectedOptions.map((option) => `- ${option}`).join('\n')}`)
+    }
+
+    if (freeText) {
+      parts.push(`${askUserPromptModel.freeTextLabel}:\n${freeText}`)
+    }
+
+    return parts.join('\n\n')
+  }
+
+  const handleAskUserSubmit = async () => {
+    const answer = buildStructuredAskUserAnswer()
+    if (!answer.trim() && attachments.length === 0) return
+    setInputValue(answer)
+    setDismissedAskUserQuestion(askUserQuestion)
+    await submitPrompt(answer, attachments)
+  }
+
+  const focusAnswerInput = () => {
+    window.requestAnimationFrame(() => {
+      inputRef.current?.focus()
+      const cursor = inputValue.length
+      inputRef.current?.setSelectionRange(cursor, cursor)
+    })
   }
 
   const handleApprove = () => {
@@ -2560,16 +2982,39 @@ export default function CoworkView() {
     clearApproval()
   }
 
-  const handleModelChange = (model: string) => {
-    setOllama({ model })
+  const handleProviderChange = (provider: string) => {
+    if (!activeThreadId) return
+    const nextProvider = normalizeChatProvider(provider)
+    const nextProviderState = getChatProviderState(providerContext, activeProvider, { provider: nextProvider })
+    setThreadProviderSettings(activeThreadId, createChatProviderSelection(nextProviderState))
     addLog({
       level: 'info',
       area: 'llm',
-      message: 'Modell im Chat gewechselt',
+      message: 'Provider fuer diesen Chat gewechselt',
       details: {
-        previousModel: ollama.model,
+        provider: nextProvider,
+        label: CHAT_PROVIDER_LABELS[nextProvider],
+      },
+    })
+  }
+
+  const handleModelChange = (model: string) => {
+    if (!activeThreadId) return
+
+    setThreadProviderSettings(activeThreadId, {
+      ...createChatProviderSelection(providerState),
+      model,
+    })
+
+    addLog({
+      level: 'info',
+      area: 'llm',
+      message: 'Modell fuer diesen Chat gewechselt',
+      details: {
+        provider: providerState.provider,
+        previousModel: providerState.model,
         nextModel: model,
-        endpoint: ollama.baseUrl,
+        endpoint: providerState.endpoint,
       },
     })
   }
@@ -2686,18 +3131,19 @@ export default function CoworkView() {
               const { promptDebug, ollamaRequestPreview } = splitPromptDebugContent(msg.debugContent)
               const attachmentsForMessage = Array.isArray(msg.attachments) ? msg.attachments : []
               const imageAttachments = attachmentsForMessage.filter((item) => item.kind === 'file' && isImageAttachment(item))
+              const liveThinkingBelongsToThread = liveThinkingThreadId === activeThreadId
               const displayedThinkingContent = resolveDisplayedThinkingContent(
                 msg.thinkingContent,
-                liveThinkingText,
+                liveThinkingBelongsToThread ? liveThinkingText : undefined,
                 {
                   streaming: msg.streaming,
-                  preferLive: msg.streaming && index === visibleMessages.length - 1,
+                  preferLive: liveThinkingBelongsToThread && msg.streaming && index === visibleMessages.length - 1,
                 },
               )
               const displayedContent = resolveDisplayedAssistantContent(content, displayedThinkingContent)
               const canRegenerate = msg.role === 'assistant' && findPreviousUserMessage(msg.id) !== null
               return (
-                <div key={`${msg.timestamp}-${index}`} className={`cowork-msg ${msg.role}`}>
+                <div key={msg.id} className={`cowork-msg ${msg.role}`}>
                 <div className="msg-avatar">
                   {msg.role === 'user' ? '👤' : '✦'}
                 </div>
@@ -2833,29 +3279,60 @@ export default function CoworkView() {
           </div>
         )}
 
-        {askUserQuestion && approvalSteps.length === 0 && (
-          <div className="approval-banner">
+        {showAskUserPrompt && askUserQuestion && approvalSteps.length === 0 && (
+          <div className="approval-banner question-banner">
             <div className="approval-header">
               <span className="approval-icon">?</span>
               <span>Open_Cowork hat eine Rueckfrage:</span>
             </div>
-            <div className="msg-content">
-              <HighlightedChatText content={askUserQuestion} />
+            <div className="ask-user-modal-question">
+              <HighlightedChatText content={askUserPromptModel?.question ?? askUserQuestion} />
             </div>
-            <div className="approval-actions">
+            {askUserPromptModel && askUserPromptModel.options.length > 0 && (
+              <div className="ask-user-options" role="group" aria-label="Antwortoptionen">
+                {askUserPromptModel.options.map((option) => {
+                  const checked = selectedAskUserOptionIds.includes(option.id)
+                  return (
+                    <label key={option.id} className={`ask-user-option ${checked ? 'selected' : ''}`}>
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggleAskUserOption(option.id)}
+                      />
+                      <span>{option.label}</span>
+                    </label>
+                  )
+                })}
+              </div>
+            )}
+            <label className="ask-user-free-text-label" htmlFor="ask-user-free-text">
+              {askUserPromptModel?.freeTextLabel ?? 'Freitext'}
+            </label>
+            <textarea
+              id="ask-user-free-text"
+              className="ask-user-modal-input"
+              rows={4}
+              value={askUserFreeText}
+              onChange={(event) => setAskUserFreeText(event.currentTarget.value)}
+              placeholder={askUserPromptModel?.freeTextPlaceholder ?? 'Optional ergaenzen...'}
+              autoFocus
+            />
+            <div className="ask-user-modal-actions">
               <button
                 type="button"
-                className="btn-msg-action"
-                onClick={() => {
-                  setInputValue(askUserQuestion)
-                  window.requestAnimationFrame(() => {
-                    inputRef.current?.focus()
-                    inputRef.current?.setSelectionRange(askUserQuestion.length, askUserQuestion.length)
-                  })
-                }}
+                className="btn-approve"
+                onClick={() => void handleAskUserSubmit()}
+                disabled={uiLocked || (!askUserHasStructuredResponse && attachments.length === 0)}
+              >
+                Antwort senden
+              </button>
+              <button
+                type="button"
+                className="btn-reject"
+                onClick={focusAnswerInput}
                 disabled={uiLocked}
               >
-                Frage uebernehmen
+                Im Hauptchat beantworten
               </button>
             </div>
           </div>
@@ -2874,10 +3351,25 @@ export default function CoworkView() {
         <form className="cowork-input" onSubmit={handleSend}>
           <div className="chat-input-toolbar">
             <label>
+              Provider
+              <select
+                className="model-selector chat-model-selector"
+                value={providerState.provider}
+                onChange={(e) => handleProviderChange(e.target.value)}
+                disabled={uiLocked}
+              >
+                {CHAT_PROVIDER_OPTIONS.map((provider) => (
+                  <option key={provider} value={provider}>
+                    {CHAT_PROVIDER_LABELS[provider]}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
               Modell
               <select
                 className="model-selector chat-model-selector"
-                value={ollama.model}
+                value={providerState.model}
                 onChange={(e) => handleModelChange(e.target.value)}
                 disabled={uiLocked}
               >
@@ -2888,7 +3380,10 @@ export default function CoworkView() {
                     </option>
                   ))
                 ) : (
-                  <option value={ollama.model}>{ollama.model}</option>
+                  <option value={providerState.model}>{providerState.model || 'kein Modell gesetzt'}</option>
+                )}
+                {selectableModels.length > 0 && providerState.model && !selectableModels.includes(providerState.model) && (
+                  <option value={providerState.model}>{providerState.model}</option>
                 )}
               </select>
             </label>

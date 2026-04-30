@@ -53,17 +53,22 @@ import {
   buildOllamaChatRequest,
   type OllamaEngineConfig,
 } from '../api/ollamaClient'
+import {
+  streamOpenAiCompatibleMessages,
+  type OpenAiCompatibleConfig,
+} from '../api/openaiCompatibleClient'
 import { getAllTools, getToolDefinitions, registerAllBuiltinTools } from '../tools/registry'
 import { ContextManager } from '../services/contextManager'
 
 // ── Engine Configuration ───────────────────────────────────────────────────
 
-export type EngineBackend = 'ollama' | 'anthropic'
+export type EngineBackend = 'ollama' | 'anthropic' | 'openai-compatible' | 'openrouter'
 
 export type EngineConfig = {
   backend: EngineBackend
   anthropic?: AnthropicConfig
   ollama?: OllamaEngineConfig
+  openAiCompatible?: OpenAiCompatibleConfig
   cwd: string
   systemPrompt: string
   maxTurns?: number
@@ -1013,6 +1018,9 @@ export class QueryEngine {
 
   private getModel(): string {
     if (this.config.backend === 'ollama') return this.config.ollama?.model ?? 'llama3.1:8b'
+    if (this.config.backend === 'openai-compatible' || this.config.backend === 'openrouter') {
+      return this.config.openAiCompatible?.model ?? 'gpt-4.1-mini'
+    }
     return this.config.anthropic?.model ?? 'claude-sonnet-4-20250514'
   }
 
@@ -1030,6 +1038,17 @@ export class QueryEngine {
         this.abortController.signal,
       )
     }
+
+    if (this.config.backend === 'openai-compatible' || this.config.backend === 'openrouter') {
+      return streamOpenAiCompatibleMessages(
+        this.config.openAiCompatible!,
+        apiMessages,
+        systemPrompt,
+        toAPIToolDefs(toolDefs),
+        this.abortController.signal,
+      )
+    }
+
     return streamMessages(
       this.config.anthropic!,
       apiMessages,
@@ -1082,6 +1101,12 @@ export class QueryEngine {
       if (tool.name.match(new RegExp(rule.pattern, 'i'))) {
         return { kind: 'allow' }
       }
+    }
+
+    // Asking the user is itself the human-in-the-loop step. Requiring a
+    // separate approval before a low-risk clarification creates a dead-end UX.
+    if (tool.category === 'user_interaction' && tool.isReadOnly?.(input) && (tool.riskLevel ?? 'low') === 'low') {
+      return { kind: 'allow' }
     }
 
     // Strict mode and plan mode: ask for everything writeable
