@@ -2937,6 +2937,36 @@ fn sanitize_crew_request_snapshot(request: &CrewExecuteRequest) -> CrewExecuteRe
   snapshot
 }
 
+fn ensure_crew_run_is_approved(
+  database: &Arc<Database>,
+  crew_id: &str,
+) -> Result<(), String> {
+  let pending_approvals = database
+    .list_crew_approvals(Some("pending"), Some(crew_id))
+    .map_err(|error| error.to_string())?;
+
+  let pending_run_gates = pending_approvals
+    .into_iter()
+    .filter(|approval| approval.approval_type.eq_ignore_ascii_case("run_gate"))
+    .collect::<Vec<_>>();
+
+  if pending_run_gates.is_empty() {
+    return Ok(());
+  }
+
+  let approval_ids = pending_run_gates
+    .iter()
+    .map(|approval| approval.id.clone())
+    .collect::<Vec<_>>()
+    .join(", ");
+
+  Err(format!(
+    "Crew-Start blockiert: offene run_gate-Freigaben fuer Crew {} ({}).",
+    crew_id,
+    approval_ids,
+  ))
+}
+
 fn persist_crew_execution_response(
   database: &Arc<Database>,
   request: &CrewExecuteRequest,
@@ -3013,6 +3043,7 @@ async fn execute_crew_request(
   }
 
   validate_crew_request(&request, &enabled_agents)?;
+  ensure_crew_run_is_approved(database, &request.id)?;
 
   let runtime_payload = serde_json::to_value(&request).map_err(|error| error.to_string())?;
   let started_at = chrono::Utc::now().to_rfc3339();
