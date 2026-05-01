@@ -11,6 +11,23 @@ import { useWorkTasksStore, type WorkTask, type WorkTaskRunner } from '../stores
 import { safeInvoke, safeInvokeVoid } from '../utils/safeInvoke'
 import { streamChatTurn } from '../utils/ollamaStreaming'
 
+type CrewDefinitionVersionRow = {
+  id: string
+  crewId: string
+  versionNumber: number
+  changeSummary: string | null
+  definitionJson: string
+  createdAt: string
+}
+
+type CrewScheduleSnapshotMetadata = {
+  snapshotSource: 'live' | 'saved-version'
+  definitionVersionId?: string
+  definitionVersionNumber?: number
+  definitionChangeSummary?: string | null
+  definitionSavedAt?: string | null
+}
+
 type CrewExecutionLog = {
   id: string
   crewId: string
@@ -181,6 +198,85 @@ function formatCrewLogMessage(log: CrewExecutionLog): string {
     `Agent: ${log.agentId}`,
     log.result.trim(),
   ].filter(Boolean).join('\n\n')
+}
+
+function hydrateCrewFromDefinition(baseCrew: Crew, rawDefinition: string): Crew | null {
+  try {
+    const parsed = JSON.parse(rawDefinition) as Partial<Crew>
+    return {
+      ...baseCrew,
+      ...parsed,
+      providerProfiles: parsed.providerProfiles ?? baseCrew.providerProfiles,
+      agents: Array.isArray(parsed.agents) ? parsed.agents : baseCrew.agents,
+      tasks: Array.isArray(parsed.tasks) ? parsed.tasks : baseCrew.tasks,
+      runtimeConfig: parsed.runtimeConfig ?? baseCrew.runtimeConfig,
+      status: baseCrew.status,
+      createdAt: baseCrew.createdAt,
+      updatedAt: baseCrew.updatedAt,
+    }
+  } catch {
+    return null
+  }
+}
+
+async function resolveCrewScheduleSource(crew: Crew): Promise<{ crew: Crew; metadata: CrewScheduleSnapshotMetadata }> {
+  try {
+    const versions = await safeInvoke<CrewDefinitionVersionRow[]>('crew_definition_versions_list', { crewId: crew.id }, [])
+    const latestVersion = Array.isArray(versions) ? versions[0] : undefined
+    if (!latestVersion?.definitionJson?.trim()) {
+      return {
+        crew,
+        metadata: { snapshotSource: 'live' },
+      }
+    }
+
+    const hydrated = hydrateCrewFromDefinition(crew, latestVersion.definitionJson)
+    if (!hydrated) {
+      return {
+        crew,
+        metadata: { snapshotSource: 'live' },
+      }
+    }
+
+    return {
+      crew: hydrated,
+      metadata: {
+        snapshotSource: 'saved-version',
+        definitionVersionId: latestVersion.id,
+        definitionVersionNumber: latestVersion.versionNumber,
+        definitionChangeSummary: latestVersion.changeSummary,
+        definitionSavedAt: latestVersion.createdAt,
+      },
+    }
+  } catch {
+    return {
+      crew,
+      metadata: { snapshotSource: 'live' },
+    }
+  }
+}
+
+function readCrewScheduleSnapshotMetadata(snapshotJson: string | null | undefined): CrewScheduleSnapshotMetadata | null {
+  if (!snapshotJson?.trim()) {
+    return null
+  }
+
+  try {
+    const parsed = JSON.parse(snapshotJson) as Partial<CrewScheduleSnapshotMetadata>
+    if (parsed.snapshotSource !== 'live' && parsed.snapshotSource !== 'saved-version') {
+      return null
+    }
+
+    return {
+      snapshotSource: parsed.snapshotSource,
+      definitionVersionId: typeof parsed.definitionVersionId === 'string' ? parsed.definitionVersionId : undefined,
+      definitionVersionNumber: typeof parsed.definitionVersionNumber === 'number' ? parsed.definitionVersionNumber : undefined,
+      definitionChangeSummary: typeof parsed.definitionChangeSummary === 'string' || parsed.definitionChangeSummary === null ? parsed.definitionChangeSummary : undefined,
+      definitionSavedAt: typeof parsed.definitionSavedAt === 'string' || parsed.definitionSavedAt === null ? parsed.definitionSavedAt : undefined,
+    }
+  } catch {
+    return null
+  }
 }
 
 export default function TasksView() {
@@ -667,11 +763,13 @@ export default function TasksView() {
         return
       }
 
-      const crew = crewsById.get(task.crewId)
-      if (!crew) {
+      const currentCrew = crewsById.get(task.crewId)
+      if (!currentCrew) {
         updateTask(task.id, { scheduleEnabled: false })
         return
       }
+
+      const { crew, metadata } = await resolveCrewScheduleSource(currentCrew)
 
       const enabledAgents = crew.agents.filter((agent) => agent.enabled)
       const agentId = resolveDefaultAgentId(crew)
@@ -744,6 +842,11 @@ export default function TasksView() {
         ],
         config,
         cwd: normalizedWorkDir || null,
+        snapshotSource: metadata.snapshotSource,
+        definitionVersionId: metadata.definitionVersionId,
+        definitionVersionNumber: metadata.definitionVersionNumber,
+        definitionChangeSummary: metadata.definitionChangeSummary,
+        definitionSavedAt: metadata.definitionSavedAt,
       })
 
       scheduled = {
@@ -888,6 +991,9 @@ export default function TasksView() {
             {tasks.map((task) => {
               const scheduled = findScheduledTask(scheduledTasks, task.id)
               const crewName = task.crewId ? crewsById.get(task.crewId)?.name : null
+              const crewScheduleMetadata = task.runner === 'crew'
+                ? readCrewScheduleSnapshotMetadata(scheduled?.crewSnapshotJson)
+                : null
 
               return (
                 <div key={task.id} className="card">
@@ -1011,6 +1117,13 @@ export default function TasksView() {
                         <span className="hint-text">(Crew erforderlich fuer Crew-Schedule)</span>
                       ) : null}
                     </div>
+                    {task.runner === 'crew' && crewScheduleMetadata ? (
+                      <div className="hint-text" style={{ marginTop: 8 }}>
+                        {crewScheduleMetadata.snapshotSource === 'saved-version'
+                          ? `Quelle: gespeicherte Crew-Version v${crewScheduleMetadata.definitionVersionNumber ?? '—'}${crewScheduleMetadata.definitionSavedAt ? ` vom ${new Date(crewScheduleMetadata.definitionSavedAt).toLocaleString('de-DE')}` : ''}${crewScheduleMetadata.definitionChangeSummary ? ` · ${crewScheduleMetadata.definitionChangeSummary}` : ''}`
+                          : 'Quelle: aktueller Crew-Editor-Stand'}
+                      </div>
+                    ) : null}
                   </div>
 
                   {(task.output || task.error) && (

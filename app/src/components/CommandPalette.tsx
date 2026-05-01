@@ -1,4 +1,5 @@
 import { useMemo, useState, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useUiStore } from '../stores/uiStore'
 import { useCommandRegistry, type SlashCommandCategory } from '../stores/commandRegistryStore'
 
@@ -25,6 +26,7 @@ const CATEGORY_ORDER: SlashCommandCategory[] = [
 ]
 
 export default function CommandPalette() {
+  const navigate = useNavigate()
   const {
     commandPaletteOpen,
     setCommandPaletteOpen,
@@ -41,13 +43,14 @@ export default function CommandPalette() {
 
   const legacyCommands = useMemo(
     () => [
-      { id: 'switch-work', label: 'Zu Arbeitsbereich wechseln', hint: 'Ctrl+1', action: () => setActiveMode('work') },
-      { id: 'switch-settings', label: 'Zu Einstellungen wechseln', hint: 'Ctrl+2', action: () => setActiveMode('settings') },
+      { id: 'switch-work', label: 'Zu Arbeitsbereich wechseln', hint: 'Ctrl+1', action: () => { setActiveMode('work'); navigate('/') } },
+      { id: 'switch-settings', label: 'Zu Einstellungen wechseln', hint: 'Ctrl+2', action: () => { setActiveMode('settings'); navigate('/settings') } },
+      { id: 'switch-crew', label: 'Zum Crew-Bereich wechseln', hint: 'Ctrl+3', action: () => { setActiveMode('crew'); navigate('/crew') } },
       { id: 'toggle-left-sidebar', label: leftSidebarOpen ? 'Seitenleiste ausblenden' : 'Seitenleiste einblenden', hint: 'Ctrl+Shift+B', action: () => toggleLeftSidebar() },
       { id: 'show-shortcuts', label: 'Shortcut-Uebersicht anzeigen', hint: 'Ctrl+Shift+?', action: () => setShortcutsOverlayOpen(true) },
       { id: 'toggle-theme', label: theme === 'light' ? 'Dark Theme aktivieren' : 'Light Theme aktivieren', hint: 'Ctrl+Shift+L', action: () => toggleTheme() },
     ],
-    [leftSidebarOpen, setActiveMode, setShortcutsOverlayOpen, theme, toggleLeftSidebar, toggleTheme]
+    [leftSidebarOpen, navigate, setActiveMode, setShortcutsOverlayOpen, theme, toggleLeftSidebar, toggleTheme]
   )
 
   const isSlashQuery = query.startsWith('/')

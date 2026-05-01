@@ -2,6 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useConfigStore, type OllamaConfig } from '../stores/configStore'
 import { useCoworkStore } from '../stores/coworkStore'
 import { useCrewStore, type AgentRole, type CrewExternalProviderConfig, type CrewOutputMode, type CrewProcess, type CrewProviderKind } from '../stores/crewStore'
+import CrewControlPlanePanel from './crew/CrewControlPlanePanel'
+import CrewGovernancePanel from './crew/CrewGovernancePanel'
+import CrewHistoryPanel from './crew/CrewHistoryPanel'
 import CrewRuntimePanel from './crew/CrewRuntimePanel'
 import { safeInvoke } from '../utils/safeInvoke'
 
@@ -688,6 +691,16 @@ export default function CrewPanel() {
           {isCrewListVisible ? '🗂 Crew-Liste ausblenden' : '🗂 Crew-Liste anzeigen'}
         </button>
       </div>
+
+      {activeCrew && (
+        <div style={{ display: 'grid', gap: 16, marginBottom: 16 }}>
+          <CrewControlPlanePanel activeCrew={activeCrew} />
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 16 }}>
+            <CrewGovernancePanel activeCrewId={activeCrew.id} />
+            <CrewHistoryPanel activeCrewId={activeCrew.id} />
+          </div>
+        </div>
+      )}
 
       {crews.length === 0 ? (
         <div className="crew-empty">

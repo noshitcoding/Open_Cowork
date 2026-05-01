@@ -918,6 +918,49 @@ struct CrewRunHistoryRow {
   finished_at: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CrewDefinitionUpsertRequest {
+  id: String,
+  name: String,
+  description: Option<String>,
+  definition_json: String,
+  flow_json: Option<String>,
+  change_summary: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CrewRoleBindingUpsertRequest {
+  id: String,
+  scope_type: String,
+  scope_ref: Option<String>,
+  role: String,
+  subject: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CrewApprovalCreateRequest {
+  id: String,
+  crew_id: Option<String>,
+  run_id: Option<String>,
+  approval_type: String,
+  scope_ref: Option<String>,
+  status: Option<String>,
+  requested_by: Option<String>,
+  payload_json: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CrewApprovalResolveRequest {
+  id: String,
+  status: String,
+  resolved_by: Option<String>,
+  resolution_note: Option<String>,
+}
+
 fn default_crew_agent_enabled() -> bool {
   true
 }
@@ -3165,6 +3208,7 @@ async fn crew_execute_internal(
 ) -> Result<CrewExecutionResponse, String> {
   let started_at = chrono::Utc::now().to_rfc3339();
   let run_id = uuid::Uuid::new_v4().to_string();
+  let request_snapshot_json = serde_json::to_string(&sanitize_crew_request_snapshot(&request)).unwrap_or_else(|_| "{}".to_string());
 
   if request.tasks.is_empty() {
     return Err("Crew enthaelt keine Tasks".to_string());
@@ -3184,6 +3228,13 @@ async fn crew_execute_internal(
 
   validate_crew_request(&request, &enabled_agents)?;
   let policy = load_policy_state(database)?;
+  let _ = database.insert_crew_run_event(
+    &uuid::Uuid::new_v4().to_string(),
+    &run_id,
+    &request.id,
+    "run_started",
+    Some(&request_snapshot_json),
+  );
 
   if let Ok(mut canceled) = registry.canceled.lock() {
     canceled.remove(&request.id);
@@ -3400,7 +3451,7 @@ async fn crew_execute_internal(
   }
 
   let finished_at = chrono::Utc::now().to_rfc3339();
-  let crew_snapshot_json = serde_json::to_string(&sanitize_crew_request_snapshot(&request)).unwrap_or_else(|_| "{}".to_string());
+  let crew_snapshot_json = request_snapshot_json;
   let response = CrewExecutionResponse {
     crew_id: request.id.clone(),
     status: overall_status,
@@ -3422,6 +3473,31 @@ async fn crew_execute_internal(
     Some(&finished_at),
   );
   let _ = database.insert_crew_run_logs(&run_id, &response.logs);
+  let response_payload = serde_json::to_string(&response).ok();
+  let _ = database.insert_crew_run_event(
+    &uuid::Uuid::new_v4().to_string(),
+    &run_id,
+    &request.id,
+    "run_completed",
+    response_payload.as_deref(),
+  );
+  for log in &response.logs {
+    let payload = serde_json::json!({
+      "agentId": log.agent_id,
+      "taskId": log.task_id,
+      "action": log.action,
+      "result": log.result,
+      "timestamp": log.timestamp,
+    });
+    let payload_json = serde_json::to_string(&payload).ok();
+    let _ = database.insert_crew_run_event(
+      &uuid::Uuid::new_v4().to_string(),
+      &run_id,
+      &request.id,
+      "crew_log",
+      payload_json.as_deref(),
+    );
+  }
 
   Ok(response)
 }
@@ -3493,6 +3569,122 @@ fn crew_run_snapshot_get(
       .map_err(|err| err.to_string()),
     None => Ok(None),
   }
+}
+
+#[tauri::command]
+fn crew_definition_upsert(
+  state: tauri::State<'_, Arc<Database>>,
+  request: CrewDefinitionUpsertRequest,
+) -> Result<db::CrewDefinitionRow, String> {
+  state
+    .upsert_crew_definition(
+      &request.id,
+      &request.name,
+      request.description.as_deref().unwrap_or(""),
+      &request.definition_json,
+      request.flow_json.as_deref(),
+      request.change_summary.as_deref(),
+    )
+    .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn crew_definition_list(
+  state: tauri::State<'_, Arc<Database>>,
+) -> Result<Vec<db::CrewDefinitionRow>, String> {
+  state.list_crew_definitions().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn crew_definition_versions_list(
+  state: tauri::State<'_, Arc<Database>>,
+  crew_id: String,
+) -> Result<Vec<db::CrewDefinitionVersionRow>, String> {
+  state.list_crew_definition_versions(&crew_id).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn crew_role_binding_upsert(
+  state: tauri::State<'_, Arc<Database>>,
+  request: CrewRoleBindingUpsertRequest,
+) -> Result<db::CrewRoleBindingRow, String> {
+  state
+    .upsert_crew_role_binding(
+      &request.id,
+      &request.scope_type,
+      request.scope_ref.as_deref(),
+      &request.role,
+      &request.subject,
+    )
+    .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn crew_role_binding_list(
+  state: tauri::State<'_, Arc<Database>>,
+  scope_type: Option<String>,
+  scope_ref: Option<String>,
+) -> Result<Vec<db::CrewRoleBindingRow>, String> {
+  state
+    .list_crew_role_bindings(scope_type.as_deref(), scope_ref.as_deref())
+    .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn crew_approval_create(
+  state: tauri::State<'_, Arc<Database>>,
+  request: CrewApprovalCreateRequest,
+) -> Result<db::CrewApprovalRow, String> {
+  state
+    .insert_crew_approval(
+      &request.id,
+      request.crew_id.as_deref(),
+      request.run_id.as_deref(),
+      &request.approval_type,
+      request.scope_ref.as_deref(),
+      request.status.as_deref().unwrap_or("pending"),
+      request.requested_by.as_deref(),
+      request.payload_json.as_deref(),
+    )
+    .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn crew_approval_resolve(
+  state: tauri::State<'_, Arc<Database>>,
+  request: CrewApprovalResolveRequest,
+) -> Result<db::CrewApprovalRow, String> {
+  state
+    .resolve_crew_approval(
+      &request.id,
+      &request.status,
+      request.resolved_by.as_deref(),
+      request.resolution_note.as_deref(),
+    )
+    .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn crew_approval_list(
+  state: tauri::State<'_, Arc<Database>>,
+  status: Option<String>,
+  crew_id: Option<String>,
+) -> Result<Vec<db::CrewApprovalRow>, String> {
+  state
+    .list_crew_approvals(status.as_deref(), crew_id.as_deref())
+    .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn crew_run_events_list(
+  state: tauri::State<'_, Arc<Database>>,
+  run_id: Option<String>,
+  crew_id: Option<String>,
+  limit: Option<u32>,
+) -> Result<Vec<db::CrewRunEventRow>, String> {
+  state
+    .list_crew_run_events(run_id.as_deref(), crew_id.as_deref(), limit.unwrap_or(100).clamp(1, 500) as i64)
+    .map_err(|error| error.to_string())
 }
 
 // -- Ollama commands --------------------------------------------------------
@@ -8925,7 +9117,16 @@ pub fn run() {
       scheduler_set_task_active,
       scheduler_run_task_now,
       scheduler_list_runs,
+      crew_definition_upsert,
+      crew_definition_list,
+      crew_definition_versions_list,
+      crew_role_binding_upsert,
+      crew_role_binding_list,
+      crew_approval_create,
+      crew_approval_resolve,
+      crew_approval_list,
       crew_runs_list,
+      crew_run_events_list,
       crew_run_logs_list,
       crew_run_snapshot_get,
       export_save_text_file,

@@ -258,6 +258,67 @@ pub struct WorkerSandboxRow {
     pub ended_at: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CrewDefinitionRow {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub definition_json: String,
+    pub flow_json: Option<String>,
+    pub version_count: i32,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CrewDefinitionVersionRow {
+    pub id: String,
+    pub crew_id: String,
+    pub version_number: i32,
+    pub change_summary: Option<String>,
+    pub definition_json: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CrewRoleBindingRow {
+    pub id: String,
+    pub scope_type: String,
+    pub scope_ref: Option<String>,
+    pub role: String,
+    pub subject: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CrewApprovalRow {
+    pub id: String,
+    pub crew_id: Option<String>,
+    pub run_id: Option<String>,
+    pub approval_type: String,
+    pub scope_ref: Option<String>,
+    pub status: String,
+    pub requested_by: Option<String>,
+    pub resolved_by: Option<String>,
+    pub payload_json: Option<String>,
+    pub resolution_note: Option<String>,
+    pub requested_at: String,
+    pub resolved_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CrewRunEventRow {
+    pub id: String,
+    pub run_id: String,
+    pub crew_id: String,
+    pub event_type: String,
+    pub payload_json: Option<String>,
+    pub created_at: String,
+}
+
 fn map_insights_row(row: &rusqlite::Row) -> SqlResult<InsightsEventRow> {
     Ok(InsightsEventRow {
         id: row.get(0)?,
@@ -931,6 +992,87 @@ impl Database {
             )?;
         }
 
+        if version < 17 {
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS crew_definitions (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    description TEXT NOT NULL DEFAULT '',
+                    definition_json TEXT NOT NULL,
+                    flow_json TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS crew_definition_versions (
+                    id TEXT PRIMARY KEY,
+                    crew_id TEXT NOT NULL,
+                    version_number INTEGER NOT NULL,
+                    change_summary TEXT,
+                    definition_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(crew_id) REFERENCES crew_definitions(id) ON DELETE CASCADE
+                );
+
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_crew_definition_versions_unique
+                    ON crew_definition_versions(crew_id, version_number);
+
+                CREATE TABLE IF NOT EXISTS crew_role_bindings (
+                    id TEXT PRIMARY KEY,
+                    scope_type TEXT NOT NULL,
+                    scope_ref TEXT,
+                    role TEXT NOT NULL,
+                    subject TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_crew_role_bindings_scope
+                    ON crew_role_bindings(scope_type, scope_ref, role);
+
+                CREATE TABLE IF NOT EXISTS crew_approvals (
+                    id TEXT PRIMARY KEY,
+                    crew_id TEXT,
+                    run_id TEXT,
+                    approval_type TEXT NOT NULL,
+                    scope_ref TEXT,
+                    status TEXT NOT NULL,
+                    requested_by TEXT,
+                    resolved_by TEXT,
+                    payload_json TEXT,
+                    resolution_note TEXT,
+                    requested_at TEXT NOT NULL,
+                    resolved_at TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(crew_id) REFERENCES crew_definitions(id) ON DELETE SET NULL,
+                    FOREIGN KEY(run_id) REFERENCES crew_runs(id) ON DELETE SET NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_crew_approvals_status
+                    ON crew_approvals(status, requested_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_crew_approvals_run
+                    ON crew_approvals(run_id, requested_at DESC);
+
+                CREATE TABLE IF NOT EXISTS crew_run_events (
+                    id TEXT PRIMARY KEY,
+                    run_id TEXT NOT NULL,
+                    crew_id TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    payload_json TEXT,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(run_id) REFERENCES crew_runs(id) ON DELETE CASCADE
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_crew_run_events_run
+                    ON crew_run_events(run_id, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_crew_run_events_crew
+                    ON crew_run_events(crew_id, created_at DESC);
+
+                UPDATE schema_version SET version = 17;"
+            )?;
+        }
+
         Ok(())
     }
 
@@ -1136,6 +1278,349 @@ impl Database {
             params![run_id],
             |row| row.get(0),
         ).optional()
+    }
+
+    pub fn upsert_crew_definition(
+        &self,
+        id: &str,
+        name: &str,
+        description: &str,
+        definition_json: &str,
+        flow_json: Option<&str>,
+        change_summary: Option<&str>,
+    ) -> SqlResult<CrewDefinitionRow> {
+        let mut conn = self.conn.lock().map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let tx = conn.transaction()?;
+        tx.execute(
+            "INSERT INTO crew_definitions (id, name, description, definition_json, flow_json, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, datetime('now'), datetime('now'))
+             ON CONFLICT(id) DO UPDATE SET
+               name = excluded.name,
+               description = excluded.description,
+               definition_json = excluded.definition_json,
+               flow_json = excluded.flow_json,
+               updated_at = datetime('now')",
+            params![id, name, description, definition_json, flow_json],
+        )?;
+
+        let current_version = tx
+            .query_row(
+                "SELECT MAX(version_number) FROM crew_definition_versions WHERE crew_id = ?1",
+                params![id],
+                |row| row.get::<_, Option<i32>>(0),
+            )?
+            .unwrap_or(0);
+        let next_version = current_version + 1;
+
+        tx.execute(
+            "INSERT INTO crew_definition_versions (id, crew_id, version_number, change_summary, definition_json, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, datetime('now'))",
+            params![uuid::Uuid::new_v4().to_string(), id, next_version, change_summary, definition_json],
+        )?;
+
+        let row = tx.query_row(
+            "SELECT d.id, d.name, d.description, d.definition_json, d.flow_json,
+                    COALESCE((SELECT MAX(v.version_number) FROM crew_definition_versions v WHERE v.crew_id = d.id), 0),
+                    d.created_at, d.updated_at
+             FROM crew_definitions d
+             WHERE d.id = ?1",
+            params![id],
+            |row| {
+                Ok(CrewDefinitionRow {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    description: row.get(2)?,
+                    definition_json: row.get(3)?,
+                    flow_json: row.get(4)?,
+                    version_count: row.get(5)?,
+                    created_at: row.get(6)?,
+                    updated_at: row.get(7)?,
+                })
+            },
+        )?;
+
+        tx.commit()?;
+        Ok(row)
+    }
+
+    pub fn list_crew_definitions(&self) -> SqlResult<Vec<CrewDefinitionRow>> {
+        let conn = self.conn.lock().map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let mut stmt = conn.prepare(
+            "SELECT d.id, d.name, d.description, d.definition_json, d.flow_json,
+                    COALESCE((SELECT MAX(v.version_number) FROM crew_definition_versions v WHERE v.crew_id = d.id), 0),
+                    d.created_at, d.updated_at
+             FROM crew_definitions d
+             ORDER BY d.updated_at DESC"
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(CrewDefinitionRow {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                description: row.get(2)?,
+                definition_json: row.get(3)?,
+                flow_json: row.get(4)?,
+                version_count: row.get(5)?,
+                created_at: row.get(6)?,
+                updated_at: row.get(7)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    pub fn list_crew_definition_versions(&self, crew_id: &str) -> SqlResult<Vec<CrewDefinitionVersionRow>> {
+        let conn = self.conn.lock().map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let mut stmt = conn.prepare(
+            "SELECT id, crew_id, version_number, change_summary, definition_json, created_at
+             FROM crew_definition_versions
+             WHERE crew_id = ?1
+             ORDER BY version_number DESC"
+        )?;
+        let rows = stmt.query_map(params![crew_id], |row| {
+            Ok(CrewDefinitionVersionRow {
+                id: row.get(0)?,
+                crew_id: row.get(1)?,
+                version_number: row.get(2)?,
+                change_summary: row.get(3)?,
+                definition_json: row.get(4)?,
+                created_at: row.get(5)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    pub fn upsert_crew_role_binding(
+        &self,
+        id: &str,
+        scope_type: &str,
+        scope_ref: Option<&str>,
+        role: &str,
+        subject: &str,
+    ) -> SqlResult<CrewRoleBindingRow> {
+        let conn = self.conn.lock().map_err(|_| rusqlite::Error::InvalidQuery)?;
+        conn.execute(
+            "INSERT INTO crew_role_bindings (id, scope_type, scope_ref, role, subject, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, datetime('now'), datetime('now'))
+             ON CONFLICT(id) DO UPDATE SET
+               scope_type = excluded.scope_type,
+               scope_ref = excluded.scope_ref,
+               role = excluded.role,
+               subject = excluded.subject,
+               updated_at = datetime('now')",
+            params![id, scope_type, scope_ref, role, subject],
+        )?;
+
+        conn.query_row(
+            "SELECT id, scope_type, scope_ref, role, subject, created_at, updated_at
+             FROM crew_role_bindings WHERE id = ?1",
+            params![id],
+            |row| {
+                Ok(CrewRoleBindingRow {
+                    id: row.get(0)?,
+                    scope_type: row.get(1)?,
+                    scope_ref: row.get(2)?,
+                    role: row.get(3)?,
+                    subject: row.get(4)?,
+                    created_at: row.get(5)?,
+                    updated_at: row.get(6)?,
+                })
+            },
+        )
+    }
+
+    pub fn list_crew_role_bindings(
+        &self,
+        scope_type: Option<&str>,
+        scope_ref: Option<&str>,
+    ) -> SqlResult<Vec<CrewRoleBindingRow>> {
+        let conn = self.conn.lock().map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let mut stmt = conn.prepare(
+            "SELECT id, scope_type, scope_ref, role, subject, created_at, updated_at
+             FROM crew_role_bindings
+             WHERE (?1 IS NULL OR scope_type = ?1)
+               AND (?2 IS NULL OR scope_ref = ?2)
+             ORDER BY updated_at DESC"
+        )?;
+        let rows = stmt.query_map(params![scope_type, scope_ref], |row| {
+            Ok(CrewRoleBindingRow {
+                id: row.get(0)?,
+                scope_type: row.get(1)?,
+                scope_ref: row.get(2)?,
+                role: row.get(3)?,
+                subject: row.get(4)?,
+                created_at: row.get(5)?,
+                updated_at: row.get(6)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    pub fn insert_crew_approval(
+        &self,
+        id: &str,
+        crew_id: Option<&str>,
+        run_id: Option<&str>,
+        approval_type: &str,
+        scope_ref: Option<&str>,
+        status: &str,
+        requested_by: Option<&str>,
+        payload_json: Option<&str>,
+    ) -> SqlResult<CrewApprovalRow> {
+        let conn = self.conn.lock().map_err(|_| rusqlite::Error::InvalidQuery)?;
+        conn.execute(
+            "INSERT INTO crew_approvals (
+                id, crew_id, run_id, approval_type, scope_ref, status,
+                requested_by, resolved_by, payload_json, resolution_note,
+                requested_at, resolved_at, created_at, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, ?8, NULL, datetime('now'), NULL, datetime('now'), datetime('now'))",
+            params![id, crew_id, run_id, approval_type, scope_ref, status, requested_by, payload_json],
+        )?;
+
+        conn.query_row(
+            "SELECT id, crew_id, run_id, approval_type, scope_ref, status, requested_by, resolved_by, payload_json, resolution_note, requested_at, resolved_at, created_at, updated_at
+             FROM crew_approvals WHERE id = ?1",
+            params![id],
+            |row| {
+                Ok(CrewApprovalRow {
+                    id: row.get(0)?,
+                    crew_id: row.get(1)?,
+                    run_id: row.get(2)?,
+                    approval_type: row.get(3)?,
+                    scope_ref: row.get(4)?,
+                    status: row.get(5)?,
+                    requested_by: row.get(6)?,
+                    resolved_by: row.get(7)?,
+                    payload_json: row.get(8)?,
+                    resolution_note: row.get(9)?,
+                    requested_at: row.get(10)?,
+                    resolved_at: row.get(11)?,
+                    created_at: row.get(12)?,
+                    updated_at: row.get(13)?,
+                })
+            },
+        )
+    }
+
+    pub fn resolve_crew_approval(
+        &self,
+        id: &str,
+        status: &str,
+        resolved_by: Option<&str>,
+        resolution_note: Option<&str>,
+    ) -> SqlResult<CrewApprovalRow> {
+        let conn = self.conn.lock().map_err(|_| rusqlite::Error::InvalidQuery)?;
+        conn.execute(
+            "UPDATE crew_approvals
+             SET status = ?2,
+                 resolved_by = ?3,
+                 resolution_note = ?4,
+                 resolved_at = datetime('now'),
+                 updated_at = datetime('now')
+             WHERE id = ?1",
+            params![id, status, resolved_by, resolution_note],
+        )?;
+
+        conn.query_row(
+            "SELECT id, crew_id, run_id, approval_type, scope_ref, status, requested_by, resolved_by, payload_json, resolution_note, requested_at, resolved_at, created_at, updated_at
+             FROM crew_approvals WHERE id = ?1",
+            params![id],
+            |row| {
+                Ok(CrewApprovalRow {
+                    id: row.get(0)?,
+                    crew_id: row.get(1)?,
+                    run_id: row.get(2)?,
+                    approval_type: row.get(3)?,
+                    scope_ref: row.get(4)?,
+                    status: row.get(5)?,
+                    requested_by: row.get(6)?,
+                    resolved_by: row.get(7)?,
+                    payload_json: row.get(8)?,
+                    resolution_note: row.get(9)?,
+                    requested_at: row.get(10)?,
+                    resolved_at: row.get(11)?,
+                    created_at: row.get(12)?,
+                    updated_at: row.get(13)?,
+                })
+            },
+        )
+    }
+
+    pub fn list_crew_approvals(
+        &self,
+        status: Option<&str>,
+        crew_id: Option<&str>,
+    ) -> SqlResult<Vec<CrewApprovalRow>> {
+        let conn = self.conn.lock().map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let mut stmt = conn.prepare(
+            "SELECT id, crew_id, run_id, approval_type, scope_ref, status, requested_by, resolved_by, payload_json, resolution_note, requested_at, resolved_at, created_at, updated_at
+             FROM crew_approvals
+             WHERE (?1 IS NULL OR status = ?1)
+               AND (?2 IS NULL OR crew_id = ?2)
+             ORDER BY requested_at DESC"
+        )?;
+        let rows = stmt.query_map(params![status, crew_id], |row| {
+            Ok(CrewApprovalRow {
+                id: row.get(0)?,
+                crew_id: row.get(1)?,
+                run_id: row.get(2)?,
+                approval_type: row.get(3)?,
+                scope_ref: row.get(4)?,
+                status: row.get(5)?,
+                requested_by: row.get(6)?,
+                resolved_by: row.get(7)?,
+                payload_json: row.get(8)?,
+                resolution_note: row.get(9)?,
+                requested_at: row.get(10)?,
+                resolved_at: row.get(11)?,
+                created_at: row.get(12)?,
+                updated_at: row.get(13)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    pub fn insert_crew_run_event(
+        &self,
+        id: &str,
+        run_id: &str,
+        crew_id: &str,
+        event_type: &str,
+        payload_json: Option<&str>,
+    ) -> SqlResult<()> {
+        let conn = self.conn.lock().map_err(|_| rusqlite::Error::InvalidQuery)?;
+        conn.execute(
+            "INSERT INTO crew_run_events (id, run_id, crew_id, event_type, payload_json, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, datetime('now'))",
+            params![id, run_id, crew_id, event_type, payload_json],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_crew_run_events(
+        &self,
+        run_id: Option<&str>,
+        crew_id: Option<&str>,
+        limit: i64,
+    ) -> SqlResult<Vec<CrewRunEventRow>> {
+        let conn = self.conn.lock().map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let mut stmt = conn.prepare(
+            "SELECT id, run_id, crew_id, event_type, payload_json, created_at
+             FROM crew_run_events
+             WHERE (?1 IS NULL OR run_id = ?1)
+               AND (?2 IS NULL OR crew_id = ?2)
+             ORDER BY created_at DESC
+             LIMIT ?3"
+        )?;
+        let rows = stmt.query_map(params![run_id, crew_id, limit], |row| {
+            Ok(CrewRunEventRow {
+                id: row.get(0)?,
+                run_id: row.get(1)?,
+                crew_id: row.get(2)?,
+                event_type: row.get(3)?,
+                payload_json: row.get(4)?,
+                created_at: row.get(5)?,
+            })
+        })?;
+        rows.collect()
     }
 
     pub fn update_message_content(&self, id: &str, content: &str) -> SqlResult<()> {
@@ -3266,7 +3751,7 @@ mod tests {
     #[test]
     fn migration_creates_tables() {
         let db = Database::open_in_memory().unwrap();
-        db.insert_thread("t1", "Test Thread", "2025-01-01T00:00:00", Some("{\"provider\":\"ollama\"}")).unwrap();
+        db.insert_thread("t1", "Test Thread", "2025-01-01T00:00:00", Some("{\"provider\":\"ollama\"}"), None).unwrap();
         let threads = db.list_threads().unwrap();
         assert_eq!(threads.len(), 1);
         assert_eq!(threads[0].0, "t1");
@@ -3276,7 +3761,7 @@ mod tests {
     #[test]
     fn messages_round_trip() {
         let db = Database::open_in_memory().unwrap();
-        db.insert_thread("t1", "Thread", "2025-01-01T00:00:00", None).unwrap();
+        db.insert_thread("t1", "Thread", "2025-01-01T00:00:00", None, None).unwrap();
         db.insert_message("m1", "t1", "user", "Hello", 1000).unwrap();
         db.insert_message("m2", "t1", "assistant", "Hi", 1001).unwrap();
         let msgs = db.list_messages("t1").unwrap();
@@ -3309,7 +3794,7 @@ mod tests {
     #[test]
     fn delete_thread_cascades() {
         let db = Database::open_in_memory().unwrap();
-        db.insert_thread("t1", "Thread", "2025-01-01T00:00:00", None).unwrap();
+        db.insert_thread("t1", "Thread", "2025-01-01T00:00:00", None, None).unwrap();
         db.insert_message("m1", "t1", "user", "Hello", 1000).unwrap();
         db.delete_thread("t1").unwrap();
         let msgs = db.list_messages("t1").unwrap();

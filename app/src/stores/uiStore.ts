@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
-export type AppMode = 'work' | 'settings'
+export type AppMode = 'work' | 'settings' | 'crew'
 export type WorkingPathKind = 'file' | 'folder'
 export type ThemeMode = 'light' | 'dark'
 

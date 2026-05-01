@@ -224,6 +224,9 @@ export default function LeftSidebar() {
       <button type="button" className="btn-new-task" onClick={handleNewTask}>
         + Neuer Chat
       </button>
+      <button type="button" className="btn-sm" style={{ width: '100%', marginBottom: 12 }} onClick={() => navigate('/crew')}>
+        🚀 Crew Studio
+      </button>
 
       {/* Context Panel */}
       <div className="sidebar-section">
