@@ -102,7 +102,7 @@ pub struct CrewPythonBridge {
 #[derive(Debug, Default)]
 struct CrewPythonBridgeMetadata {
     last_bootstrap_at: Option<String>,
-    active_runs: HashMap<String, String>,
+    active_runs: HashMap<String, u32>,
 }
 
 impl CrewPythonBridge {
@@ -116,10 +116,9 @@ impl CrewPythonBridge {
         }
     }
 
-    #[allow(dead_code)]
-    fn set_active_run(&self, run_id: String, value: String) {
+    fn set_active_run(&self, run_id: String, pid: u32) {
         if let Ok(mut metadata) = self.metadata.lock() {
-            metadata.active_runs.insert(run_id, value);
+            metadata.active_runs.insert(run_id, pid);
         }
     }
 
@@ -127,6 +126,33 @@ impl CrewPythonBridge {
         if let Ok(mut metadata) = self.metadata.lock() {
             metadata.active_runs.remove(run_id);
         }
+    }
+
+    pub fn stop_active_run(&self, run_id: &str) -> Result<bool, String> {
+        let pid = self
+            .metadata
+            .lock()
+            .map_err(|_| "Crew runtime Metadaten gesperrt".to_string())?
+            .active_runs
+            .remove(run_id);
+
+        let Some(pid) = pid else {
+            return Ok(false);
+        };
+
+        #[cfg(target_os = "windows")]
+        let status = Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .status()
+            .map_err(|error| format!("Crew runtime Prozess konnte nicht beendet werden: {}", error))?;
+
+        #[cfg(not(target_os = "windows"))]
+        let status = Command::new("kill")
+            .args(["-TERM", &pid.to_string()])
+            .status()
+            .map_err(|error| format!("Crew runtime Prozess konnte nicht beendet werden: {}", error))?;
+
+        Ok(status.success())
     }
 }
 
@@ -196,7 +222,13 @@ fn command_available(command: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn run_python_json_command(python: &Path, script: &Path, subcommand: &str, payload: Option<&Value>) -> Result<Value, String> {
+fn run_python_json_command(
+    python: &Path,
+    script: &Path,
+    subcommand: &str,
+    payload: Option<&Value>,
+    active_run: Option<(&CrewPythonBridge, &str)>,
+) -> Result<Value, String> {
     let mut command = Command::new(python);
     command
         .arg(script)
@@ -206,15 +238,27 @@ fn run_python_json_command(python: &Path, script: &Path, subcommand: &str, paylo
         .stderr(Stdio::piped());
 
     let mut child = command.spawn().map_err(|error| format!("Crew runtime Prozess konnte nicht gestartet werden: {}", error))?;
+    let active_key = active_run.map(|(bridge, run_id)| {
+        bridge.set_active_run(run_id.to_string(), child.id());
+        (bridge, run_id.to_string())
+    });
 
     if let Some(input) = payload {
         let input_json = serde_json::to_vec(input).map_err(|error| error.to_string())?;
         if let Some(mut stdin) = child.stdin.take() {
-            stdin.write_all(&input_json).map_err(|error| format!("Crew runtime stdin fehlgeschlagen: {}", error))?;
+            stdin.write_all(&input_json).map_err(|error| {
+                if let Some((bridge, run_id)) = &active_key {
+                    bridge.clear_active_run(run_id);
+                }
+                format!("Crew runtime stdin fehlgeschlagen: {}", error)
+            })?;
         }
     }
 
     let output = child.wait_with_output().map_err(|error| format!("Crew runtime Prozessfehler: {}", error))?;
+    if let Some((bridge, run_id)) = &active_key {
+        bridge.clear_active_run(run_id);
+    }
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
 
@@ -321,7 +365,7 @@ fn crew_runtime_status_internal<R: Runtime>(
 
     let status_json = preferred_python
         .as_ref()
-        .and_then(|python| run_python_json_command(python, &main_script, "status", None).ok());
+        .and_then(|python| run_python_json_command(python, &main_script, "status", None, None).ok());
 
     let message = if status_json.is_some() {
         "Crew runtime Status erfolgreich geladen".to_string()
@@ -452,10 +496,7 @@ pub fn crew_runtime_execute_request<R: Runtime>(
         .and_then(Value::as_str)
         .unwrap_or("runtime-crew")
         .to_string();
-    bridge.set_active_run(run_id.clone(), chrono::Utc::now().to_rfc3339());
-
-    let result = run_python_json_command(&venv_python, &main_script, "execute", Some(payload));
-    bridge.clear_active_run(&run_id);
+    let result = run_python_json_command(&venv_python, &main_script, "execute", Some(payload), Some((bridge, &run_id)));
 
     let response = result?;
     serde_json::from_value::<CrewRuntimeExecuteResponse>(response).map_err(|error| error.to_string())
@@ -478,6 +519,6 @@ pub fn crew_runtime_validate_definition(
         return Err(format!("Crew runtime Skript fehlt: {}", main_script.display()));
     }
 
-    let result = run_python_json_command(&venv_python, &main_script, "validate", Some(&request.payload))?;
+    let result = run_python_json_command(&venv_python, &main_script, "validate", Some(&request.payload), None)?;
     serde_json::from_value::<CrewRuntimeValidateResponse>(result).map_err(|error| error.to_string())
 }
