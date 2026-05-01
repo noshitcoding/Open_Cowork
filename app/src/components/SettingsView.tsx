@@ -200,7 +200,7 @@ export default function SettingsView() {
 
         {/* ── Agent & Skills ────────── */}
         {activeCategory === 'agent' && (
-          <div className="settings-view">
+          <div className="settings-view settings-view-wide">
             <h1>Agent & Skills</h1>
             <p className="hint-text">Agent-Verhalten steuern, Skills verwalten und Pipelines konfigurieren</p>
 

@@ -42,6 +42,11 @@ type CrewResolvedProviderConfigs = {
 }
 
 function resolveDefaultAgentId(crew: Crew): string | null {
+  if (crew.process === 'hierarchical' && crew.managerAgentId) {
+    const manager = crew.agents.find((agent) => agent.enabled && agent.id === crew.managerAgentId)
+    if (manager) return manager.id
+  }
+
   const enabled = crew.agents.find((agent) => agent.enabled)
   if (enabled) return enabled.id
   return crew.agents[0]?.id ?? null

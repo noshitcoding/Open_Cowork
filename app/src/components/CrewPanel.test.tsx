@@ -146,7 +146,11 @@ describe('CrewPanel', () => {
     })
 
     await act(async () => {
-      fireEvent.change(screen.getByLabelText(/Crew-Provider/), { target: { value: 'openai-compatible' } })
+      fireEvent.click(screen.getByRole('button', { name: /Provider & Modell/i }))
+    })
+
+    await act(async () => {
+      fireEvent.change(screen.getByRole('combobox', { name: 'Crew-Provider' }), { target: { value: 'openai-compatible' } })
     })
 
     const crew = useCrewStore.getState().crews[0]
@@ -158,6 +162,6 @@ describe('CrewPanel', () => {
     expect(defaultAgent?.providerKind).toBe('openai-compatible')
     expect(customAgent?.providerKind).toBe('ollama')
     expect(customAgent?.modelOverride).toBe('llama3.1:70b')
-    expect(screen.getByText('Mitglieder mit eigenem Provider oder Modell bleiben beim Umschalten unveraendert.')).toBeInTheDocument()
+    expect(screen.getByText('Mitglieder mit eigenem Provider/Modell bleiben beim Umschalten unverändert.')).toBeInTheDocument()
   })
 })

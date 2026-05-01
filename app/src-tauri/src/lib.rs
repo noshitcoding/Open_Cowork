@@ -75,6 +75,7 @@ const POLICY_FLAG_FILE_READ: &str = "allowFileReadExtraction";
 const POLICY_FLAG_AUTO_COMPACT: &str = "autoCompactLongContext";
 const POLICY_FLAG_SHELL_EXECUTION: &str = "allowShellExecution";
 const POLICY_FLAG_WEB_SEARCH: &str = "allowWebSearch";
+const MAX_CREW_DELEGATION_DEPTH: usize = 4;
 const DEFAULT_POLICY_ENABLED_TOOL_IDS: &[&str] = &[
   "bash",
   "read_file",
@@ -879,6 +880,9 @@ struct CrewToolContext {
   cwd: Option<String>,
   requested_tool_ids: Vec<String>,
   mcp_server_names: HashSet<String>,
+  request_snapshot: CrewExecuteRequest,
+  delegation_enabled: bool,
+  delegation_depth: usize,
 }
 
 #[derive(Debug)]
@@ -921,6 +925,22 @@ fn default_manager_review_enabled() -> bool {
 
 fn default_share_all_task_outputs() -> bool {
   true
+}
+
+fn crew_agent_can_delegate(request: &CrewExecuteRequest, agent: &CrewExecuteAgentRequest) -> bool {
+  agent.allow_delegation
+    || (
+      request.process.eq_ignore_ascii_case("hierarchical")
+        && request.manager_agent_id.as_deref() == Some(agent.id.as_str())
+    )
+}
+
+fn build_effective_crew_tool_ids(request: &CrewExecuteRequest, agent: &CrewExecuteAgentRequest) -> Vec<String> {
+  let mut tool_ids = normalize_policy_enabled_tool_ids(&agent.tools);
+  if crew_agent_can_delegate(request, agent) && !tool_ids.iter().any(|tool_id| tool_id == "delegate_task") {
+    tool_ids.push("delegate_task".to_string());
+  }
+  tool_ids
 }
 
 #[derive(Debug, Serialize)]
@@ -1311,8 +1331,9 @@ fn build_crew_tool_context(
   agent: &CrewExecuteAgentRequest,
   task_id: &str,
   database: &Arc<Database>,
+  delegation_depth: usize,
 ) -> Result<CrewToolContext, String> {
-  let requested_tool_ids = normalize_policy_enabled_tool_ids(&agent.tools);
+  let requested_tool_ids = build_effective_crew_tool_ids(request, agent);
   let requested_cwd = request.cwd.as_deref().map(str::trim).filter(|value| !value.is_empty());
 
   if let Some(cwd) = requested_cwd {
@@ -1330,7 +1351,20 @@ fn build_crew_tool_context(
     cwd,
     requested_tool_ids,
     mcp_server_names: agent.mcp_server_names.iter().cloned().collect(),
+    request_snapshot: request.clone(),
+    delegation_enabled: crew_agent_can_delegate(request, agent),
+    delegation_depth,
   })
+}
+
+fn crew_active_delegate_targets(context: &CrewToolContext) -> Vec<CrewExecuteAgentRequest> {
+  context
+    .request_snapshot
+    .agents
+    .iter()
+    .filter(|agent| agent.enabled && agent.id != context.agent_id)
+    .cloned()
+    .collect()
 }
 
 fn crew_tool_allowed_by_flags(policy: &PolicyStatePayload, tool_id: &str) -> bool {
@@ -1345,6 +1379,12 @@ fn crew_tool_allowed_by_flags(policy: &PolicyStatePayload, tool_id: &str) -> boo
 }
 
 fn crew_tool_available_for_agent(policy: &PolicyStatePayload, context: &CrewToolContext, tool_id: &str) -> bool {
+  if tool_id == "delegate_task" {
+    return context.delegation_enabled
+      && context.delegation_depth < MAX_CREW_DELEGATION_DEPTH
+      && !crew_active_delegate_targets(context).is_empty();
+  }
+
   if !context.requested_tool_ids.iter().any(|requested| requested == tool_id) {
     return false;
   }
@@ -1549,6 +1589,41 @@ fn build_crew_chat_tool_defs(policy: &PolicyStatePayload, context: &CrewToolCont
     ));
   }
 
+  let delegate_targets = crew_active_delegate_targets(context);
+  if crew_tool_available_for_agent(policy, context, "delegate_task") {
+    let delegation_hint = delegate_targets
+      .iter()
+      .map(|agent| format!("{} [{}] Rolle: {}", agent.name, agent.id, agent.role))
+      .collect::<Vec<_>>()
+      .join("; ");
+    let agent_id_enum = delegate_targets
+      .iter()
+      .map(|agent| Value::String(agent.id.clone()))
+      .collect::<Vec<_>>();
+    let description = format!(
+      "Delegiert einen klar abgegrenzten Unterauftrag an ein anderes aktives Crew-Mitglied. Verfuegbare Ziele: {}.",
+      delegation_hint
+    );
+    tools.push(build_crew_chat_tool_def(
+      "delegate_task",
+      description.as_str(),
+      serde_json::json!({
+        "type": "object",
+        "properties": {
+          "agent_id": { "type": "string", "enum": agent_id_enum },
+          "task_description": { "type": "string" },
+          "expected_output": { "type": "string" },
+          "context": {
+            "type": "array",
+            "items": { "type": "string" },
+            "maxItems": 12
+          }
+        },
+        "required": ["agent_id", "task_description"]
+      }),
+    ));
+  }
+
   if crew_tool_available_for_agent(policy, context, "mcp") && !context.mcp_server_names.is_empty() {
     tools.push(build_crew_chat_tool_def(
       "mcp",
@@ -1618,6 +1693,26 @@ fn tool_arg_object(
       .and_then(|value| value.as_object())
       .cloned()
   })
+}
+
+fn tool_arg_string_array(arguments: &serde_json::Map<String, Value>, names: &[&str]) -> Vec<String> {
+  names
+    .iter()
+    .find_map(|name| {
+      arguments
+        .get(*name)
+        .and_then(|value| value.as_array())
+        .map(|values| {
+          values
+            .iter()
+            .filter_map(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| value.to_string())
+            .collect::<Vec<_>>()
+        })
+    })
+    .unwrap_or_default()
 }
 
 fn resolve_crew_tool_path(path: &str, cwd: Option<&str>) -> Result<String, String> {
@@ -1698,6 +1793,29 @@ async fn execute_crew_tool_call(
     truncate_chars(&args_json, 1_200),
   )];
 
+  if tool_id == "delegate_task" {
+    match execute_crew_delegate_tool_call(app, database, policy, context, &tool_call.function.arguments).await {
+      Ok((result, extra_logs)) => {
+        logs.extend(extra_logs);
+        logs.push(build_crew_log_row(
+          context,
+          format!("Tool abgeschlossen: {}", tool_id),
+          truncate_chars(&result, 1_200),
+        ));
+        return (result, logs);
+      }
+      Err((error, extra_logs)) => {
+        logs.extend(extra_logs);
+        logs.push(build_crew_log_row(
+          context,
+          format!("Tool fehlgeschlagen: {}", tool_id),
+          truncate_chars(&error, 1_200),
+        ));
+        return (error, logs);
+      }
+    }
+  }
+
   match execute_crew_tool_inner(app, database, policy, context, &tool_id, &tool_call.function.arguments).await {
     Ok(result) => {
       logs.push(build_crew_log_row(
@@ -1715,6 +1833,184 @@ async fn execute_crew_tool_call(
         truncate_chars(&error_text, 1_200),
       ));
       (error_text, logs)
+    }
+  }
+}
+
+async fn execute_crew_delegate_tool_call(
+  app: &tauri::AppHandle,
+  database: &Arc<Database>,
+  policy: &PolicyStatePayload,
+  context: &CrewToolContext,
+  arguments: &serde_json::Map<String, Value>,
+) -> Result<(String, Vec<CrewExecutionLogRow>), (String, Vec<CrewExecutionLogRow>)> {
+  let mut logs = Vec::new();
+
+  if !context.delegation_enabled {
+    return Err(("Delegation ist fuer diesen Agenten nicht aktiviert".to_string(), logs));
+  }
+
+  if context.delegation_depth >= MAX_CREW_DELEGATION_DEPTH {
+    return Err((
+      format!("Maximale Delegationstiefe von {} erreicht", MAX_CREW_DELEGATION_DEPTH),
+      logs,
+    ));
+  }
+
+  let Some(delegator) = context
+    .request_snapshot
+    .agents
+    .iter()
+    .find(|agent| agent.id == context.agent_id)
+    .cloned() else {
+      return Err((
+        format!("Delegierender Agent {} konnte nicht aufgeloest werden", context.agent_id),
+        logs,
+      ));
+    };
+
+  let available_targets = crew_active_delegate_targets(context);
+  if available_targets.is_empty() {
+    return Err(("Keine weiteren aktiven Crew-Mitglieder fuer Delegation verfuegbar".to_string(), logs));
+  }
+
+  let Some(target_agent_id) = tool_arg_string(arguments, &["agent_id", "target_agent_id", "delegate_to"]) else {
+    return Err(("delegate_task benoetigt agent_id".to_string(), logs));
+  };
+
+  let Some(target_agent) = available_targets
+    .iter()
+    .find(|agent| agent.id == target_agent_id)
+    .cloned() else {
+      let candidate_ids = available_targets
+        .iter()
+        .map(|agent| format!("{} [{}]", agent.name, agent.id))
+        .collect::<Vec<_>>()
+        .join(", ");
+      return Err((
+        format!(
+          "Delegationsziel {} ist nicht verfuegbar. Erlaubte Ziele: {}",
+          target_agent_id,
+          candidate_ids,
+        ),
+        logs,
+      ));
+    };
+
+  let Some(task_description) = tool_arg_string(arguments, &["task_description", "description", "prompt"]) else {
+    return Err(("delegate_task benoetigt task_description".to_string(), logs));
+  };
+  let expected_output = tool_arg_string(arguments, &["expected_output", "expectedOutput"]).unwrap_or_default();
+  let mut context_lines = tool_arg_string_array(arguments, &["context", "context_lines", "notes"]);
+  context_lines.push(format!(
+    "Delegiert von {} [{}]. Bearbeite nur diesen Unterauftrag und liefere kein Gesamtfazit fuer die gesamte Crew.",
+    delegator.name,
+    delegator.id,
+  ));
+
+  let synthetic_task_id = format!("{}::delegate::{}", context.task_id, uuid::Uuid::new_v4().simple());
+  logs.push(CrewExecutionLogRow {
+    id: uuid::Uuid::new_v4().to_string(),
+    crew_id: context.crew_id.clone(),
+    agent_id: delegator.id.clone(),
+    task_id: synthetic_task_id.clone(),
+    action: format!("Delegation gestartet an {}", target_agent.id),
+    result: truncate_chars(&task_description, 400),
+    timestamp: chrono::Utc::now().timestamp_millis(),
+  });
+
+  let delegated_task = CrewExecuteTaskRequest {
+    id: synthetic_task_id.clone(),
+    description: task_description.clone(),
+    expected_output,
+    agent_id: target_agent.id.clone(),
+    context: context_lines,
+    dependencies: Vec::new(),
+    async_execution: false,
+  };
+
+  let mut history = build_crew_task_history(&context.request_snapshot, &target_agent, &delegated_task, &HashMap::new());
+  history.push(ChatMessage {
+    role: "delegation".to_string(),
+    content: format!(
+      "Delegationsauftrag von {} [{}] an {} [{}]. Liefere nur den angeforderten Teilbeitrag in direkt nutzbarer Form.",
+      delegator.name,
+      delegator.id,
+      target_agent.name,
+      target_agent.id,
+    ),
+  });
+  let prompt = build_crew_task_prompt(&context.request_snapshot, &delegated_task);
+
+  let tool_context = match build_crew_tool_context(
+    &context.request_snapshot,
+    &target_agent,
+    &synthetic_task_id,
+    database,
+    context.delegation_depth + 1,
+  ) {
+    Ok(tool_context) => tool_context,
+    Err(error) => return Err((error, logs)),
+  };
+
+  let task_config = match resolve_crew_task_config(&context.request_snapshot, &target_agent) {
+    Ok(task_config) => task_config,
+    Err(error) => return Err((error, logs)),
+  };
+
+  let delegated_execution = Box::pin(execute_crew_chat(
+    app,
+    database,
+    policy,
+    task_config,
+    prompt,
+    history,
+    Some(&tool_context),
+    target_agent.max_iterations.max(1) as usize,
+  ));
+
+  match delegated_execution.await {
+    Ok(response) => {
+      logs.extend(response.logs);
+      logs.push(CrewExecutionLogRow {
+        id: uuid::Uuid::new_v4().to_string(),
+        crew_id: context.crew_id.clone(),
+        agent_id: target_agent.id.clone(),
+        task_id: synthetic_task_id,
+        action: format!("Delegation abgeschlossen: {}", target_agent.id),
+        result: truncate_chars(&response.assistant_message, 600),
+        timestamp: chrono::Utc::now().timestamp_millis(),
+      });
+      Ok((
+        format!(
+          "Delegiertes Ergebnis von {} [{}]:\n\n{}",
+          target_agent.name,
+          target_agent.id,
+          response.assistant_message,
+        ),
+        logs,
+      ))
+    }
+    Err(error) => {
+      logs.extend(error.logs);
+      logs.push(CrewExecutionLogRow {
+        id: uuid::Uuid::new_v4().to_string(),
+        crew_id: context.crew_id.clone(),
+        agent_id: target_agent.id.clone(),
+        task_id: synthetic_task_id,
+        action: format!("Delegation fehlgeschlagen: {}", target_agent.id),
+        result: truncate_chars(&error.message, 600),
+        timestamp: chrono::Utc::now().timestamp_millis(),
+      });
+      Err((
+        format!(
+          "Delegation an {} [{}] fehlgeschlagen: {}",
+          target_agent.name,
+          target_agent.id,
+          error.message,
+        ),
+        logs,
+      ))
     }
   }
 }
@@ -2114,6 +2410,30 @@ async fn execute_crew_tool_inner(
 }
 
 fn build_crew_system_prompt(request: &CrewExecuteRequest, agent: &CrewExecuteAgentRequest) -> String {
+  let effective_tools = build_effective_crew_tool_ids(request, agent);
+  let active_members = request
+    .agents
+    .iter()
+    .filter(|member| member.enabled)
+    .map(|member| {
+      let member_tools = build_effective_crew_tool_ids(request, member);
+      format!(
+        "- {} [{}] Rolle: {}; Ziel: {}; Delegation: {}; Tools: {}",
+        member.name,
+        member.id,
+        member.role,
+        member.goal,
+        crew_agent_can_delegate(request, member),
+        if member_tools.is_empty() { "keine".to_string() } else { member_tools.join(", ") },
+      )
+    })
+    .collect::<Vec<_>>()
+    .join("\n");
+  let delegation_hint = if crew_agent_can_delegate(request, agent) {
+    "Delegationshinweis: Du darfst delegate_task nutzen, um klar abgegrenzte Unterauftraege an andere aktive Crew-Mitglieder zu uebergeben. Verwende dafuer die exakte agent_id aus der Crew-Liste."
+  } else {
+    "Delegationshinweis: Delegation ist fuer dich deaktiviert. Bearbeite nur deinen eigenen Teilauftrag."
+  };
   let manager_hint = request.manager_agent_id.as_ref().map_or(String::new(), |manager_id| {
     if manager_id == &agent.id {
       if request.process.eq_ignore_ascii_case("hierarchical") {
@@ -2159,7 +2479,7 @@ fn build_crew_system_prompt(request: &CrewExecuteRequest, agent: &CrewExecuteAge
   };
 
   format!(
-    "Du arbeitest als Agent in der Crew \"{}\".\nBeschreibung: {}\nProzess: {}\n{}\n\nAgent:\n- Name: {}\n- Rolle: {}\n- Ziel: {}\n- Hintergrund: {}\n- skills.md: {}\n- {}\n- Provider: {}\n- Tools: {}\n- MCP-Zugriffe: {}\n- Arbeitsverzeichnis: {}\n- Delegation erlaubt: {}\n- Verbose: {}\n- Max Iterationen: {}\n- Max RPM der Crew: {}\n- Max parallele Tasks der Crew: {}\n- Verbose Crew-Kontext: {}\n- Crew-Zusatzanweisungen: {}\n- Gewuenschtes Ausgabeformat: {}\n- Stoppt nach erstem Fehler: {}\n- Retry-Versuche pro Task: {}\n- Manager-Review aktiv: {}\n- Teilt alle bisherigen Task-Ergebnisse global: {}\n- Zeichenlimit fuer geteilte Ergebnisse: {}\n\n{}",
+    "Du arbeitest als Agent in der Crew \"{}\".\nBeschreibung: {}\nProzess: {}\n{}\n\nAgent:\n- Name: {}\n- Rolle: {}\n- Ziel: {}\n- Hintergrund: {}\n- skills.md: {}\n- {}\n- Provider: {}\n- Tools: {}\n- MCP-Zugriffe: {}\n- Arbeitsverzeichnis: {}\n- Delegation erlaubt: {}\n- Verbose: {}\n- Max Iterationen: {}\n- Max RPM der Crew: {}\n- Max parallele Tasks der Crew: {}\n- Verbose Crew-Kontext: {}\n- Crew-Zusatzanweisungen: {}\n- Gewuenschtes Ausgabeformat: {}\n- Stoppt nach erstem Fehler: {}\n- Retry-Versuche pro Task: {}\n- Manager-Review aktiv: {}\n- Teilt alle bisherigen Task-Ergebnisse global: {}\n- Zeichenlimit fuer geteilte Ergebnisse: {}\n\nAktive Crew-Mitglieder:\n{}\n\n{}\n\n{}",
     request.name,
     request.description,
     request.process,
@@ -2171,10 +2491,10 @@ fn build_crew_system_prompt(request: &CrewExecuteRequest, agent: &CrewExecuteAge
     skills_hint,
     personality_hint,
     provider_hint,
-    agent.tools.join(", "),
+    effective_tools.join(", "),
     mcp_scope,
     workdir_hint,
-    agent.allow_delegation,
+    crew_agent_can_delegate(request, agent),
     agent.verbose,
     agent.max_iterations,
     request.max_rpm,
@@ -2187,6 +2507,8 @@ fn build_crew_system_prompt(request: &CrewExecuteRequest, agent: &CrewExecuteAge
     request.manager_review_enabled,
     request.share_all_task_outputs,
     request.shared_output_char_limit.max(0),
+    active_members,
+    delegation_hint,
     output_mode_hint,
   )
 }
@@ -2451,7 +2773,7 @@ async fn execute_manager_review(
     }
   };
 
-  let tool_context = match build_crew_tool_context(request, &manager_agent, &review_task_id, database) {
+  let tool_context = match build_crew_tool_context(request, &manager_agent, &review_task_id, database, 0) {
     Ok(context) => context,
     Err(error) => {
       return vec![CrewExecutionLogRow {
@@ -2585,7 +2907,7 @@ async fn execute_crew_task(
 
   let history = build_crew_task_history(&request, &agent, &task, &task_outputs);
   let prompt = build_crew_task_prompt(&request, &task);
-  let tool_context = match build_crew_tool_context(&request, &agent, &task.id, &database) {
+  let tool_context = match build_crew_tool_context(&request, &agent, &task.id, &database, 0) {
     Ok(context) => context,
     Err(error) => {
       logs.push(CrewExecutionLogRow {
@@ -2633,6 +2955,19 @@ async fn execute_crew_task(
       );
     }
   };
+
+  if crew_agent_can_delegate(&request, &agent) && !matches!(&task_config, CrewTaskProviderConfig::Ollama(_)) {
+    logs.push(CrewExecutionLogRow {
+      id: uuid::Uuid::new_v4().to_string(),
+      crew_id: request.id.clone(),
+      agent_id: agent.id.clone(),
+      task_id: task.id.clone(),
+      action: "Delegation eingeschraenkt".to_string(),
+      result: "Dieser Provider unterstuetzt im Crew-Lauf derzeit keinen Tool-Loop. Echte Delegation ueber delegate_task ist aktuell nur mit Ollama verfuegbar.".to_string(),
+      timestamp: chrono::Utc::now().timestamp_millis(),
+    });
+  }
+
   let max_attempts = request.retry_count.max(0) as usize + 1;
   let mut last_error_text = String::new();
 
@@ -6994,6 +7329,7 @@ fn canonical_policy_tool_id(tool: &str) -> String {
   let normalized = trimmed.to_ascii_lowercase();
 
   match normalized.as_str() {
+    "delegate" | "delegatetask" | "delegate_task" | "delegation" | "handoff" => "delegate_task".to_string(),
     "shell" | "bash" | "bashtool" => "bash".to_string(),
     "read" | "read_file" | "filereadtool" => "read_file".to_string(),
     "edit" | "edit_file" | "fileedittool" | "write" | "multiedit" | "append" => "edit_file".to_string(),
