@@ -168,6 +168,7 @@ const CLAUDE_TOOL_CAPABILITIES: ClaudeToolCapability[] = [
   { id: 'web_fetch', label: 'Web Fetch', description: 'Inhalte einer URL laden' },
   { id: 'web_search', label: 'Web Search', description: 'Web-Suche ueber Suchanfragen' },
   { id: 'todo', label: 'Task/Todo', description: 'Todo-Liste und Arbeitsplan pflegen' },
+  { id: 'delegate_task', label: 'Task delegieren', description: 'Aufgaben an andere Crew-Mitglieder delegieren' },
   { id: 'ask_user', label: 'Rueckfragen', description: 'Gezielte Rueckfragen fuer Klarheit' },
   { id: 'mcp', label: 'MCP Tools', description: 'MCP-Server und Tools nutzen' },
 ]

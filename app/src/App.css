@@ -3301,6 +3301,10 @@ button.compact-send-btn {
   background: var(--bg-white);
 }
 
+.crew-bulk-access-panel {
+  margin-bottom: 16px;
+}
+
 /* --- Scrollable tool/mcp lists --- */
 .crew-tool-list {
   display: flex;

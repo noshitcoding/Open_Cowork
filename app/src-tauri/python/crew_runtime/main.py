@@ -4,6 +4,7 @@ import argparse
 import contextlib
 import io
 import json
+import os
 import sys
 import time
 import traceback
@@ -97,6 +98,20 @@ def truncate_text(value: object, max_chars: int) -> str:
     if len(normalized) <= max_chars:
         return normalized
     return normalized[:max_chars].rstrip() + "..."
+
+
+def write_json_response(payload: dict) -> None:
+    """Write the protocol response while keeping late library stdout noise hidden."""
+    encoded = (json.dumps(payload) + "\n").encode("utf-8")
+    stdout = sys.__stdout__
+    if stdout is None:
+        return
+    try:
+        stdout.flush()
+    except Exception:
+        pass
+    os.write(stdout.fileno(), encoded)
+    sys.stdout = io.StringIO()
 
 
 def format_value_list(values: object) -> str:
@@ -210,13 +225,11 @@ def normalize_model_name(provider: str, model: str) -> str:
     normalized = str(model or "").strip()
     if not normalized:
         raise ValueError(f"Kein Modell fuer Provider '{provider}' konfiguriert.")
-    if "/" in normalized:
-        return normalized
     if provider == "openrouter":
-        return f"openrouter/{normalized}"
+        return normalized if normalized.startswith("openrouter/") else f"openrouter/{normalized}"
     if provider == "openai-compatible":
-        return f"openai/{normalized}"
-    return f"ollama/{normalized}"
+        return normalized if normalized.startswith("openai/") else f"openai/{normalized}"
+    return normalized if normalized.startswith("ollama/") else f"ollama/{normalized}"
 
 
 def build_llm(request: dict, agent: dict):
@@ -409,9 +422,16 @@ def execute_definition(payload: dict) -> dict:
         if not manager_agent_id or manager_agent_id not in agents_by_id:
             raise ValueError("Hierarchische Crew benoetigt einen aktiven Manager-Agenten.")
         manager_agent = agents_by_id[manager_agent_id]
+    crew_agents = [
+        agent
+        for agent_id, agent in agents_by_id.items()
+        if manager_agent is None or agent_id != manager_agent_id
+    ]
+    if not crew_agents:
+        raise ValueError("Crew benoetigt mindestens einen aktiven Nicht-Manager-Agenten.")
 
     crew_kwargs = {
-        "agents": list(agents_by_id.values()),
+        "agents": crew_agents,
         "tasks": [task_obj for _, task_obj in ordered_task_bindings],
         "process": resolve_process(process_name),
         "verbose": bool(payload.get("verbose")),
@@ -519,17 +539,17 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.command == "status":
-        print(json.dumps(runtime_status()))
+        write_json_response(runtime_status())
         return 0
 
     if args.command == "validate":
         payload = read_payload()
-        print(json.dumps(validate_definition(payload)))
+        write_json_response(validate_definition(payload))
         return 0
 
     if args.command == "execute":
         payload = read_payload()
-        print(json.dumps(execute_definition(payload)))
+        write_json_response(execute_definition(payload))
         return 0
 
     return 1

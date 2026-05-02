@@ -166,4 +166,37 @@ describe('CrewPanel', () => {
     expect(customAgent?.providerKind).toBe('openai-compatible')
     expect(screen.getByText('Der Crew-Provider gilt fuer alle Mitglieder. Pro Mitglied ist nur noch das Modell ueberschreibbar.')).toBeInTheDocument()
   })
+
+  it('can grant a tool to all crew members from the crew-level access panel', async () => {
+    await act(async () => {
+      render(<CrewPanel />)
+    })
+
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText('Task delegieren'))
+    })
+
+    const crew = useCrewStore.getState().crews[0]
+    expect(crew.agents.every((agent) => agent.tools.includes('delegate_task'))).toBe(true)
+    expect(crew.agents.every((agent) => agent.allowDelegation)).toBe(true)
+  })
+
+  it('can grant an MCP server to all crew members from the crew-level access panel', async () => {
+    useConfigStore.setState({
+      mcpServers: [
+        { name: 'workspace-mcp', command: 'node', args: 'server.js', env: {} },
+      ],
+    })
+
+    await act(async () => {
+      render(<CrewPanel />)
+    })
+
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText('workspace-mcp'))
+    })
+
+    const crew = useCrewStore.getState().crews[0]
+    expect(crew.agents.every((agent) => agent.mcpServerNames.includes('workspace-mcp'))).toBe(true)
+  })
 })

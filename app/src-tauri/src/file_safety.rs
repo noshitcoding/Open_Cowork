@@ -394,7 +394,11 @@ pub fn restore_backup(
     write_text_file(app_data_dir, target, &content, create_backup)
 }
 
-pub fn write_file_audit_details(path: &str, backup_path: Option<&str>, bytes: usize) -> serde_json::Value {
+pub fn write_file_audit_details(
+    path: &str,
+    backup_path: Option<&str>,
+    bytes: usize,
+) -> serde_json::Value {
     json!({
         "path": path,
         "backupPath": backup_path,

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useConfigStore, type OllamaConfig } from '../stores/configStore'
 import { useCoworkStore } from '../stores/coworkStore'
-import { useCrewStore, type AgentRole, type CrewExternalProviderConfig, type CrewOutputMode, type CrewProcess, type CrewProviderKind } from '../stores/crewStore'
+import { useCrewStore, type AgentRole, type CrewAgent, type CrewExternalProviderConfig, type CrewOutputMode, type CrewProcess, type CrewProviderKind } from '../stores/crewStore'
 import CrewControlPlanePanel from './crew/CrewControlPlanePanel'
 import CrewGovernancePanel from './crew/CrewGovernancePanel'
 import CrewHistoryPanel from './crew/CrewHistoryPanel'
@@ -32,6 +32,14 @@ function toggleStringValue(values: string[], nextValue: string): string[] {
   return values.includes(nextValue)
     ? values.filter((value) => value !== nextValue)
     : [...values, nextValue]
+}
+
+function setStringValue(values: string[], nextValue: string, enabled: boolean): string[] {
+  if (enabled) {
+    return values.includes(nextValue) ? values : [...values, nextValue]
+  }
+
+  return values.filter((value) => value !== nextValue)
 }
 
 function getProviderLabel(providerKind: CrewProviderKind): string {
@@ -272,7 +280,7 @@ export default function CrewPanel() {
     } : { openAICompatible: undefined, openRouter: undefined },
     [activeCrew, defaultOpenAICompatibleProfile, defaultOpenRouterProfile],
   )
-  const configuredMcpServers = mcpServers.length > 0 ? mcpServers : [mcpServer]
+  const configuredMcpServers = (mcpServers.length > 0 ? mcpServers : [mcpServer]).filter((server) => server.name.trim())
 
   const getProviderModelCacheKey = (providerKey: 'openAICompatible' | 'openRouter') => {
     const config = resolvedActiveProviderConfigs[providerKey]
@@ -433,6 +441,28 @@ export default function CrewPanel() {
   const updateActiveCrewAgent = (agentId: string, patch: Parameters<typeof updateCrewAgent>[2]) => {
     if (!activeCrew) return
     updateCrewAgent(activeCrew.id, agentId, patch)
+  }
+
+  const updateAllActiveCrewAgents = (mapper: (agent: CrewAgent) => CrewAgent) => {
+    if (!activeCrew) return
+    updateActiveCrew({
+      agents: activeCrew.agents.map(mapper),
+    })
+  }
+
+  const setCrewToolForAllAgents = (toolId: string, enabled: boolean) => {
+    updateAllActiveCrewAgents((agent) => ({
+      ...agent,
+      tools: setStringValue(agent.tools, toolId, enabled),
+      allowDelegation: toolId === 'delegate_task' ? enabled : agent.allowDelegation,
+    }))
+  }
+
+  const setCrewMcpServerForAllAgents = (serverName: string, enabled: boolean) => {
+    updateAllActiveCrewAgents((agent) => ({
+      ...agent,
+      mcpServerNames: setStringValue(agent.mcpServerNames, serverName, enabled),
+    }))
   }
 
   const handleDuplicateCrew = () => {
@@ -927,6 +957,56 @@ export default function CrewPanel() {
                     <span className="crew-section-icon">👥</span> Crew-Mitglieder ({activeCrew.agents.filter((a) => a.enabled).length}/{activeCrew.agents.length})
                   </div>
                   <div className="crew-section-body">
+                    <div className="crew-agent-panel crew-agent-panel-wide crew-bulk-access-panel">
+                      <div className="crew-agent-panel-header">
+                        <div className="crew-agent-panel-title">Freigaben fuer alle Mitglieder</div>
+                        <div className="crew-agent-panel-subtitle">Setzt Tool- und MCP-Zugriffe global fuer die aktive Crew.</div>
+                      </div>
+                      <div className="crew-agent-access-grid">
+                        <div className="crew-agent-subpanel">
+                          <div className="crew-form-group">
+                            <span className="crew-label">Tools</span>
+                            <div className="crew-tool-list">
+                              {claudeTools.map((tool) => {
+                                const allAgentsHaveTool = activeCrew.agents.length > 0 && activeCrew.agents.every((agent) => agent.tools.includes(tool.id))
+                                return (
+                                  <label key={tool.id} className="crew-tool-item">
+                                    <input
+                                      type="checkbox"
+                                      checked={allAgentsHaveTool}
+                                      onChange={(event) => setCrewToolForAllAgents(tool.id, event.target.checked)}
+                                    />
+                                    {tool.label}
+                                  </label>
+                                )
+                              })}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="crew-agent-subpanel">
+                          <div className="crew-form-group">
+                            <span className="crew-label">MCP-Zugriffe</span>
+                            {configuredMcpServers.length === 0 ? <span className="crew-hint">Keine MCP-Server konfiguriert.</span> : (
+                              <div className="crew-tool-list">
+                                {configuredMcpServers.map((srv) => {
+                                  const allAgentsHaveServer = activeCrew.agents.length > 0 && activeCrew.agents.every((agent) => agent.mcpServerNames.includes(srv.name))
+                                  return (
+                                    <label key={srv.name} className="crew-tool-item">
+                                      <input
+                                        type="checkbox"
+                                        checked={allAgentsHaveServer}
+                                        onChange={(event) => setCrewMcpServerForAllAgents(srv.name, event.target.checked)}
+                                      />
+                                      {srv.name}
+                                    </label>
+                                  )
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
                     <div className="crew-agents-list">
                       {activeCrew.agents.map((agent) => {
                         const effectiveProviderKind = activeCrew.defaultProvider || 'ollama'
@@ -1012,7 +1092,19 @@ export default function CrewPanel() {
                                       <div className="crew-form-group">
                                         <span className="crew-label">Tools</span>
                                         <div className="crew-tool-list">
-                                          {claudeTools.map((tool) => (<label key={tool.id} className="crew-tool-item"><input type="checkbox" checked={agent.tools.includes(tool.id)} onChange={() => updateActiveCrewAgent(agent.id, { tools: toggleStringValue(agent.tools, tool.id) })} />{tool.label}</label>))}
+                                          {claudeTools.map((tool) => (
+                                            <label key={tool.id} className="crew-tool-item">
+                                              <input
+                                                type="checkbox"
+                                                checked={agent.tools.includes(tool.id)}
+                                                onChange={(event) => updateActiveCrewAgent(agent.id, {
+                                                  tools: toggleStringValue(agent.tools, tool.id),
+                                                  allowDelegation: tool.id === 'delegate_task' ? event.target.checked : agent.allowDelegation,
+                                                })}
+                                              />
+                                              {tool.label}
+                                            </label>
+                                          ))}
                                         </div>
                                       </div>
                                     </div>

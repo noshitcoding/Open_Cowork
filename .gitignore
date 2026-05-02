@@ -11,6 +11,8 @@ app/src-tauri/target/
 app/src-tauri/python/crew_runtime/wheels/
 app/src-tauri/python/crew_runtime/wheels.zip
 app/src-tauri/resources/python/
+.tmp-bundled-python312-venv/
+app/src-tauri/python/crew_runtime/__pycache__/
 
 # Logs and temp
 *.log

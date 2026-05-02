@@ -3,6 +3,20 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+#[cfg(target_os = "windows")]
+fn suppress_command_window(command: &mut std::process::Command) {
+    command.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg(not(target_os = "windows"))]
+fn suppress_command_window(_command: &mut std::process::Command) {}
+
 // ── Backend config types ────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -179,6 +193,7 @@ pub fn execute_local(
     if let Some(ref dir) = cwd {
         cmd.current_dir(dir);
     }
+    suppress_command_window(&mut cmd);
 
     if let Some(ref env_vars) = config.env_vars {
         for (k, v) in env_vars {
@@ -246,33 +261,27 @@ pub fn dispatch_exec(
                 timed_out: false,
             }
         }
-        "ssh" => {
-            BackendExecResponse {
-                backend_id: backend_id.to_string(),
-                stdout: String::new(),
-                stderr: "SSH-Backend noch nicht implementiert".to_string(),
-                exit_code: None,
-                timed_out: false,
-            }
-        }
-        "hpc" => {
-            BackendExecResponse {
-                backend_id: backend_id.to_string(),
-                stdout: String::new(),
-                stderr: "HPC-Backend noch nicht implementiert".to_string(),
-                exit_code: None,
-                timed_out: false,
-            }
-        }
-        "serverless" => {
-            BackendExecResponse {
-                backend_id: backend_id.to_string(),
-                stdout: String::new(),
-                stderr: "Serverless-Backend noch nicht implementiert".to_string(),
-                exit_code: None,
-                timed_out: false,
-            }
-        }
+        "ssh" => BackendExecResponse {
+            backend_id: backend_id.to_string(),
+            stdout: String::new(),
+            stderr: "SSH-Backend noch nicht implementiert".to_string(),
+            exit_code: None,
+            timed_out: false,
+        },
+        "hpc" => BackendExecResponse {
+            backend_id: backend_id.to_string(),
+            stdout: String::new(),
+            stderr: "HPC-Backend noch nicht implementiert".to_string(),
+            exit_code: None,
+            timed_out: false,
+        },
+        "serverless" => BackendExecResponse {
+            backend_id: backend_id.to_string(),
+            stdout: String::new(),
+            stderr: "Serverless-Backend noch nicht implementiert".to_string(),
+            exit_code: None,
+            timed_out: false,
+        },
         _ => return Err(format!("Unbekannter Backend-Typ: {}", backend.backend_type)),
     };
 

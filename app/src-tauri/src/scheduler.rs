@@ -49,7 +49,10 @@ fn parse_interval_duration(value: &str) -> Result<Option<Duration>, String> {
         value.split_at(split_index)
     };
 
-    let amount = amount_raw.trim().parse::<i64>().map_err(|_| "invalid interval value")?;
+    let amount = amount_raw
+        .trim()
+        .parse::<i64>()
+        .map_err(|_| "invalid interval value")?;
     if amount < 1 {
         return Err("interval value must be at least 1".to_string());
     }
@@ -90,7 +93,8 @@ fn next_daily(now: DateTime<Utc>, hour: u32, minute: u32) -> DateTime<Utc> {
 }
 
 fn next_weekday(now: DateTime<Utc>, target_day: Weekday, hour: u32, minute: u32) -> DateTime<Utc> {
-    let mut days_ahead = target_day.num_days_from_monday() as i64 - now.weekday().num_days_from_monday() as i64;
+    let mut days_ahead =
+        target_day.num_days_from_monday() as i64 - now.weekday().num_days_from_monday() as i64;
     if days_ahead < 0 {
         days_ahead += 7;
     }
@@ -154,21 +158,27 @@ mod tests {
 
     #[test]
     fn parses_daily_expression() {
-        let now = DateTime::parse_from_rfc3339("2026-04-16T09:00:00Z").unwrap().with_timezone(&Utc);
+        let now = DateTime::parse_from_rfc3339("2026-04-16T09:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
         let next = next_run_from_expression("daily 10:00", now).unwrap();
         assert_eq!(next.to_rfc3339(), "2026-04-16T10:00:00+00:00");
     }
 
     #[test]
     fn parses_weekday_expression() {
-        let now = DateTime::parse_from_rfc3339("2026-04-16T09:00:00Z").unwrap().with_timezone(&Utc);
+        let now = DateTime::parse_from_rfc3339("2026-04-16T09:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
         let next = next_run_from_expression("montag 08:00", now).unwrap();
         assert_eq!(next.weekday(), Weekday::Mon);
     }
 
     #[test]
     fn parses_hourly_expression() {
-        let now = DateTime::parse_from_rfc3339("2026-04-16T09:00:00Z").unwrap().with_timezone(&Utc);
+        let now = DateTime::parse_from_rfc3339("2026-04-16T09:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
         let next = next_run_from_expression("every 1h", now).unwrap();
         assert_eq!(next.to_rfc3339(), "2026-04-16T10:00:00+00:00");
     }

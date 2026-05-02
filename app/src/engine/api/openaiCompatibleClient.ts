@@ -33,7 +33,7 @@ type APIToolDef = {
 type OpenAiCompatibleRequestMessage =
   | { role: 'system'; content: string }
   | { role: 'user'; content: string | OpenAiCompatibleContentPart[] }
-  | { role: 'assistant'; content: string | null; tool_calls?: OpenAiCompatibleToolCall[] }
+  | { role: 'assistant'; content: string | null; reasoning?: string | null; tool_calls?: OpenAiCompatibleToolCall[] }
   | { role: 'tool'; content: string; tool_call_id: string }
 
 type OpenAiCompatibleContentPart =
@@ -49,6 +49,12 @@ type OpenAiCompatibleToolCall = {
   }
 }
 
+type OpenAiCompatibleChoiceError = {
+  code?: number
+  message?: string
+  metadata?: Record<string, unknown>
+}
+
 type OpenAiCompatibleResponse = {
   id?: string
   model?: string
@@ -58,6 +64,7 @@ type OpenAiCompatibleResponse = {
   }
   choices?: Array<{
     finish_reason?: string | null
+    error?: OpenAiCompatibleChoiceError
     message?: {
       content?: string | Array<{ type?: string; text?: string; content?: string }> | null
       reasoning?: string | null
@@ -156,6 +163,7 @@ function blocksToUserContent(blocks: ContentBlock[]): string | OpenAiCompatibleC
 function toOpenAiCompatibleMessages(
   messages: APIMessage[],
   systemPrompt: string,
+  provider: OpenAiCompatibleConfig['provider'],
 ): OpenAiCompatibleRequestMessage[] {
   const result: OpenAiCompatibleRequestMessage[] = []
 
@@ -175,6 +183,12 @@ function toOpenAiCompatibleMessages(
         .join('\n\n')
         .trim()
 
+      const thinkingContent = blocks
+        .filter((block): block is Extract<ContentBlock, { type: 'thinking' }> => block.type === 'thinking')
+        .map((block) => block.thinking)
+        .join('\n\n')
+        .trim()
+
       const toolCalls = blocks
         .filter((block): block is Extract<ContentBlock, { type: 'tool_use' }> => block.type === 'tool_use')
         .map((block) => ({
@@ -186,10 +200,11 @@ function toOpenAiCompatibleMessages(
           },
         }))
 
-      if (textContent || toolCalls.length > 0) {
+      if (textContent || toolCalls.length > 0 || (provider === 'openrouter' && thinkingContent)) {
         result.push({
           role: 'assistant',
           content: textContent || null,
+          ...(provider === 'openrouter' && thinkingContent ? { reasoning: thinkingContent } : {}),
           ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
         })
       }
@@ -298,6 +313,17 @@ function extractReasoningContent(message: OpenAiCompatibleResponseMessage | unde
     .trim()
 }
 
+function formatChoiceError(providerLabel: string, error: OpenAiCompatibleChoiceError | undefined): string | null {
+  if (!error) return null
+
+  const message = typeof error.message === 'string' && error.message.trim()
+    ? error.message.trim()
+    : 'Unbekannter Fehler'
+  const code = typeof error.code === 'number' ? ` (${error.code})` : ''
+
+  return `${providerLabel} API Error${code}: ${message}`
+}
+
 function mapStopReason(
   finishReason: string | null | undefined,
   hasToolCalls: boolean,
@@ -333,7 +359,7 @@ export async function* streamOpenAiCompatibleMessages(
   }
 
   const endpoint = buildEndpoint(config.baseUrl)
-  const requestMessages = toOpenAiCompatibleMessages(messages, systemPrompt)
+  const requestMessages = toOpenAiCompatibleMessages(messages, systemPrompt, config.provider)
   const timeoutSignal = createAbortSignal(config.timeoutMs, signal)
 
   try {
@@ -389,6 +415,11 @@ export async function* streamOpenAiCompatibleMessages(
 
     const payload = await response.json() as OpenAiCompatibleResponse
     const choice = payload.choices?.[0]
+    const choiceError = formatChoiceError(providerLabel, choice?.error)
+    if (choiceError) {
+      throw new Error(choiceError)
+    }
+
     const message = choice?.message
     const reasoningContent = extractReasoningContent(message)
     const textContent = extractTextContent(message?.content).trim()
@@ -418,7 +449,11 @@ export async function* streamOpenAiCompatibleMessages(
     }
 
     if (resultContent.length === 0) {
-      throw new Error(`${providerLabel} lieferte keine Antwort.`)
+      const finishReason = choice?.finish_reason?.trim()
+      const finishReasonSuffix = finishReason && finishReason !== 'stop'
+        ? ` (finish_reason: ${finishReason})`
+        : ''
+      throw new Error(`${providerLabel} lieferte keine Antwort${finishReasonSuffix}.`)
     }
 
     const stopReason = mapStopReason(choice?.finish_reason, toolCalls.length > 0)

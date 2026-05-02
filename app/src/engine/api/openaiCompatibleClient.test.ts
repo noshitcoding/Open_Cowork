@@ -229,4 +229,101 @@ describe('streamOpenAiCompatibleMessages', () => {
       ],
     })
   })
+
+  it('preserves assistant reasoning for follow-up OpenRouter turns', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          id: 'resp-follow-up',
+          model: 'openai/gpt-4o-mini',
+          usage: { prompt_tokens: 15, completion_tokens: 3 },
+          choices: [{ finish_reason: 'stop', message: { content: 'Weiter geht es.' } }],
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      ),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { streamOpenAiCompatibleMessages } = await import('./openaiCompatibleClient')
+    const stream = streamOpenAiCompatibleMessages(
+      {
+        provider: 'openrouter',
+        apiKey: 'sk-or-test',
+        model: 'openai/gpt-4o-mini',
+        baseUrl: 'https://openrouter.ai/api/v1',
+      },
+      [
+        {
+          role: 'assistant',
+          content: [
+            { type: 'thinking', thinking: 'Ich muss erst den Dateibaum auswerten.' },
+            { type: 'text', text: 'Ich pruefe jetzt die Dateien.' },
+          ],
+        },
+        { role: 'user', content: 'Bitte mache weiter.' },
+      ],
+      'Systemprompt',
+    )
+
+    while (!(await stream.next()).done) {
+      // consume stream
+    }
+
+    const [, requestInit] = fetchMock.mock.calls[0] as [string, RequestInit]
+    const body = JSON.parse(String(requestInit.body))
+    expect(body.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: 'assistant',
+          content: 'Ich pruefe jetzt die Dateien.',
+          reasoning: 'Ich muss erst den Dateibaum auswerten.',
+        }),
+      ]),
+    )
+  })
+
+  it('surfaces normalized OpenRouter choice errors instead of masking them as empty responses', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          id: 'resp-choice-error',
+          model: 'openai/gpt-4o-mini',
+          choices: [{
+            finish_reason: 'error',
+            error: {
+              code: 502,
+              message: 'Upstream provider timeout',
+            },
+            message: { content: null },
+          }],
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      ),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { streamOpenAiCompatibleMessages } = await import('./openaiCompatibleClient')
+    const stream = streamOpenAiCompatibleMessages(
+      {
+        provider: 'openrouter',
+        apiKey: 'sk-or-test',
+        model: 'openai/gpt-4o-mini',
+        baseUrl: 'https://openrouter.ai/api/v1',
+      },
+      [{ role: 'user', content: 'Bitte antworte.' }],
+      'Systemprompt',
+    )
+
+    await expect((async () => {
+      while (!(await stream.next()).done) {
+        // consume stream
+      }
+    })()).rejects.toThrow('OpenRouter API Error (502): Upstream provider timeout')
+  })
 })
