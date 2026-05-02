@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
 export type WorkTaskRunner = 'crew' | 'model'
-export type WorkTaskStatus = 'idle' | 'running' | 'completed' | 'failed'
+export type WorkTaskStatus = 'idle' | 'waiting_approval' | 'running' | 'completed' | 'failed'
 
 export type WorkTask = {
   id: string
@@ -72,7 +72,7 @@ function normalizeTask(raw: Partial<WorkTask> & { id?: unknown }): WorkTask | nu
     model: typeof raw.model === 'string' ? raw.model : '',
     scheduleExpr: typeof raw.scheduleExpr === 'string' ? raw.scheduleExpr : '',
     scheduleEnabled: Boolean(raw.scheduleEnabled),
-    status: raw.status === 'idle' || raw.status === 'running' || raw.status === 'completed' || raw.status === 'failed' ? raw.status : 'idle',
+    status: raw.status === 'idle' || raw.status === 'waiting_approval' || raw.status === 'running' || raw.status === 'completed' || raw.status === 'failed' ? raw.status : 'idle',
     output: typeof raw.output === 'string' ? raw.output : null,
     error: typeof raw.error === 'string' ? raw.error : null,
     lastRunAt: typeof raw.lastRunAt === 'number' ? raw.lastRunAt : null,

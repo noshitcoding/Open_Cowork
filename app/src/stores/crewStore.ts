@@ -7,6 +7,7 @@ export type AgentRole = 'researcher' | 'writer' | 'reviewer' | 'planner' | 'exec
 export type CrewProcess = 'sequential' | 'parallel' | 'hierarchical'
 export type CrewProviderKind = 'ollama' | 'openai-compatible' | 'openrouter'
 export type CrewOutputMode = 'standard' | 'bullet-report' | 'json'
+export type CrewGovernanceMode = 'allow-all' | 'ask-risky' | 'ask-all' | 'read-only'
 
 export type CrewAgent = {
   id: string
@@ -62,7 +63,10 @@ export type Crew = {
   id: string
   name: string
   description: string
+  executionSubject: string
   executionGuidelines: string
+  knowledgeFocus: string
+  governanceMode: CrewGovernanceMode
   outputMode: CrewOutputMode
   stopOnFailure: boolean
   retryCount: number
@@ -81,7 +85,7 @@ export type Crew = {
   verbose: boolean
   maxRpm: number
   maxParallelTasks: number
-  status: 'idle' | 'running' | 'completed' | 'failed' | 'canceled'
+  status: 'idle' | 'running' | 'awaiting-approval' | 'completed' | 'failed' | 'canceled'
   createdAt: number
   updatedAt: number
 }
@@ -272,6 +276,11 @@ const DEFAULT_CREW_PROVIDER_PROFILES: CrewProviderProfiles = {
 
 const DEFAULT_CREW_OUTPUT_MODE: CrewOutputMode = 'standard'
 const DEFAULT_CREW_PROVIDER: CrewProviderKind = 'ollama'
+const DEFAULT_CREW_GOVERNANCE_MODE: CrewGovernanceMode = 'allow-all'
+
+function isCrewAwaitingApproval(message: string): boolean {
+  return message.trim().toLowerCase().startsWith('crew wartet auf freigabe:')
+}
 
 function resolveCrewRuntimeConfig(crew: Crew, fallbackConfig?: OllamaConfig) {
   if (!crew.runtimeConfig.enabled) {
@@ -306,7 +315,10 @@ function resolveExternalProviderConfig(
 function normalizeCrewStateEntry(crew: Crew): Crew {
   return {
     ...crew,
+    executionSubject: crew.executionSubject ?? 'workspace-user',
     executionGuidelines: crew.executionGuidelines ?? '',
+    knowledgeFocus: crew.knowledgeFocus ?? '',
+    governanceMode: crew.governanceMode ?? DEFAULT_CREW_GOVERNANCE_MODE,
     outputMode: crew.outputMode ?? DEFAULT_CREW_OUTPUT_MODE,
     stopOnFailure: crew.stopOnFailure ?? false,
     retryCount: crew.retryCount ?? 0,
@@ -383,7 +395,10 @@ export const useCrewStore = create<CrewState>()(
           id,
           name,
           description: '',
+          executionSubject: 'workspace-user',
           executionGuidelines: '',
+          knowledgeFocus: '',
+          governanceMode: DEFAULT_CREW_GOVERNANCE_MODE,
           outputMode: DEFAULT_CREW_OUTPUT_MODE,
           stopOnFailure: false,
           retryCount: 0,
@@ -631,7 +646,10 @@ export const useCrewStore = create<CrewState>()(
               id: crew.id,
               name: crew.name,
               description: crew.description,
+              executionSubject: crew.executionSubject,
               executionGuidelines: crew.executionGuidelines,
+              knowledgeFocus: crew.knowledgeFocus,
+              governanceMode: crew.governanceMode,
               outputMode: crew.outputMode,
               stopOnFailure: crew.stopOnFailure,
               retryCount: crew.retryCount,
@@ -654,7 +672,7 @@ export const useCrewStore = create<CrewState>()(
                 skillsMarkdown: agent.skillsMarkdown,
                 personalityId: agent.personalityId,
                 modelOverride: agent.modelOverride?.trim() ? agent.modelOverride : null,
-                providerKind: agent.providerKind || crewDefaultProvider,
+                providerKind: crewDefaultProvider,
                 tools: agent.tools,
                 mcpServerNames: agent.mcpServerNames,
                 enabled: agent.enabled,
@@ -713,10 +731,28 @@ export const useCrewStore = create<CrewState>()(
           }
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
+          const awaitingApproval = isCrewAwaitingApproval(message)
           set(s => ({
             crews: s.crews.map(c =>
               c.id === crewId
-                ? { ...c, status: 'failed' as const, updatedAt: Date.now() }
+                ? {
+                    ...c,
+                    status: awaitingApproval ? 'awaiting-approval' as const : 'failed' as const,
+                    tasks: awaitingApproval
+                      ? c.tasks.map((task) => {
+                          if (blockedTaskIds.has(task.id)) {
+                            return task
+                          }
+
+                          return {
+                            ...task,
+                            status: 'pending',
+                            output: null,
+                          }
+                        })
+                      : c.tasks,
+                    updatedAt: Date.now(),
+                  }
                 : c
             ),
             executionLogs: [
@@ -725,7 +761,7 @@ export const useCrewStore = create<CrewState>()(
                 crewId,
                 agentId: crew.managerAgentId ?? crew.agents[0]?.id ?? 'unknown',
                 taskId: crew.tasks[0]?.id ?? 'unknown',
-                action: 'Crew-Ausfuehrung fehlgeschlagen',
+                action: awaitingApproval ? 'Crew wartet auf Freigabe' : 'Crew-Ausfuehrung fehlgeschlagen',
                 result: message,
                 timestamp: Date.now(),
               },

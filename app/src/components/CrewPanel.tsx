@@ -20,17 +20,22 @@ const PROVIDER_OPTIONS: Array<{ value: CrewProviderKind; label: string }> = [
   { value: 'openrouter', label: 'OpenRouter' },
 ]
 
+type ProviderModelState = {
+  loading: boolean
+  endpoint?: string
+  models: string[]
+  error?: string
+  cacheKey?: string
+}
+
 function toggleStringValue(values: string[], nextValue: string): string[] {
   return values.includes(nextValue)
     ? values.filter((value) => value !== nextValue)
     : [...values, nextValue]
 }
 
-function agentUsesCrewDefaultProvider(
-  agent: { providerKind?: CrewProviderKind; modelOverride?: string | null },
-  crewDefaultProvider: CrewProviderKind,
-): boolean {
-  return (agent.providerKind ?? crewDefaultProvider) === crewDefaultProvider && !agent.modelOverride?.trim()
+function getProviderLabel(providerKind: CrewProviderKind): string {
+  return PROVIDER_OPTIONS.find((option) => option.value === providerKind)?.label ?? providerKind
 }
 
 function resolveCrewRuntimeConfig(
@@ -112,6 +117,7 @@ type CrewProviderModelsResult = {
 function getCrewDiagnostics(crew: {
   process: CrewProcess
   managerAgentId: string | null
+  defaultProvider?: CrewProviderKind
   agents: Array<{ id: string; name: string; enabled: boolean; providerKind?: CrewProviderKind; modelOverride?: string | null }>
   providerProfiles?: {
     openAICompatible: CrewExternalProviderConfig
@@ -129,7 +135,8 @@ openRouterProfile?: { baseUrl?: string; model?: string; apiKey?: string }) {
     errors.push('Keine aktiven Crew-Mitglieder vorhanden.')
   }
 
-  const openAiAgents = enabledAgents.filter((agent) => agent.providerKind === 'openai-compatible')
+  const crewDefaultProvider = crew.defaultProvider ?? 'ollama'
+  const openAiAgents = crewDefaultProvider === 'openai-compatible' ? enabledAgents : []
   if (openAiAgents.length > 0) {
     const profile = crew.providerProfiles?.openAICompatible
     const effectiveApiKey = profile?.apiKey.trim() || openAIProfile?.apiKey?.trim() || ''
@@ -150,7 +157,7 @@ openRouterProfile?: { baseUrl?: string; model?: string; apiKey?: string }) {
     }
   }
 
-  const openRouterAgents = enabledAgents.filter((agent) => agent.providerKind === 'openrouter')
+  const openRouterAgents = crewDefaultProvider === 'openrouter' ? enabledAgents : []
   if (openRouterAgents.length > 0) {
     const profile = crew.providerProfiles?.openRouter
     const effectiveApiKey = profile?.apiKey.trim() || openRouterProfile?.apiKey?.trim() || ''
@@ -198,7 +205,7 @@ export default function CrewPanel() {
   const claudeTools = useCoworkStore((state) => state.claudeTools)
 
   const [crewName, setCrewName] = useState('')
-  const [providerModelOptions, setProviderModelOptions] = useState<Record<string, { loading: boolean; endpoint?: string; models: string[]; error?: string }>>({})
+  const [providerModelOptions, setProviderModelOptions] = useState<Record<string, ProviderModelState>>({})
   const [pendingScrollCrewId, setPendingScrollCrewId] = useState<string | null>(null)
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({ general: true, execution: false, provider: false, diagnostics: true })
   const [expandedAgents, setExpandedAgents] = useState<Record<string, boolean>>({})
@@ -267,6 +274,12 @@ export default function CrewPanel() {
   )
   const configuredMcpServers = mcpServers.length > 0 ? mcpServers : [mcpServer]
 
+  const getProviderModelCacheKey = (providerKey: 'openAICompatible' | 'openRouter') => {
+    const config = resolvedActiveProviderConfigs[providerKey]
+    if (!config) return ''
+    return `${config.baseUrl.trim()}::${config.apiKey.trim()}`
+  }
+
   const getProviderModelCatalog = (providerKind: CrewProviderKind) => {
     if (providerKind === 'ollama') {
       return {
@@ -326,8 +339,8 @@ export default function CrewPanel() {
       : activeCrew.providerProfiles.openRouter.enabled
   }
 
-  const getAgentModelOptions = (agent: { providerKind: CrewProviderKind; modelOverride?: string | null }) => {
-    const catalog = getProviderModelCatalog(agent.providerKind)
+  const getAgentModelOptions = (agent: { modelOverride?: string | null }) => {
+    const catalog = getProviderModelCatalog(activeCrew?.defaultProvider || 'ollama')
     const modelOverride = agent.modelOverride?.trim()
 
     if (!modelOverride || catalog.authoritative || catalog.models.includes(modelOverride)) {
@@ -340,14 +353,12 @@ export default function CrewPanel() {
   const handleCrewDefaultProviderChange = (providerKind: CrewProviderKind) => {
     if (providerKind !== 'ollama' && !isProviderEnabledForCrew(providerKind)) return
 
-    const currentDefaultProvider = activeCrew?.defaultProvider || 'ollama'
-
     updateActiveCrew({
       defaultProvider: providerKind,
       defaultModel: '',
       agents: activeCrew?.agents.map((agent) => ({
         ...agent,
-        providerKind: agentUsesCrewDefaultProvider(agent, currentDefaultProvider) ? providerKind : agent.providerKind,
+        providerKind,
       })),
     })
 
@@ -360,36 +371,24 @@ export default function CrewPanel() {
     }
   }
 
-  const handleAgentProviderKindChange = (agentId: string, providerKind: CrewProviderKind) => {
-    const agent = activeCrew?.agents.find((candidate) => candidate.id === agentId)
-    if (!agent) return
-    if (providerKind !== 'ollama' && !isProviderEnabledForCrew(providerKind)) return
-
-    const currentModelOverride = agent.modelOverride?.trim()
-    const nextCatalog = getProviderModelCatalog(providerKind)
-
-    updateActiveCrewAgent(agentId, {
-      providerKind,
-      modelOverride: currentModelOverride && nextCatalog.models.includes(currentModelOverride) ? currentModelOverride : null,
-    })
-
-    if (providerKind === 'ollama') {
-      return
-    }
-
-    const providerKey = providerKind === 'openai-compatible' ? 'openAICompatible' : 'openRouter'
-    const providerState = providerModelOptions[providerKey]
-
-    if (providerState?.loading || providerState?.models.length) {
-      return
-    }
-
-    void handleLoadProviderModels(providerKey)
-  }
-
   useEffect(() => {
     setProviderModelOptions({})
   }, [activeCrew?.id])
+
+  useEffect(() => {
+    if (!activeCrew) return
+
+    const providerKind = activeCrew.defaultProvider || 'ollama'
+    const providerKey = getProviderKey(providerKind)
+    if (!providerKey || !isProviderEnabledForCrew(providerKind)) return
+
+    const current = providerModelOptions[providerKey]
+    const cacheKey = getProviderModelCacheKey(providerKey)
+    if (current?.loading) return
+    if (current?.cacheKey === cacheKey && (current.endpoint || current.error)) return
+
+    void handleLoadProviderModels(providerKey)
+  }, [activeCrew, providerModelOptions, resolvedActiveProviderConfigs])
 
   useEffect(() => {
     if (!pendingScrollCrewId || activeCrew?.id !== pendingScrollCrewId) return
@@ -405,7 +404,7 @@ export default function CrewPanel() {
         const modelOverride = agent.modelOverride?.trim()
         if (!modelOverride) return false
 
-        const catalog = getProviderModelCatalog(agent.providerKind)
+        const catalog = getProviderModelCatalog(activeCrew.defaultProvider || 'ollama')
         return catalog.authoritative && !catalog.models.includes(modelOverride)
       })
       .map((agent) => agent.id)
@@ -614,6 +613,7 @@ export default function CrewPanel() {
   const handleLoadProviderModels = async (providerKey: 'openAICompatible' | 'openRouter') => {
     const config = resolvedActiveProviderConfigs[providerKey]
     if (!config) return
+    const cacheKey = getProviderModelCacheKey(providerKey)
 
     setProviderModelOptions((current) => ({
       ...current,
@@ -621,6 +621,7 @@ export default function CrewPanel() {
         loading: true,
         endpoint: current[providerKey]?.endpoint,
         models: current[providerKey]?.models ?? [],
+        cacheKey,
       },
     }))
 
@@ -639,6 +640,7 @@ export default function CrewPanel() {
           loading: false,
           endpoint: result.endpoint,
           models: result.models,
+          cacheKey,
         },
       }))
     } catch (error) {
@@ -649,6 +651,7 @@ export default function CrewPanel() {
           endpoint: config.baseUrl,
           models: current[providerKey]?.models ?? [],
           error: error instanceof Error ? error.message : String(error),
+          cacheKey,
         },
       }))
     }
@@ -779,9 +782,21 @@ export default function CrewPanel() {
                         <span className="crew-label">Beschreibung</span>
                         <AutoResizeTextarea className="crew-textarea" value={activeCrew.description} onChange={(e) => updateActiveCrew({ description: e.target.value })} />
                       </div>
+                      <div className="crew-form-row">
+                        <div className="crew-form-group">
+                          <span className="crew-label">Execution Subject</span>
+                          <input className="crew-input" value={activeCrew.executionSubject} onChange={(e) => updateActiveCrew({ executionSubject: e.target.value })} placeholder="workspace-user" />
+                          <span className="crew-hint">Muss zu einer hinterlegten Crew-Rolle passen, wenn Governance aktiv ist.</span>
+                        </div>
+                      </div>
                       <div className="crew-form-group full-width">
                         <span className="crew-label">Crew-Zusatzanweisungen</span>
                         <AutoResizeTextarea className="crew-textarea" value={activeCrew.executionGuidelines} onChange={(e) => updateActiveCrew({ executionGuidelines: e.target.value })} placeholder="z. B. Antworte mit Risiken, Annahmen und nächsten Schritten" />
+                      </div>
+                      <div className="crew-form-group full-width">
+                        <span className="crew-label">Knowledge-Fokus</span>
+                        <AutoResizeTextarea className="crew-textarea" value={activeCrew.knowledgeFocus} onChange={(e) => updateActiveCrew({ knowledgeFocus: e.target.value })} placeholder="z. B. priorisiere API-Vertraege, Scheduler-Verhalten und letzte Crew-Laeufe" />
+                        <span className="crew-hint">Lenkt die Memory- und Knowledge-Suche fuer den Python-Runtime-Prompt.</span>
                       </div>
                     </div>
                   )}
@@ -863,7 +878,7 @@ export default function CrewPanel() {
                               return <option key={o.value} value={o.value} disabled={!ok}>{ok ? o.label : `${o.label} (Profil aktivieren)`}</option>
                             })}
                           </select>
-                          <span className="crew-hint">Mitglieder mit eigenem Provider/Modell bleiben beim Umschalten unverändert.</span>
+                          <span className="crew-hint">Der Crew-Provider gilt fuer alle Mitglieder. Pro Mitglied ist nur noch das Modell ueberschreibbar.</span>
                         </div>
                         <div className="crew-form-group">
                           <span className="crew-label">Crew-Modell</span>
@@ -914,10 +929,11 @@ export default function CrewPanel() {
                   <div className="crew-section-body">
                     <div className="crew-agents-list">
                       {activeCrew.agents.map((agent) => {
-                        const pmc = getProviderModelCatalog(agent.providerKind)
+                        const effectiveProviderKind = activeCrew.defaultProvider || 'ollama'
+                        const pmc = getProviderModelCatalog(effectiveProviderKind)
                         const amo = getAgentModelOptions(agent)
                         const selModel = agent.modelOverride?.trim() && amo.includes(agent.modelOverride.trim()) ? agent.modelOverride.trim() : ''
-                        const effectiveModelLabel = selModel || getCrewDefaultModelLabel(agent.providerKind)
+                        const effectiveModelLabel = selModel || getCrewDefaultModelLabel(effectiveProviderKind)
                         const isOpen = expandedAgents[agent.id] ?? false
                         return (
                           <div key={agent.id} className={`crew-agent-card${!agent.enabled ? ' disabled' : ''}${isOpen ? ' open' : ''}`}>
@@ -927,7 +943,7 @@ export default function CrewPanel() {
                                 <div className="crew-agent-name">{agent.name}</div>
                                 <div className="crew-agent-role">{agent.role}</div>
                                 <div className="crew-agent-summary">
-                                  <span className="crew-inline-badge">{agent.providerKind}</span>
+                                  <span className="crew-inline-badge">{getProviderLabel(effectiveProviderKind)}</span>
                                   <span className="crew-inline-badge subtle">{effectiveModelLabel}</span>
                                 </div>
                               </div>
@@ -967,10 +983,8 @@ export default function CrewPanel() {
                                     <div className="crew-form-row">
                                       <div className="crew-form-group">
                                         <span className="crew-label">Provider</span>
-                                        <select className="crew-select" value={agent.providerKind} onChange={(e) => handleAgentProviderKindChange(agent.id, e.target.value as CrewProviderKind)}>
-                                          {PROVIDER_OPTIONS.map((o) => { const ok = o.value === agent.providerKind || isProviderEnabledForCrew(o.value); return <option key={o.value} value={o.value} disabled={!ok}>{ok ? o.label : `${o.label} (aktivieren)`}</option> })}
-                                        </select>
-                                        {agent.providerKind !== 'ollama' && !isProviderEnabledForCrew(agent.providerKind) && <span className="crew-hint" style={{ color: 'var(--danger)' }}>Provider nicht aktiviert.</span>}
+                                        <input className="crew-input" value={getProviderLabel(effectiveProviderKind)} readOnly />
+                                        <span className="crew-hint">Wird vom Crew-Provider gesteuert.</span>
                                       </div>
                                       <div className="crew-form-group">
                                         <span className="crew-label">Max Iterationen</span>
@@ -980,10 +994,10 @@ export default function CrewPanel() {
                                     <div className="crew-form-group">
                                       <span className="crew-label">Modell</span>
                                       <select className="crew-select" value={selModel} onChange={(e) => updateActiveCrewAgent(agent.id, { modelOverride: e.target.value || null })}>
-                                        <option value="">Crew-Modell ({getCrewDefaultModelLabel(agent.providerKind)})</option>
+                                        <option value="">Crew-Modell ({getCrewDefaultModelLabel(effectiveProviderKind)})</option>
                                         {amo.map((m) => <option key={m} value={m}>{m}</option>)}
                                       </select>
-                                      {agent.providerKind !== 'ollama' && pmc.models.length === 0 && <span className="crew-hint">Keine Modelle geladen.</span>}
+                                      {effectiveProviderKind !== 'ollama' && pmc.models.length === 0 && <span className="crew-hint">Keine Modelle geladen.</span>}
                                       <span className="crew-hint">Aktuell wirksam: {effectiveModelLabel}</span>
                                     </div>
                                   </div>

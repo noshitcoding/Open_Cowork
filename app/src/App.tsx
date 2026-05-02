@@ -7,10 +7,11 @@ import { useTaskStore } from './stores/taskStore'
 import { useLogStore } from './stores/logStore'
 import { useConfigStore } from './stores/configStore'
 import { useCoworkStore } from './stores/coworkStore'
+import { useCrewRuntimeStore } from './stores/crewRuntimeStore'
 import { writeAuditEvent } from './utils/audit'
 import { seedDefaultPersonalities, seedDefaultMemory } from './utils/defaultSeeds'
 import { startScheduledWorker, stopScheduledWorker } from './engine/scheduledWorker'
-import { safeInvoke } from './utils/safeInvoke'
+import { hasTauriRuntime, safeInvoke } from './utils/safeInvoke'
 import './App.css'
 
 const CoworkView = lazy(() => import('./components/CoworkView'))
@@ -58,6 +59,7 @@ function App() {
   const loadScheduledTasks = useCoworkStore((s) => s.loadScheduledTasks)
   const loadScheduledRuns = useCoworkStore((s) => s.loadScheduledRuns)
   const setPolicySnapshot = useCoworkStore((s) => s.setPolicySnapshot)
+  const ensureCrewRuntimeReady = useCrewRuntimeStore((s) => s.ensureReady)
 
   useEffect(() => {
     const startedAt = performance.now()
@@ -73,6 +75,9 @@ function App() {
       .catch(() => {})
     seedDefaultPersonalities().catch(() => {})
     seedDefaultMemory().catch(() => {})
+    if (hasTauriRuntime()) {
+      void ensureCrewRuntimeReady()
+    }
     addLog({
       level: 'info',
       area: 'runtime',
@@ -85,7 +90,7 @@ function App() {
     // Start scheduled tasks worker
     startScheduledWorker()
     return () => stopScheduledWorker()
-  }, [addLog, loadChatFromDb, loadScheduledRuns, loadScheduledTasks, loadTasksFromDb, setPolicySnapshot])
+  }, [addLog, ensureCrewRuntimeReady, loadChatFromDb, loadScheduledRuns, loadScheduledTasks, loadTasksFromDb, setPolicySnapshot])
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme

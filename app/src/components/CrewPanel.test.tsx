@@ -86,7 +86,10 @@ describe('CrewPanel', () => {
           id: 'crew-1',
           name: 'Test Crew',
           description: '',
+          executionSubject: 'workspace-user',
           executionGuidelines: '',
+          knowledgeFocus: '',
+          governanceMode: 'allow-all',
           outputMode: 'standard',
           stopOnFailure: false,
           retryCount: 0,
@@ -140,7 +143,7 @@ describe('CrewPanel', () => {
     })
   })
 
-  it('preserves custom member overrides when changing the crew provider', async () => {
+  it('syncs member providers to the crew provider when changing the crew provider', async () => {
     await act(async () => {
       render(<CrewPanel />)
     })
@@ -160,8 +163,7 @@ describe('CrewPanel', () => {
     expect(crew.defaultProvider).toBe('openai-compatible')
     expect(crew.defaultModel).toBe('')
     expect(defaultAgent?.providerKind).toBe('openai-compatible')
-    expect(customAgent?.providerKind).toBe('ollama')
-    expect(customAgent?.modelOverride).toBe('llama3.1:70b')
-    expect(screen.getByText('Mitglieder mit eigenem Provider/Modell bleiben beim Umschalten unverändert.')).toBeInTheDocument()
+    expect(customAgent?.providerKind).toBe('openai-compatible')
+    expect(screen.getByText('Der Crew-Provider gilt fuer alle Mitglieder. Pro Mitglied ist nur noch das Modell ueberschreibbar.')).toBeInTheDocument()
   })
 })

@@ -651,7 +651,10 @@ export default function TasksView() {
           id: crew.id,
           name: crew.name,
           description: crew.description,
+          executionSubject: crew.executionSubject,
           executionGuidelines: crew.executionGuidelines,
+          knowledgeFocus: crew.knowledgeFocus,
+          governanceMode: crew.governanceMode,
           outputMode: crew.outputMode,
           stopOnFailure: crew.stopOnFailure,
           retryCount: crew.retryCount,
@@ -674,7 +677,7 @@ export default function TasksView() {
             skillsMarkdown: agent.skillsMarkdown,
             personalityId: agent.personalityId,
             modelOverride: agent.modelOverride?.trim() ? agent.modelOverride : null,
-            providerKind: agent.providerKind || crewDefaultProvider,
+            providerKind: crewDefaultProvider,
             tools: agent.tools,
             mcpServerNames: agent.mcpServerNames,
             enabled: agent.enabled,
@@ -725,13 +728,14 @@ export default function TasksView() {
       })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
+      const waitingForApproval = message.trim().toLowerCase().startsWith('crew wartet auf freigabe:')
       addChatMessage(threadId, {
         role: 'assistant',
         content: message,
         timestamp: Date.now(),
       })
       updateTask(task.id, {
-        status: 'failed',
+        status: waitingForApproval ? 'waiting_approval' : 'failed',
         error: message,
         output: message,
         lastRunAt: Date.now(),
@@ -827,7 +831,7 @@ export default function TasksView() {
         agents: enabledAgents.map((agent) => ({
           ...agent,
           modelOverride: agent.modelOverride?.trim() ? agent.modelOverride : null,
-          providerKind: agent.providerKind || crewDefaultProvider,
+          providerKind: crewDefaultProvider,
         })),
         tasks: [
           {
@@ -1003,7 +1007,7 @@ export default function TasksView() {
                       <span style={{ fontSize: 11, padding: '1px 6px', borderRadius: 8, background: 'var(--accent)', color: '#fff' }}>
                         {task.runner === 'crew' ? 'Crew' : 'Modell'}
                       </span>
-                      <span style={{ fontSize: 11, padding: '1px 6px', borderRadius: 8, background: task.status === 'completed' ? 'var(--success)' : task.status === 'failed' ? 'var(--danger)' : task.status === 'running' ? 'var(--accent)' : 'var(--border-color)', color: task.status === 'idle' ? 'var(--text-secondary)' : '#fff' }}>
+                      <span style={{ fontSize: 11, padding: '1px 6px', borderRadius: 8, background: task.status === 'completed' ? 'var(--success)' : task.status === 'failed' ? 'var(--danger)' : task.status === 'running' ? 'var(--accent)' : task.status === 'waiting_approval' ? 'var(--warning)' : 'var(--border-color)', color: task.status === 'idle' ? 'var(--text-secondary)' : '#fff' }}>
                         {task.status}
                       </span>
                     </div>
@@ -1011,7 +1015,7 @@ export default function TasksView() {
                       <button type="button" onClick={() => void handleOpenTaskChat(task)}>
                         Chat
                       </button>
-                      <button type="button" onClick={() => void handleRunTask(task)} disabled={task.status === 'running' || !task.prompt.trim() || (task.runner === 'crew' && !task.crewId) || Boolean(task.workDir.trim() && !isAbsolutePath(task.workDir))}>
+                      <button type="button" onClick={() => void handleRunTask(task)} disabled={(task.status === 'running' || task.status === 'waiting_approval') || !task.prompt.trim() || (task.runner === 'crew' && !task.crewId) || Boolean(task.workDir.trim() && !isAbsolutePath(task.workDir))}>
                         Start
                       </button>
                       <button type="button" className="btn-secondary" onClick={() => removeTask(task.id)} disabled={task.status === 'running'}>

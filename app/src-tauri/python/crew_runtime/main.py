@@ -88,6 +88,124 @@ def now_ms() -> int:
     return int(time.time() * 1000)
 
 
+def normalize_text(value: object) -> str:
+    return " ".join(str(value or "").split())
+
+
+def truncate_text(value: object, max_chars: int) -> str:
+    normalized = normalize_text(value)
+    if len(normalized) <= max_chars:
+        return normalized
+    return normalized[:max_chars].rstrip() + "..."
+
+
+def format_value_list(values: object) -> str:
+    if not isinstance(values, list):
+        return "-"
+    normalized = [str(value).strip() for value in values if str(value).strip()]
+    return ", ".join(normalized) if normalized else "-"
+
+
+def get_agent_governance_access(payload: dict, agent_id: str) -> dict:
+    governance = payload.get("governance") or {}
+    for entry in governance.get("agentAccess") or []:
+        if isinstance(entry, dict) and str(entry.get("agentId") or "").strip() == agent_id:
+            return entry
+    return {}
+
+
+def build_governance_note(payload: dict, agent_payload: dict) -> str:
+    governance = payload.get("governance") or {}
+    subject = str(governance.get("subject") or "").strip() or "workspace-user"
+    subject_roles = format_value_list(governance.get("subjectRoles") or [])
+    pending_approvals = format_value_list(governance.get("pendingApprovalTypes") or [])
+    access = get_agent_governance_access(payload, str(agent_payload.get("id") or ""))
+
+    sections: list[str] = [
+        f"Execution subject: {subject}",
+        f"Active roles: {subject_roles}",
+    ]
+
+    if access:
+        sections.extend([
+            f"Allowed tools: {format_value_list(access.get('allowedTools') or [])}",
+            f"Blocked tools: {format_value_list(access.get('blockedTools') or [])}",
+            f"Allowed MCP servers: {format_value_list(access.get('allowedMcpServerNames') or [])}",
+            f"Blocked MCP servers: {format_value_list(access.get('blockedMcpServerNames') or [])}",
+            f"Delegation allowed: {'yes' if bool(access.get('delegationAllowed')) else 'no'}",
+        ])
+
+        gateway_hints = access.get("gatewayHints") or []
+        if isinstance(gateway_hints, list) and gateway_hints:
+            hint_lines = [f"- {truncate_text(hint, 240)}" for hint in gateway_hints[:4]]
+            sections.append("Gateway hints:\n" + "\n".join(hint_lines))
+
+    if pending_approvals != "-":
+        sections.append(f"Pending approval types: {pending_approvals}")
+
+    return "\n".join(sections)
+
+
+def build_memory_note(payload: dict) -> str:
+    memory_context = payload.get("memoryContext") or {}
+    sections: list[str] = []
+
+    summary = str(memory_context.get("summary") or "").strip()
+    if summary:
+        sections.append(summary)
+
+    query = str(memory_context.get("query") or "").strip()
+    if query:
+        sections.append(f"Knowledge query: {truncate_text(query, 240)}")
+
+    entries = memory_context.get("entries") or []
+    if isinstance(entries, list) and entries:
+        entry_lines = []
+        for entry in entries[:6]:
+            if not isinstance(entry, dict):
+                continue
+            scope = str(entry.get("scope") or "shared").strip()
+            category = str(entry.get("category") or "general").strip()
+            key = str(entry.get("key") or "entry").strip()
+            confidence = float(entry.get("confidence") or 0.0)
+            content = truncate_text(entry.get("content") or "", 260)
+            entry_lines.append(f"- [{scope}/{category}:{key}] ({confidence:.2f}) {content}")
+        if entry_lines:
+            sections.append("Relevant memory entries:\n" + "\n".join(entry_lines))
+
+    user_profile = memory_context.get("userProfile") or []
+    if isinstance(user_profile, list) and user_profile:
+        profile_lines = []
+        for entry in user_profile[:6]:
+            if not isinstance(entry, dict):
+                continue
+            key = str(entry.get("key") or "profile").strip()
+            value = truncate_text(entry.get("value") or "", 180)
+            confidence = float(entry.get("confidence") or 0.0)
+            profile_lines.append(f"- {key} ({confidence:.2f}): {value}")
+        if profile_lines:
+            sections.append("User profile hints:\n" + "\n".join(profile_lines))
+
+    hints = memory_context.get("hints") or []
+    if isinstance(hints, list) and hints:
+        hint_lines = [f"- {truncate_text(hint, 180)}" for hint in hints[:4]]
+        sections.append("Memory maintenance hints:\n" + "\n".join(hint_lines))
+
+    return "\n\n".join(section for section in sections if section.strip())
+
+
+def summarize_runtime_context(payload: dict) -> str:
+    governance = payload.get("governance") or {}
+    memory_context = payload.get("memoryContext") or {}
+    return " | ".join([
+        f"subject={str(governance.get('subject') or 'workspace-user').strip() or 'workspace-user'}",
+        f"roles={format_value_list(governance.get('subjectRoles') or [])}",
+        f"pendingApprovals={format_value_list(governance.get('pendingApprovalTypes') or [])}",
+        f"memoryEntries={len(memory_context.get('entries') or []) if isinstance(memory_context.get('entries') or [], list) else 0}",
+        f"profileHints={len(memory_context.get('userProfile') or []) if isinstance(memory_context.get('userProfile') or [], list) else 0}",
+    ])
+
+
 def normalize_model_name(provider: str, model: str) -> str:
     normalized = str(model or "").strip()
     if not normalized:
@@ -142,6 +260,10 @@ def build_agent(request: dict, agent_payload: dict):
     if skills_markdown:
         backstory = f"{backstory}\n\nSkills:\n{skills_markdown}".strip()
 
+    governance_note = build_governance_note(request, agent_payload)
+    if governance_note:
+        backstory = f"{backstory}\n\nGovernance:\n{governance_note}".strip()
+
     return Agent(
         role=str(agent_payload.get("role") or agent_payload.get("name") or "Crew Agent"),
         goal=str(agent_payload.get("goal") or "Aufgaben in der Crew erfolgreich ausfuehren."),
@@ -154,16 +276,25 @@ def build_agent(request: dict, agent_payload: dict):
     )
 
 
-def build_task_description(request: dict, task_payload: dict) -> str:
+def build_task_description(request: dict, task_payload: dict, agent_payload: dict) -> str:
     description = str(task_payload.get("description") or "").strip()
     execution_guidelines = str(request.get("executionGuidelines") or "").strip()
+    knowledge_focus = str(request.get("knowledgeFocus") or "").strip()
     cwd = str(request.get("cwd") or "").strip()
+    governance_note = build_governance_note(request, agent_payload)
+    memory_note = build_memory_note(request)
 
     additions = []
     if execution_guidelines:
         additions.append(f"Crew-Richtlinien:\n{execution_guidelines}")
+    if knowledge_focus:
+        additions.append(f"Knowledge focus:\n{knowledge_focus}")
     if cwd:
         additions.append(f"Arbeitsverzeichnis: {cwd}")
+    if governance_note:
+        additions.append(f"Governance-Kontext:\n{governance_note}")
+    if memory_note:
+        additions.append(f"Crew-Memory und Wissen:\n{memory_note}")
 
     if additions:
         return f"{description}\n\n" + "\n\n".join(additions)
@@ -233,6 +364,15 @@ def execute_definition(payload: dict) -> dict:
         if agent_id not in agents_by_id:
             raise ValueError(f"Task {task_id} referenziert unbekannten Agenten {agent_id}.")
 
+        agent_payload = next(
+            (
+                candidate
+                for candidate in agent_payloads
+                if isinstance(candidate, dict) and str(candidate.get("id") or "").strip() == agent_id
+            ),
+            {},
+        )
+
         context_refs = dedupe_task_refs([
             str(value)
             for value in [*(task_payload.get("context") or []), *(task_payload.get("dependencies") or [])]
@@ -241,7 +381,7 @@ def execute_definition(payload: dict) -> dict:
         context_tasks = [resolve_task(ref) for ref in context_refs]
 
         task_kwargs = {
-            "description": build_task_description(payload, task_payload),
+            "description": build_task_description(payload, task_payload, agent_payload),
             "expected_output": str(task_payload.get("expectedOutput") or "").strip() or "Erstelle ein vollstaendiges Ergebnis.",
             "agent": agents_by_id[agent_id],
         }
@@ -288,6 +428,16 @@ def execute_definition(payload: dict) -> dict:
     logs: list[dict] = []
     status = "completed"
     error_message = None
+
+    logs.append({
+        "id": str(uuid.uuid4()),
+        "crewId": crew_id,
+        "agentId": manager_agent_id or "python-runtime",
+        "taskId": ordered_task_bindings[0][0].get("id") if ordered_task_bindings else "runtime",
+        "action": "runtime_context",
+        "result": summarize_runtime_context(payload)[:4000],
+        "timestamp": now_ms(),
+    })
 
     try:
         crew = Crew(**crew_kwargs)

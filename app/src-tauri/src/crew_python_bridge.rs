@@ -11,6 +11,8 @@ use tauri::{AppHandle, Manager, Runtime, State};
 const EMBEDDED_WINDOWS_PYTHON_RELATIVE_PATH: &str = "python/windows/python.exe";
 const EMBEDDED_RUNTIME_SCRIPT_DIR: &str = "python/crew_runtime";
 const ENV_CREW_PYTHON: &str = "OPEN_COWORK_CREW_PYTHON";
+const MIN_SUPPORTED_PYTHON_MINOR: u32 = 10;
+const MAX_SUPPORTED_PYTHON_MINOR_EXCLUSIVE: u32 = 14;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -222,6 +224,57 @@ fn command_available(command: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn read_python_version(command: &str) -> Option<String> {
+    let output = Command::new(command)
+        .arg("--version")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let combined = if stdout.is_empty() { stderr } else { stdout };
+    let version = combined.strip_prefix("Python ")?.trim().to_string();
+    if version.is_empty() {
+        return None;
+    }
+
+    Some(version)
+}
+
+fn python_version_supported(version: &str) -> bool {
+    let mut parts = version.split('.');
+    let major = parts.next().and_then(|value| value.parse::<u32>().ok());
+    let minor = parts.next().and_then(|value| value.parse::<u32>().ok());
+
+    matches!((major, minor), (Some(3), Some(minor)) if minor >= MIN_SUPPORTED_PYTHON_MINOR && minor < MAX_SUPPORTED_PYTHON_MINOR_EXCLUSIVE)
+}
+
+fn resolve_local_wheels_path<R: Runtime>(app: &AppHandle<R>) -> PathBuf {
+    resolve_runtime_scripts_path(app).join("wheels")
+}
+
+fn local_wheels_available(path: &Path) -> bool {
+    std::fs::read_dir(path)
+        .ok()
+        .map(|entries| {
+            entries.filter_map(Result::ok).any(|entry| {
+                let file_path = entry.path();
+                file_path.is_file()
+                    && matches!(
+                        file_path.extension().and_then(|value| value.to_str()),
+                        Some("whl") | Some("zip")
+                    )
+            })
+        })
+        .unwrap_or(false)
+}
+
 fn run_python_json_command(
     python: &Path,
     script: &Path,
@@ -286,6 +339,7 @@ fn build_status_from_json<R: Runtime>(
     bridge: &CrewPythonBridge,
     runtime_root: &Path,
     detected_python_path: Option<String>,
+    detected_python_version: Option<String>,
     json: Option<Value>,
     message: String,
 ) -> CrewRuntimeStatusResponse {
@@ -300,7 +354,8 @@ fn build_status_from_json<R: Runtime>(
         .as_ref()
         .and_then(|value| value.get("pythonVersion"))
         .and_then(Value::as_str)
-        .map(ToString::to_string);
+        .map(ToString::to_string)
+        .or(detected_python_version);
     let crewai_version = json
         .as_ref()
         .and_then(|value| value.get("crewaiVersion"))
@@ -344,6 +399,13 @@ fn crew_runtime_status_internal<R: Runtime>(
     let main_script = scripts_path.join("main.py");
     let base_python = detect_base_python_command(&app);
     let detected_python_path = base_python.clone().filter(|command| command_available(command));
+    let detected_python_version = detected_python_path
+        .as_ref()
+        .and_then(|command| read_python_version(command));
+    let python_compatible = detected_python_version
+        .as_deref()
+        .map(python_version_supported)
+        .unwrap_or(false);
 
     if !main_script.exists() {
         return Ok(build_status_from_json(
@@ -351,6 +413,7 @@ fn crew_runtime_status_internal<R: Runtime>(
             bridge,
             &runtime_root,
             detected_python_path,
+            detected_python_version,
             None,
             "Crew runtime Skript fehlt".to_string(),
         ));
@@ -369,6 +432,11 @@ fn crew_runtime_status_internal<R: Runtime>(
 
     let message = if status_json.is_some() {
         "Crew runtime Status erfolgreich geladen".to_string()
+    } else if detected_python_path.is_some() && !python_compatible {
+        format!(
+            "Erkannter Python-Interpreter ({}) ist fuer CrewAI nicht kompatibel. Unterstuetzt wird Python 3.10 bis 3.13; fuer Produktiv-Builds wird das gebuendelte Python 3.12 erwartet.",
+            detected_python_version.clone().unwrap_or_else(|| "unbekannt".to_string())
+        )
     } else if preferred_python.is_none() {
         "Kein Python-Interpreter verfuegbar. Fuer produktive Builds wird die eingebettete Runtime erwartet.".to_string()
     } else {
@@ -380,6 +448,7 @@ fn crew_runtime_status_internal<R: Runtime>(
         bridge,
         &runtime_root,
         detected_python_path,
+        detected_python_version,
         status_json,
         message,
     ))
@@ -404,6 +473,7 @@ pub fn crew_runtime_bootstrap(
     let venv_root = runtime_root.join("venv");
     let venv_python = resolve_venv_python_path(&runtime_root);
     let requirements_path = resolve_requirements_path(&app);
+    let wheels_path = resolve_local_wheels_path(&app);
     let scripts_path = resolve_runtime_scripts_path(&app);
     let main_script = scripts_path.join("main.py");
 
@@ -414,6 +484,16 @@ pub fn crew_runtime_bootstrap(
     let base_python = detect_base_python_command(&app)
         .filter(|command| command_available(command))
         .ok_or_else(|| "Kein Python-Interpreter verfuegbar. Lege fuer Windows-Builds eine eingebettete Runtime unter resources/python/windows ab oder setze OPEN_COWORK_CREW_PYTHON.".to_string())?;
+    let base_python_version = read_python_version(&base_python).ok_or_else(|| {
+        format!("Python-Version fuer Crew runtime konnte nicht bestimmt werden: {}", base_python)
+    })?;
+    if !python_version_supported(&base_python_version) {
+        return Err(format!(
+            "Python {} ist fuer CrewAI nicht kompatibel. Erforderlich ist Python 3.10 bis 3.13; gebuendeltes Python 3.12 wird erwartet.",
+            base_python_version
+        ));
+    }
+    let use_local_wheels = local_wheels_available(&wheels_path);
 
     let force_reinstall = request.as_ref().map(|value| value.force_reinstall).unwrap_or(false);
     if force_reinstall && venv_root.exists() {
@@ -430,22 +510,26 @@ pub fn crew_runtime_bootstrap(
         }
     }
 
-    let pip_upgrade = Command::new(&venv_python)
-        .args(["-m", "pip", "install", "--upgrade", "pip"])
-        .status()
-        .map_err(|error| format!("pip Upgrade fuer Crew runtime fehlgeschlagen: {}", error))?;
-    if !pip_upgrade.success() {
-        return Err("pip Upgrade fuer Crew runtime fehlgeschlagen".to_string());
+    if !use_local_wheels {
+        let pip_upgrade = Command::new(&venv_python)
+            .args(["-m", "pip", "install", "--upgrade", "pip"])
+            .status()
+            .map_err(|error| format!("pip Upgrade fuer Crew runtime fehlgeschlagen: {}", error))?;
+        if !pip_upgrade.success() {
+            return Err("pip Upgrade fuer Crew runtime fehlgeschlagen".to_string());
+        }
     }
 
-    let install_requirements = Command::new(&venv_python)
-        .args([
-            "-m",
-            "pip",
-            "install",
-            "-r",
-            requirements_path.to_string_lossy().as_ref(),
-        ])
+    let requirements_path_arg = requirements_path.to_string_lossy().to_string();
+    let wheels_path_arg = wheels_path.to_string_lossy().to_string();
+    let mut install_requirements_command = Command::new(&venv_python);
+    install_requirements_command.args(["-m", "pip", "install"]);
+    if use_local_wheels {
+        install_requirements_command.args(["--no-index", "--find-links", wheels_path_arg.as_str()]);
+    }
+    install_requirements_command.args(["-r", requirements_path_arg.as_str()]);
+
+    let install_requirements = install_requirements_command
         .status()
         .map_err(|error| format!("Crew runtime Requirements konnten nicht installiert werden: {}", error))?;
     if !install_requirements.success() {

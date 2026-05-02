@@ -1500,6 +1500,33 @@ impl Database {
         )
     }
 
+    pub fn get_crew_approval(&self, id: &str) -> SqlResult<Option<CrewApprovalRow>> {
+        let conn = self.conn.lock().map_err(|_| rusqlite::Error::InvalidQuery)?;
+        conn.query_row(
+            "SELECT id, crew_id, run_id, approval_type, scope_ref, status, requested_by, resolved_by, payload_json, resolution_note, requested_at, resolved_at, created_at, updated_at
+             FROM crew_approvals WHERE id = ?1",
+            params![id],
+            |row| {
+                Ok(CrewApprovalRow {
+                    id: row.get(0)?,
+                    crew_id: row.get(1)?,
+                    run_id: row.get(2)?,
+                    approval_type: row.get(3)?,
+                    scope_ref: row.get(4)?,
+                    status: row.get(5)?,
+                    requested_by: row.get(6)?,
+                    resolved_by: row.get(7)?,
+                    payload_json: row.get(8)?,
+                    resolution_note: row.get(9)?,
+                    requested_at: row.get(10)?,
+                    resolved_at: row.get(11)?,
+                    created_at: row.get(12)?,
+                    updated_at: row.get(13)?,
+                })
+            },
+        ).optional()
+    }
+
     pub fn resolve_crew_approval(
         &self,
         id: &str,

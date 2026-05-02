@@ -34,6 +34,7 @@ type CrewRuntimeState = {
   error: string | null
   loadStatus: () => Promise<void>
   bootstrap: (forceReinstall?: boolean) => Promise<void>
+  ensureReady: () => Promise<void>
 }
 
 export const useCrewRuntimeStore = create<CrewRuntimeState>()((set) => ({
@@ -63,6 +64,32 @@ export const useCrewRuntimeStore = create<CrewRuntimeState>()((set) => ({
       set({ status: response?.status ?? null, bootstrapping: false })
     } catch (error) {
       set({ error: error instanceof Error ? error.message : String(error), bootstrapping: false })
+    }
+  },
+
+  ensureReady: async () => {
+    set({ loading: true, error: null })
+    try {
+      const status = await safeInvoke<CrewRuntimeStatus>('crew_runtime_status', undefined, undefined)
+      set({ status, loading: false })
+
+      if (!status?.bootstrapRequired) {
+        return
+      }
+
+      set({ bootstrapping: true, error: null })
+      try {
+        const response = await safeInvoke<CrewRuntimeBootstrapResponse>('crew_runtime_bootstrap', {
+          request: {
+            forceReinstall: false,
+          },
+        }, undefined)
+        set({ status: response?.status ?? status, bootstrapping: false })
+      } catch (error) {
+        set({ status, error: error instanceof Error ? error.message : String(error), bootstrapping: false })
+      }
+    } catch (error) {
+      set({ error: error instanceof Error ? error.message : String(error), loading: false })
     }
   },
 }))

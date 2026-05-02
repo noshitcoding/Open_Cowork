@@ -25,7 +25,6 @@ use crew_python_bridge::{
   CrewPythonBridge,
 };
 use db::Database;
-use futures_util::future::join_all;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use mcp::{
   call_tool,
@@ -51,7 +50,6 @@ use ollama::{
   ChatMessage,
   ChatStreamChunkPayload,
   ChatToolDef,
-  OllamaToolCall,
   OllamaConfig,
   OllamaError,
 };
@@ -83,7 +81,6 @@ const POLICY_FLAG_FILE_READ: &str = "allowFileReadExtraction";
 const POLICY_FLAG_AUTO_COMPACT: &str = "autoCompactLongContext";
 const POLICY_FLAG_SHELL_EXECUTION: &str = "allowShellExecution";
 const POLICY_FLAG_WEB_SEARCH: &str = "allowWebSearch";
-const MAX_CREW_DELEGATION_DEPTH: usize = 4;
 const DEFAULT_POLICY_ENABLED_TOOL_IDS: &[&str] = &[
   "bash",
   "read_file",
@@ -788,7 +785,15 @@ struct CrewExecuteRequest {
   name: String,
   description: String,
   #[serde(default)]
+  execution_subject: Option<String>,
+  #[serde(default)]
   execution_guidelines: String,
+  #[serde(default)]
+  knowledge_focus: String,
+  #[serde(default = "default_crew_governance_mode")]
+  governance_mode: String,
+  #[serde(default)]
+  governance_resume_approval_id: Option<String>,
   #[serde(default = "default_crew_output_mode")]
   output_mode: String,
   #[serde(default)]
@@ -817,6 +822,64 @@ struct CrewExecuteRequest {
   cwd: Option<String>,
 }
 
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct CrewGovernanceAgentAccessPayload {
+  agent_id: String,
+  allowed_tools: Vec<String>,
+  blocked_tools: Vec<String>,
+  allowed_mcp_server_names: Vec<String>,
+  blocked_mcp_server_names: Vec<String>,
+  delegation_allowed: bool,
+  gateway_hints: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct CrewGovernancePayload {
+  subject: String,
+  subject_roles: Vec<String>,
+  policy_strict: bool,
+  pending_approval_types: Vec<String>,
+  agent_access: Vec<CrewGovernanceAgentAccessPayload>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct QueuedCrewApprovalPayload {
+  request: CrewExecuteRequest,
+  reason: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct CrewMemoryEntryPayload {
+  id: String,
+  scope: String,
+  category: String,
+  key: String,
+  content: String,
+  confidence: f64,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct CrewUserProfilePayload {
+  key: String,
+  value: String,
+  confidence: f64,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct CrewMemoryPayload {
+  query: String,
+  summary: String,
+  entries: Vec<CrewMemoryEntryPayload>,
+  user_profile: Vec<CrewUserProfilePayload>,
+  hints: Vec<String>,
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 struct CrewProviderConfigsRequest {
@@ -834,13 +897,6 @@ struct CrewExternalProviderConfigRequest {
   #[serde(default)]
   api_key: String,
   timeout_ms: u64,
-}
-
-#[derive(Debug, Clone)]
-enum CrewTaskProviderConfig {
-  Ollama(Option<OllamaConfig>),
-  OpenAiCompatible(CrewExternalProviderConfigRequest),
-  OpenRouter(CrewExternalProviderConfigRequest),
 }
 
 #[derive(Debug, Deserialize)]
@@ -878,31 +934,6 @@ struct CrewExecutionResponse {
   task_results: Vec<CrewTaskExecutionRow>,
   logs: Vec<CrewExecutionLogRow>,
   error: Option<String>,
-}
-
-#[derive(Debug, Clone)]
-struct CrewToolContext {
-  crew_id: String,
-  agent_id: String,
-  task_id: String,
-  cwd: Option<String>,
-  requested_tool_ids: Vec<String>,
-  mcp_server_names: HashSet<String>,
-  request_snapshot: CrewExecuteRequest,
-  delegation_enabled: bool,
-  delegation_depth: usize,
-}
-
-#[derive(Debug)]
-struct CrewChatExecutionResult {
-  assistant_message: String,
-  logs: Vec<CrewExecutionLogRow>,
-}
-
-#[derive(Debug)]
-struct CrewChatExecutionError {
-  message: String,
-  logs: Vec<CrewExecutionLogRow>,
 }
 
 #[derive(Debug, Serialize)]
@@ -970,12 +1001,20 @@ fn default_crew_output_mode() -> String {
   "standard".to_string()
 }
 
+fn default_crew_governance_mode() -> String {
+  "allow-all".to_string()
+}
+
 fn default_manager_review_enabled() -> bool {
   true
 }
 
 fn default_share_all_task_outputs() -> bool {
   true
+}
+
+fn default_crew_execution_subject() -> String {
+  "workspace-user".to_string()
 }
 
 fn crew_agent_can_delegate(request: &CrewExecuteRequest, agent: &CrewExecuteAgentRequest) -> bool {
@@ -994,268 +1033,506 @@ fn build_effective_crew_tool_ids(request: &CrewExecuteRequest, agent: &CrewExecu
   tool_ids
 }
 
-#[derive(Debug, Serialize)]
-struct OpenAiLikeChatMessage {
-  role: String,
-  content: String,
+fn truncate_chars_with_ellipsis(value: &str, max_chars: usize) -> String {
+  let mut chars = value.chars();
+  let truncated = chars.by_ref().take(max_chars).collect::<String>();
+  if chars.next().is_some() {
+    format!("{}...", truncated)
+  } else {
+    truncated
+  }
 }
 
-#[derive(Debug, Serialize)]
-struct OpenAiLikeChatRequest {
-  model: String,
-  messages: Vec<OpenAiLikeChatMessage>,
+fn normalize_whitespace(value: &str) -> String {
+  value.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-#[derive(Debug, Deserialize)]
-struct OpenAiLikeChatResponse {
-  choices: Vec<OpenAiLikeChatChoice>,
+fn dedupe_strings(values: impl IntoIterator<Item = String>) -> Vec<String> {
+  let mut seen = HashSet::new();
+  let mut ordered = Vec::new();
+
+  for value in values {
+    let normalized = value.trim().to_string();
+    if normalized.is_empty() {
+      continue;
+    }
+    if seen.insert(normalized.clone()) {
+      ordered.push(normalized);
+    }
+  }
+
+  ordered
 }
 
-#[derive(Debug, Deserialize)]
-struct OpenAiLikeChatChoice {
-  message: OpenAiLikeChatChoiceMessage,
+fn normalize_crew_governance_mode(mode: &str) -> &'static str {
+  match mode.trim().to_ascii_lowercase().as_str() {
+    "ask-all" | "always-ask" | "always_ask" | "alwaysask" => "ask-all",
+    "ask-risky" | "ask_risky" | "risky" | "risky-only" | "risky_only" => "ask-risky",
+    "read-only" | "read_only" | "readonly" => "read-only",
+    _ => "allow-all",
+  }
 }
 
-#[derive(Debug, Deserialize)]
-struct OpenAiLikeChatChoiceMessage {
-  content: Option<String>,
+fn crew_tool_is_read_only(tool_id: &str) -> bool {
+  matches!(
+    canonical_policy_tool_id(tool_id).as_str(),
+    "read_file" | "glob" | "grep" | "web_fetch" | "web_search" | "todo"
+  )
 }
 
-fn build_openai_like_messages(history: &[ChatMessage], prompt: &str) -> Vec<OpenAiLikeChatMessage> {
-  let mut messages = history
-    .iter()
-    .map(|message| {
-      let role = match message.role.as_str() {
-        "system" => "system",
-        "assistant" => "assistant",
-        _ => "user",
-      };
-      let content = if role == "user" && message.role != "user" {
-        format!("[{}]\n{}", message.role, message.content)
+fn queue_crew_governance_approval(
+  database: &Arc<Database>,
+  request: &CrewExecuteRequest,
+  approval_type: &str,
+  reason: &str,
+) -> Result<String, String> {
+  let pending_approval = database
+    .list_crew_approvals(Some("pending"), Some(&request.id))
+    .map_err(|error| error.to_string())?
+    .into_iter()
+    .find(|approval| approval.approval_type.eq_ignore_ascii_case(approval_type));
+
+  if let Some(approval) = pending_approval {
+    return Ok(format!(
+      "Crew wartet auf Freigabe: {} ({})",
+      reason,
+      approval.id,
+    ));
+  }
+
+  let approval_id = uuid::Uuid::new_v4().to_string();
+  let payload_json = serde_json::to_string(&QueuedCrewApprovalPayload {
+    request: request.clone(),
+    reason: reason.to_string(),
+  }).map_err(|error| error.to_string())?;
+
+  database
+    .insert_crew_approval(
+      &approval_id,
+      Some(&request.id),
+      None,
+      approval_type,
+      Some(&request.id),
+      "pending",
+      Some("governance-auto"),
+      Some(&payload_json),
+    )
+    .map_err(|error| error.to_string())?;
+
+  Ok(format!(
+    "Crew wartet auf Freigabe: {} ({})",
+    reason,
+    approval_id,
+  ))
+}
+
+fn resolve_crew_execution_subject(request: &CrewExecuteRequest) -> String {
+  request
+    .execution_subject
+    .as_deref()
+    .map(str::trim)
+    .filter(|value| !value.is_empty())
+    .map(|value| value.to_string())
+    .unwrap_or_else(default_crew_execution_subject)
+}
+
+fn subject_matches_role_binding(subject: &str, binding_subject: &str) -> bool {
+  let normalized_subject = subject.trim();
+  let normalized_binding = binding_subject.trim();
+
+  !normalized_subject.is_empty()
+    && !normalized_binding.is_empty()
+    && (
+      normalized_subject.eq_ignore_ascii_case(normalized_binding)
+        || normalized_binding == "*"
+        || normalized_binding.eq_ignore_ascii_case("everyone")
+    )
+}
+
+fn crew_role_allows_execution(role: &str) -> bool {
+  matches!(
+    role.trim().to_ascii_lowercase().as_str(),
+    "owner/admin" | "owner" | "admin"
+      | "editor/designer" | "editor" | "designer"
+      | "operator/runner" | "operator" | "runner"
+  )
+}
+
+fn crew_role_allows_tool_operations(role: &str) -> bool {
+  matches!(
+    role.trim().to_ascii_lowercase().as_str(),
+    "owner/admin" | "owner" | "admin" | "operator/runner" | "operator" | "runner"
+  )
+}
+
+fn build_crew_memory_query(request: &CrewExecuteRequest) -> String {
+  let mut parts = Vec::new();
+
+  for candidate in [
+    request.knowledge_focus.as_str(),
+    request.name.as_str(),
+    request.description.as_str(),
+    request.execution_guidelines.as_str(),
+  ] {
+    let normalized = normalize_whitespace(candidate);
+    if !normalized.is_empty() {
+      parts.push(truncate_chars_with_ellipsis(&normalized, 220));
+    }
+  }
+
+  for task in request.tasks.iter().take(3) {
+    let normalized = normalize_whitespace(&task.description);
+    if !normalized.is_empty() {
+      parts.push(truncate_chars_with_ellipsis(&normalized, 180));
+    }
+  }
+
+  dedupe_strings(parts).join(" | ")
+}
+
+fn collect_crew_memory_payload(
+  database: &Arc<Database>,
+  request: &CrewExecuteRequest,
+) -> CrewMemoryPayload {
+  let query = build_crew_memory_query(request);
+  let mut entries = if query.is_empty() {
+    Vec::new()
+  } else {
+    database.search_memory_entries(&query, 8).unwrap_or_default()
+  };
+
+  if entries.is_empty() {
+    entries = database
+      .list_memory_entries("shared", None, 4)
+      .or_else(|_| database.list_memory_entries("agent", None, 4))
+      .unwrap_or_default();
+  }
+
+  for entry in &entries {
+    let _ = database.touch_memory_entry(&entry.id);
+  }
+
+  let snapshot = memory_engine::create_memory_snapshot(database).ok();
+  let user_profile = snapshot
+    .as_ref()
+    .map(|value| {
+      value
+        .user_profile
+        .iter()
+        .take(8)
+        .map(|entry| CrewUserProfilePayload {
+          key: entry.key.clone(),
+          value: truncate_chars_with_ellipsis(&normalize_whitespace(&entry.value), 220),
+          confidence: entry.confidence,
+        })
+        .collect::<Vec<_>>()
+    })
+    .unwrap_or_default();
+  let hints = memory_engine::generate_memory_hints(database)
+    .into_iter()
+    .map(|hint| truncate_chars_with_ellipsis(&normalize_whitespace(&hint.message), 180))
+    .take(4)
+    .collect::<Vec<_>>();
+
+  let summary = if entries.is_empty() && user_profile.is_empty() {
+    "Kein gespeichertes Crew-Wissen gefunden. Arbeite konservativ und markiere Annahmen explizit.".to_string()
+  } else {
+    format!(
+      "{} Memory-Eintraege und {} Profilhinweise stehen als Crew-Kontext bereit. Nutze sie als Arbeitshypothesen und verifiziere strittige Punkte.",
+      entries.len(),
+      user_profile.len(),
+    )
+  };
+
+  CrewMemoryPayload {
+    query,
+    summary,
+    entries: entries
+      .into_iter()
+      .map(|entry| CrewMemoryEntryPayload {
+        id: entry.id,
+        scope: entry.scope,
+        category: entry.category,
+        key: entry.key,
+        content: truncate_chars_with_ellipsis(&normalize_whitespace(&entry.content), 420),
+        confidence: entry.confidence,
+      })
+      .collect(),
+    user_profile,
+    hints,
+  }
+}
+
+fn collect_crew_governance_payload(
+  database: &Arc<Database>,
+  request: &CrewExecuteRequest,
+  enabled_agents: &HashMap<String, CrewExecuteAgentRequest>,
+) -> Result<CrewGovernancePayload, String> {
+  ensure_crew_run_is_approved(database, &request.id)?;
+  let governance_mode = normalize_crew_governance_mode(&request.governance_mode);
+  let resume_approval_active = request
+    .governance_resume_approval_id
+    .as_deref()
+    .map(str::trim)
+    .filter(|value| !value.is_empty())
+    .is_some();
+
+  let subject = resolve_crew_execution_subject(request);
+  let role_bindings = database
+    .list_crew_role_bindings(Some("crew"), None)
+    .map_err(|error| error.to_string())?
+    .into_iter()
+    .filter(|binding| {
+      binding.scope_ref.as_deref().is_none() || binding.scope_ref.as_deref() == Some(request.id.as_str())
+    })
+    .collect::<Vec<_>>();
+  let subject_roles = dedupe_strings(
+    role_bindings
+      .iter()
+      .filter(|binding| subject_matches_role_binding(&subject, &binding.subject))
+      .map(|binding| binding.role.clone()),
+  );
+
+  if !role_bindings.is_empty() && !subject_roles.iter().any(|role| crew_role_allows_execution(role)) {
+    return Err(format!(
+      "Crew-Start fuer Subject '{}' blockiert: keine passende Runner-Rolle fuer Crew {} hinterlegt.",
+      subject,
+      request.id,
+    ));
+  }
+
+  let pending_approvals = database
+    .list_crew_approvals(Some("pending"), Some(&request.id))
+    .map_err(|error| error.to_string())?;
+  let pending_approval_types = dedupe_strings(
+    pending_approvals
+      .iter()
+      .map(|approval| approval.approval_type.clone()),
+  );
+  let policy = load_policy_state(database)?;
+  let gateways = database.list_tool_gateway_entries().unwrap_or_default();
+  let mcp_gateways_configured = gateways.iter().any(|entry| {
+    entry.enabled && canonical_policy_tool_id(&entry.tool_type) == "mcp"
+  });
+
+  let mut requested_live_tools = false;
+  let mut requested_delegation = false;
+  let mut requested_risky_actions = false;
+  let mut capability_errors = Vec::new();
+  let mut agent_access = Vec::new();
+
+  for agent in enabled_agents.values() {
+    let requested_tools = build_effective_crew_tool_ids(request, agent);
+    let requested_delegation_for_agent = crew_agent_can_delegate(request, agent);
+    if !agent.mcp_server_names.is_empty() {
+      requested_risky_actions = true;
+    }
+    let mut allowed_tools = Vec::new();
+    let mut blocked_tools = Vec::new();
+
+    for tool_id in &requested_tools {
+      let allowed = if tool_id == "delegate_task" {
+        requested_delegation_for_agent
+          && (!policy.flags.strict_policy_enforcement || policy.enabled_tool_ids.iter().any(|enabled| enabled == "delegate_task"))
       } else {
-        message.content.clone()
+        crew_tool_allowed_by_flags(&policy, tool_id)
+          && (!policy.flags.strict_policy_enforcement || policy.enabled_tool_ids.iter().any(|enabled| enabled == tool_id))
       };
-      OpenAiLikeChatMessage {
-        role: role.to_string(),
-        content,
+
+      if tool_id != "delegate_task" {
+        requested_live_tools = true;
       }
+
+      if tool_id == "delegate_task" || !crew_tool_is_read_only(tool_id) {
+        requested_risky_actions = true;
+      }
+
+      if allowed {
+        allowed_tools.push(tool_id.clone());
+      } else {
+        blocked_tools.push(tool_id.clone());
+      }
+    }
+
+    if requested_delegation_for_agent {
+      requested_delegation = true;
+    }
+
+    let mcp_calls_allowed = crew_tool_allowed_by_flags(&policy, "mcp")
+      && (!policy.flags.strict_policy_enforcement || policy.enabled_tool_ids.iter().any(|enabled| enabled == "mcp"));
+    let mut allowed_mcp_server_names = Vec::new();
+    let mut blocked_mcp_server_names = Vec::new();
+
+    for server_name in &agent.mcp_server_names {
+      let gateway_matches = gateways.iter().any(|entry| {
+        entry.enabled
+          && canonical_policy_tool_id(&entry.tool_type) == "mcp"
+          && (
+            entry.name.eq_ignore_ascii_case(server_name)
+              || entry.name.trim().is_empty()
+              || canonical_policy_tool_id(&entry.name) == "mcp"
+          )
+      });
+      let allowed = mcp_calls_allowed && (!mcp_gateways_configured || gateway_matches);
+      if allowed {
+        allowed_mcp_server_names.push(server_name.clone());
+      } else {
+        blocked_mcp_server_names.push(server_name.clone());
+      }
+    }
+
+    let gateway_hints = dedupe_strings(
+      requested_tools
+        .iter()
+        .chain(agent.mcp_server_names.iter())
+        .filter_map(|tool_name| find_gateway_context(tool_name, &gateways)),
+    );
+    let delegation_allowed = requested_delegation_for_agent && !blocked_tools.iter().any(|tool| tool == "delegate_task");
+
+    if !blocked_tools.is_empty() || !blocked_mcp_server_names.is_empty() {
+      capability_errors.push(format!(
+        "Agent '{}' hat blockierte Capabilities. Tools: [{}]; MCP: [{}].",
+        agent.name,
+        blocked_tools.join(", "),
+        blocked_mcp_server_names.join(", "),
+      ));
+    }
+
+    agent_access.push(CrewGovernanceAgentAccessPayload {
+      agent_id: agent.id.clone(),
+      allowed_tools,
+      blocked_tools,
+      allowed_mcp_server_names,
+      blocked_mcp_server_names,
+      delegation_allowed,
+      gateway_hints,
+    });
+  }
+
+  if (!subject_roles.is_empty() || !role_bindings.is_empty())
+    && (requested_live_tools || requested_delegation)
+    && !subject_roles.iter().any(|role| crew_role_allows_tool_operations(role))
+  {
+    return Err(format!(
+      "Crew-Start fuer Subject '{}' blockiert: Live-Tools und Delegation erfordern Owner/Admin oder Operator/Runner.",
+      subject,
+    ));
+  }
+
+  if governance_mode == "read-only" && requested_risky_actions {
+    return Err(
+      "Crew-Governance blockiert: Modus 'Nur lesen' erlaubt nur Lesezugriffe (read_file, grep, glob, web_fetch, web_search, todo).".to_string()
+    );
+  }
+
+  if !resume_approval_active {
+    if governance_mode == "ask-all" {
+      return Err(queue_crew_governance_approval(
+        database,
+        request,
+        "run_gate",
+        "Modus 'Immer vor Aktionen fragen' erfordert eine Freigabe vor dem Start.",
+      )?);
+    }
+
+    if governance_mode == "ask-risky" && requested_risky_actions {
+      return Err(queue_crew_governance_approval(
+        database,
+        request,
+        "run_gate",
+        "riskante Aktionen wurden erkannt und muessen vor dem Start bestaetigt werden.",
+      )?);
+    }
+  }
+
+  if pending_approval_types.iter().any(|entry| entry.eq_ignore_ascii_case("tool_gate")) && requested_live_tools {
+    return Err(format!(
+      "Crew-Start blockiert: offene tool_gate-Freigaben fuer Crew {}.",
+      request.id,
+    ));
+  }
+
+  if pending_approval_types.iter().any(|entry| entry.eq_ignore_ascii_case("delegation_gate")) && requested_delegation {
+    return Err(format!(
+      "Crew-Start blockiert: offene delegation_gate-Freigaben fuer Crew {}.",
+      request.id,
+    ));
+  }
+
+  if !capability_errors.is_empty() {
+    return Err(capability_errors.join("\n"));
+  }
+
+  Ok(CrewGovernancePayload {
+    subject,
+    subject_roles,
+    policy_strict: policy.flags.strict_policy_enforcement,
+    pending_approval_types,
+    agent_access,
+  })
+}
+
+fn persist_crew_run_memory_summary(
+  database: &Arc<Database>,
+  request: &CrewExecuteRequest,
+  run_id: &str,
+  response: &CrewExecutionResponse,
+) {
+  let task_lines = response
+    .task_results
+    .iter()
+    .take(6)
+    .map(|task| {
+      let output = task
+        .output
+        .as_deref()
+        .map(|value| truncate_chars_with_ellipsis(&normalize_whitespace(value), 220))
+        .unwrap_or_else(|| "kein Output".to_string());
+      format!("- {} [{}]: {}", task.task_id, task.status, output)
     })
     .collect::<Vec<_>>();
 
-  messages.push(OpenAiLikeChatMessage {
-    role: "user".to_string(),
-    content: prompt.to_string(),
-  });
+  let mut summary_lines = vec![
+    format!("Crew: {} ({})", request.name, request.id),
+    format!("Status: {}", response.status),
+  ];
 
-  messages
-}
-
-async fn chat_turn_openai_like(
-  config: CrewExternalProviderConfigRequest,
-  prompt: String,
-  history: Vec<ChatMessage>,
-  provider_label: &str,
-) -> Result<String, String> {
-  if config.api_key.trim().is_empty() {
-    return Err(format!("{} API-Key fehlt", provider_label));
+  if let Some(error) = response.error.as_deref() {
+    summary_lines.push(format!("Error: {}", truncate_chars_with_ellipsis(&normalize_whitespace(error), 280)));
+  }
+  if !request.knowledge_focus.trim().is_empty() {
+    summary_lines.push(format!(
+      "Knowledge focus: {}",
+      truncate_chars_with_ellipsis(&normalize_whitespace(&request.knowledge_focus), 180)
+    ));
+  }
+  if !task_lines.is_empty() {
+    summary_lines.push("Task outcomes:".to_string());
+    summary_lines.extend(task_lines);
   }
 
-  if config.model.trim().is_empty() {
-    return Err(format!("{} Modell fehlt", provider_label));
-  }
-
-  let base_url = config.base_url.trim();
-  if base_url.is_empty() {
-    return Err(format!("{} Endpoint fehlt", provider_label));
-  }
-
-  let endpoint = if base_url.trim_end_matches('/').ends_with("/chat/completions") {
-    base_url.trim_end_matches('/').to_string()
+  let summary = summary_lines.join("\n");
+  let confidence = if response.status.eq_ignore_ascii_case("completed") {
+    0.82
+  } else if response.status.eq_ignore_ascii_case("failed") {
+    0.45
   } else {
-    format!("{}/chat/completions", base_url.trim_end_matches('/'))
+    0.6
   };
 
-  Url::parse(&endpoint).map_err(|error| format!("{} Endpoint ungueltig: {}", provider_label, error))?;
-
-  let client = reqwest::Client::builder()
-    .timeout(Duration::from_millis(config.timeout_ms.max(1_000)))
-    .build()
-    .map_err(|error| error.to_string())?;
-
-  let payload = OpenAiLikeChatRequest {
-    model: config.model.trim().to_string(),
-    messages: build_openai_like_messages(&history, &prompt),
-  };
-
-  let mut request = client
-    .post(&endpoint)
-    .header("Authorization", format!("Bearer {}", config.api_key.trim()))
-    .header("Content-Type", "application/json")
-    .json(&payload);
-
-  if provider_label.eq_ignore_ascii_case("OpenRouter") {
-    request = request
-      .header("HTTP-Referer", "https://open-cowork.local")
-      .header("X-Title", "Open Cowork");
-  }
-
-  let response = request.send().await.map_err(|error| format!("{} Request fehlgeschlagen: {}", provider_label, error))?;
-  let status = response.status();
-  if !status.is_success() {
-    let body = response.text().await.unwrap_or_default();
-    let excerpt: String = body.chars().take(400).collect();
-    return Err(format!("{} antwortete mit {}: {}", provider_label, status, excerpt));
-  }
-
-  let payload: OpenAiLikeChatResponse = response
-    .json()
-    .await
-    .map_err(|error| format!("{} Antwort konnte nicht gelesen werden: {}", provider_label, error))?;
-
-  let content = payload
-    .choices
-    .into_iter()
-    .next()
-    .and_then(|choice| choice.message.content)
-    .unwrap_or_default();
-
-  if content.trim().is_empty() {
-    return Err(format!("{} lieferte keine Antwort", provider_label));
-  }
-
-  Ok(content)
-}
-
-async fn execute_crew_chat(
-  app: &tauri::AppHandle,
-  database: &Arc<Database>,
-  policy: &PolicyStatePayload,
-  task_config: CrewTaskProviderConfig,
-  prompt: String,
-  history: Vec<ChatMessage>,
-  tool_context: Option<&CrewToolContext>,
-  max_iterations: usize,
-) -> Result<CrewChatExecutionResult, CrewChatExecutionError> {
-  match task_config {
-    CrewTaskProviderConfig::Ollama(config) => {
-      let tool_defs = tool_context
-        .map(|context| build_crew_chat_tool_defs(policy, context))
-        .unwrap_or_default();
-
-      if tool_defs.is_empty() {
-        return chat_turn_internal(config, prompt, history, vec![])
-          .await
-          .map(|response| CrewChatExecutionResult {
-            assistant_message: response.assistant_message,
-            logs: Vec::new(),
-          })
-          .map_err(|error| CrewChatExecutionError {
-            message: map_ollama_error(error),
-            logs: Vec::new(),
-          });
-      }
-
-      let context = tool_context.expect("tool context missing for Ollama tool loop");
-      let mut current_history = history;
-      let mut current_prompt = prompt;
-      let mut logs = Vec::new();
-      let iteration_limit = max_iterations.max(1);
-
-      for _ in 0..iteration_limit {
-        let response = match chat_turn_internal(
-          config.clone(),
-          current_prompt.clone(),
-          current_history.clone(),
-          tool_defs.clone(),
-        )
-        .await
-        {
-          Ok(response) => response,
-          Err(error) => {
-            return Err(CrewChatExecutionError {
-              message: map_ollama_error(error),
-              logs,
-            });
-          }
-        };
-
-        let assistant_text = response.assistant_message.trim().to_string();
-        if response.tool_calls.is_empty() {
-          if assistant_text.is_empty() {
-            return Err(CrewChatExecutionError {
-              message: "Crew-Modell lieferte keinen finalen Antworttext".to_string(),
-              logs,
-            });
-          }
-
-          return Ok(CrewChatExecutionResult {
-            assistant_message: assistant_text,
-            logs,
-          });
-        }
-
-        let tool_summary = response
-          .tool_calls
-          .iter()
-          .map(format_crew_tool_call_summary)
-          .collect::<Vec<_>>()
-          .join("\n");
-        let assistant_history_entry = if assistant_text.is_empty() {
-          format!("Tool-Aufrufe:\n{}", tool_summary)
-        } else {
-          format!("{}\n\nTool-Aufrufe:\n{}", assistant_text, tool_summary)
-        };
-        current_history.push(ChatMessage {
-          role: "assistant".to_string(),
-          content: assistant_history_entry,
-        });
-
-        for tool_call in &response.tool_calls {
-          let (tool_result, tool_logs) = execute_crew_tool_call(app, database, policy, context, tool_call).await;
-          logs.extend(tool_logs);
-          current_history.push(ChatMessage {
-            role: "tool".to_string(),
-            content: format!(
-              "Tool {} Ergebnis:\n{}",
-              canonical_policy_tool_id(&tool_call.function.name),
-              tool_result
-            ),
-          });
-        }
-
-        current_prompt = "Nutze die Tool-Ergebnisse im Verlauf. Rufe nur dann weitere Tools auf, wenn sie fuer die Task-Antwort wirklich noetig sind. Wenn genug Informationen vorliegen, liefere jetzt die finale Antwort fuer den Task.".to_string();
-      }
-
-      Err(CrewChatExecutionError {
-        message: "Crew-Tool-Loop hat das Iterationslimit erreicht, ohne eine finale Antwort zu liefern".to_string(),
-        logs,
-      })
-    }
-    CrewTaskProviderConfig::OpenAiCompatible(config) => chat_turn_openai_like(
-      config,
-      prompt,
-      history,
-      "OpenAI-kompatibler Provider",
-    )
-    .await
-    .map(|assistant_message| CrewChatExecutionResult {
-      assistant_message,
-      logs: Vec::new(),
-    })
-    .map_err(|message| CrewChatExecutionError {
-      message,
-      logs: Vec::new(),
-    }),
-    CrewTaskProviderConfig::OpenRouter(config) => chat_turn_openai_like(config, prompt, history, "OpenRouter")
-      .await
-      .map(|assistant_message| CrewChatExecutionResult {
-        assistant_message,
-        logs: Vec::new(),
-      })
-      .map_err(|message| CrewChatExecutionError {
-        message,
-        logs: Vec::new(),
-      }),
+  for key in [
+    format!("crew::{}::latest", request.id),
+    format!("crew::{}::run::{}", request.id, run_id),
+  ] {
+    let _ = database.upsert_memory_entry(
+      &uuid::Uuid::new_v4().to_string(),
+      "shared",
+      "crew-run",
+      &key,
+      &summary,
+      Some(run_id),
+      confidence,
+    );
   }
 }
 
@@ -1377,47 +1654,6 @@ async fn execute_pipeline_llm_step(
     .map_err(map_ollama_error)
 }
 
-fn build_crew_tool_context(
-  request: &CrewExecuteRequest,
-  agent: &CrewExecuteAgentRequest,
-  task_id: &str,
-  database: &Arc<Database>,
-  delegation_depth: usize,
-) -> Result<CrewToolContext, String> {
-  let requested_tool_ids = build_effective_crew_tool_ids(request, agent);
-  let requested_cwd = request.cwd.as_deref().map(str::trim).filter(|value| !value.is_empty());
-
-  if let Some(cwd) = requested_cwd {
-    if !Path::new(cwd).is_absolute() {
-      return Err("Crew-Arbeitsverzeichnis muss absolut sein".to_string());
-    }
-  }
-
-  let cwd = ensure_run_cwd(database, None, requested_cwd)?;
-
-  Ok(CrewToolContext {
-    crew_id: request.id.clone(),
-    agent_id: agent.id.clone(),
-    task_id: task_id.to_string(),
-    cwd,
-    requested_tool_ids,
-    mcp_server_names: agent.mcp_server_names.iter().cloned().collect(),
-    request_snapshot: request.clone(),
-    delegation_enabled: crew_agent_can_delegate(request, agent),
-    delegation_depth,
-  })
-}
-
-fn crew_active_delegate_targets(context: &CrewToolContext) -> Vec<CrewExecuteAgentRequest> {
-  context
-    .request_snapshot
-    .agents
-    .iter()
-    .filter(|agent| agent.enabled && agent.id != context.agent_id)
-    .cloned()
-    .collect()
-}
-
 fn crew_tool_allowed_by_flags(policy: &PolicyStatePayload, tool_id: &str) -> bool {
   match tool_id {
     "bash" => policy.flags.allow_shell_execution,
@@ -1427,1275 +1663,6 @@ fn crew_tool_allowed_by_flags(policy: &PolicyStatePayload, tool_id: &str) -> boo
     "mcp" => policy.flags.allow_mcp_tool_calls,
     _ => true,
   }
-}
-
-fn crew_tool_available_for_agent(policy: &PolicyStatePayload, context: &CrewToolContext, tool_id: &str) -> bool {
-  if tool_id == "delegate_task" {
-    return context.delegation_enabled
-      && context.delegation_depth < MAX_CREW_DELEGATION_DEPTH
-      && !crew_active_delegate_targets(context).is_empty();
-  }
-
-  if !context.requested_tool_ids.iter().any(|requested| requested == tool_id) {
-    return false;
-  }
-
-  if !crew_tool_allowed_by_flags(policy, tool_id) {
-    return false;
-  }
-
-  if !policy.flags.strict_policy_enforcement {
-    return true;
-  }
-
-  policy.enabled_tool_ids.iter().any(|enabled| enabled == tool_id)
-}
-
-fn build_crew_chat_tool_def(name: &str, description: &str, parameters: Value) -> ChatToolDef {
-  ChatToolDef {
-    kind: "function".to_string(),
-    function: ollama::ChatToolFunctionDef {
-      name: name.to_string(),
-      description: description.to_string(),
-      parameters,
-    },
-  }
-}
-
-fn build_crew_chat_tool_defs(policy: &PolicyStatePayload, context: &CrewToolContext) -> Vec<ChatToolDef> {
-  let mut tools = Vec::new();
-
-  if crew_tool_available_for_agent(policy, context, "bash") {
-    tools.push(build_crew_chat_tool_def(
-      "bash",
-      "Fuehrt einen Shell-Befehl im freigegebenen Arbeitsverzeichnis aus.",
-      serde_json::json!({
-        "type": "object",
-        "properties": {
-          "command": { "type": "string" },
-          "timeout_ms": { "type": "integer", "minimum": 500, "maximum": 120000 }
-        },
-        "required": ["command"]
-      }),
-    ));
-  }
-
-  if crew_tool_available_for_agent(policy, context, "read_file") {
-    tools.push(build_crew_chat_tool_def(
-      "read_file",
-      "Liest eine Datei und gibt Zeilen mit Nummern zurueck.",
-      serde_json::json!({
-        "type": "object",
-        "properties": {
-          "file_path": { "type": "string" },
-          "offset": { "type": "integer", "minimum": 0 },
-          "limit": { "type": "integer", "minimum": 1, "maximum": 400 }
-        },
-        "required": ["file_path"]
-      }),
-    ));
-  }
-
-  if crew_tool_available_for_agent(policy, context, "edit_file") {
-    tools.push(build_crew_chat_tool_def(
-      "edit_file",
-      "Ersetzt genau einen Textabschnitt in einer UTF-8-Textdatei.",
-      serde_json::json!({
-        "type": "object",
-        "properties": {
-          "file_path": { "type": "string" },
-          "old_string": { "type": "string" },
-          "new_string": { "type": "string" }
-        },
-        "required": ["file_path", "old_string", "new_string"]
-      }),
-    ));
-  }
-
-  if crew_tool_available_for_agent(policy, context, "create_directory") {
-    tools.push(build_crew_chat_tool_def(
-      "create_directory",
-      "Erstellt einen Ordner innerhalb der erlaubten Pfade.",
-      serde_json::json!({
-        "type": "object",
-        "properties": {
-          "path": { "type": "string" }
-        },
-        "required": ["path"]
-      }),
-    ));
-  }
-
-  if crew_tool_available_for_agent(policy, context, "move_path") {
-    tools.push(build_crew_chat_tool_def(
-      "move_path",
-      "Verschiebt oder benennt eine Datei oder einen Ordner um.",
-      serde_json::json!({
-        "type": "object",
-        "properties": {
-          "source_path": { "type": "string" },
-          "destination_path": { "type": "string" },
-          "overwrite": { "type": "boolean" }
-        },
-        "required": ["source_path", "destination_path"]
-      }),
-    ));
-  }
-
-  if crew_tool_available_for_agent(policy, context, "copy_path") {
-    tools.push(build_crew_chat_tool_def(
-      "copy_path",
-      "Kopiert eine Datei oder einen Ordner.",
-      serde_json::json!({
-        "type": "object",
-        "properties": {
-          "source_path": { "type": "string" },
-          "destination_path": { "type": "string" },
-          "overwrite": { "type": "boolean" }
-        },
-        "required": ["source_path", "destination_path"]
-      }),
-    ));
-  }
-
-  if crew_tool_available_for_agent(policy, context, "glob") {
-    tools.push(build_crew_chat_tool_def(
-      "glob",
-      "Sucht Dateien ueber ein einfaches Glob-Muster innerhalb des Arbeitsverzeichnisses oder eines angegebenen Basisordners.",
-      serde_json::json!({
-        "type": "object",
-        "properties": {
-          "pattern": { "type": "string" },
-          "path": { "type": "string" },
-          "limit": { "type": "integer", "minimum": 1, "maximum": 200 }
-        },
-        "required": ["pattern"]
-      }),
-    ));
-  }
-
-  if crew_tool_available_for_agent(policy, context, "grep") {
-    tools.push(build_crew_chat_tool_def(
-      "grep",
-      "Fuehrt eine einfache Textsuche ohne Regex ueber Dateien aus.",
-      serde_json::json!({
-        "type": "object",
-        "properties": {
-          "pattern": { "type": "string" },
-          "path": { "type": "string" },
-          "include": { "type": "string" },
-          "limit": { "type": "integer", "minimum": 1, "maximum": 200 }
-        },
-        "required": ["pattern"]
-      }),
-    ));
-  }
-
-  if crew_tool_available_for_agent(policy, context, "web_fetch") {
-    tools.push(build_crew_chat_tool_def(
-      "web_fetch",
-      "Laedt den bereinigten Inhalt einer Webseite.",
-      serde_json::json!({
-        "type": "object",
-        "properties": {
-          "url": { "type": "string" },
-          "max_chars": { "type": "integer", "minimum": 500, "maximum": 30000 }
-        },
-        "required": ["url"]
-      }),
-    ));
-  }
-
-  if crew_tool_available_for_agent(policy, context, "web_search") {
-    tools.push(build_crew_chat_tool_def(
-      "web_search",
-      "Sucht im Web und liefert die wichtigsten Treffer.",
-      serde_json::json!({
-        "type": "object",
-        "properties": {
-          "query": { "type": "string" },
-          "max_results": { "type": "integer", "minimum": 1, "maximum": 10 }
-        },
-        "required": ["query"]
-      }),
-    ));
-  }
-
-  if crew_tool_available_for_agent(policy, context, "todo") {
-    tools.push(build_crew_chat_tool_def(
-      "todo",
-      "Verwaltet interne Todo-Eintraege ueber create, list und update.",
-      serde_json::json!({
-        "type": "object",
-        "properties": {
-          "action": { "type": "string", "enum": ["create", "list", "update"] },
-          "task_id": { "type": "string" },
-          "title": { "type": "string" },
-          "prompt": { "type": "string" },
-          "status": { "type": "string" },
-          "limit": { "type": "integer", "minimum": 1, "maximum": 50 }
-        },
-        "required": ["action"]
-      }),
-    ));
-  }
-
-  let delegate_targets = crew_active_delegate_targets(context);
-  if crew_tool_available_for_agent(policy, context, "delegate_task") {
-    let delegation_hint = delegate_targets
-      .iter()
-      .map(|agent| format!("{} [{}] Rolle: {}", agent.name, agent.id, agent.role))
-      .collect::<Vec<_>>()
-      .join("; ");
-    let agent_id_enum = delegate_targets
-      .iter()
-      .map(|agent| Value::String(agent.id.clone()))
-      .collect::<Vec<_>>();
-    let description = format!(
-      "Delegiert einen klar abgegrenzten Unterauftrag an ein anderes aktives Crew-Mitglied. Verfuegbare Ziele: {}.",
-      delegation_hint
-    );
-    tools.push(build_crew_chat_tool_def(
-      "delegate_task",
-      description.as_str(),
-      serde_json::json!({
-        "type": "object",
-        "properties": {
-          "agent_id": { "type": "string", "enum": agent_id_enum },
-          "task_description": { "type": "string" },
-          "expected_output": { "type": "string" },
-          "context": {
-            "type": "array",
-            "items": { "type": "string" },
-            "maxItems": 12
-          }
-        },
-        "required": ["agent_id", "task_description"]
-      }),
-    ));
-  }
-
-  if crew_tool_available_for_agent(policy, context, "mcp") && !context.mcp_server_names.is_empty() {
-    tools.push(build_crew_chat_tool_def(
-      "mcp",
-      "Ruft ein Tool auf einem freigegebenen und gestarteten MCP-Server auf.",
-      serde_json::json!({
-        "type": "object",
-        "properties": {
-          "server_name": { "type": "string" },
-          "tool_name": { "type": "string" },
-          "arguments": { "type": "object" }
-        },
-        "required": ["server_name", "tool_name"]
-      }),
-    ));
-  }
-
-  tools
-}
-
-fn build_crew_log_row(context: &CrewToolContext, action: String, result: String) -> CrewExecutionLogRow {
-  CrewExecutionLogRow {
-    id: uuid::Uuid::new_v4().to_string(),
-    crew_id: context.crew_id.clone(),
-    agent_id: context.agent_id.clone(),
-    task_id: context.task_id.clone(),
-    action,
-    result,
-    timestamp: chrono::Utc::now().timestamp_millis(),
-  }
-}
-
-fn format_crew_tool_call_summary(tool_call: &OllamaToolCall) -> String {
-  format!(
-    "- {} {}",
-    canonical_policy_tool_id(&tool_call.function.name),
-    serde_json::to_string(&Value::Object(tool_call.function.arguments.clone()))
-      .unwrap_or_else(|_| "{}".to_string())
-  )
-}
-
-fn tool_arg_string(arguments: &serde_json::Map<String, Value>, names: &[&str]) -> Option<String> {
-  names.iter().find_map(|name| {
-    arguments
-      .get(*name)
-      .and_then(|value| value.as_str())
-      .map(str::trim)
-      .filter(|value| !value.is_empty())
-      .map(|value| value.to_string())
-  })
-}
-
-fn tool_arg_u64(arguments: &serde_json::Map<String, Value>, names: &[&str]) -> Option<u64> {
-  names.iter().find_map(|name| arguments.get(*name).and_then(|value| value.as_u64()))
-}
-
-fn tool_arg_bool(arguments: &serde_json::Map<String, Value>, names: &[&str]) -> Option<bool> {
-  names.iter().find_map(|name| arguments.get(*name).and_then(|value| value.as_bool()))
-}
-
-fn tool_arg_object(
-  arguments: &serde_json::Map<String, Value>,
-  names: &[&str],
-) -> Option<serde_json::Map<String, Value>> {
-  names.iter().find_map(|name| {
-    arguments
-      .get(*name)
-      .and_then(|value| value.as_object())
-      .cloned()
-  })
-}
-
-fn tool_arg_string_array(arguments: &serde_json::Map<String, Value>, names: &[&str]) -> Vec<String> {
-  names
-    .iter()
-    .find_map(|name| {
-      arguments
-        .get(*name)
-        .and_then(|value| value.as_array())
-        .map(|values| {
-          values
-            .iter()
-            .filter_map(|value| value.as_str())
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(|value| value.to_string())
-            .collect::<Vec<_>>()
-        })
-    })
-    .unwrap_or_default()
-}
-
-fn resolve_crew_tool_path(path: &str, cwd: Option<&str>) -> Result<String, String> {
-  let trimmed = path.trim();
-  if trimmed.is_empty() {
-    return Err("Pfad darf nicht leer sein".to_string());
-  }
-
-  let candidate = PathBuf::from(trimmed);
-  if candidate.is_absolute() {
-    return Ok(candidate.display().to_string());
-  }
-
-  let base_cwd = cwd.ok_or_else(|| format!("Relativer Pfad ohne Arbeitsverzeichnis nicht moeglich: {}", trimmed))?;
-  Ok(Path::new(base_cwd).join(candidate).display().to_string())
-}
-
-fn normalize_path_for_match(path: &Path) -> String {
-  path.display().to_string().replace('\\', "/")
-}
-
-fn collect_crew_tool_paths(root: &Path, max_entries: usize, entries: &mut Vec<PathBuf>) -> Result<(), String> {
-  if entries.len() >= max_entries {
-    return Ok(());
-  }
-
-  if root.is_file() {
-    entries.push(root.to_path_buf());
-    return Ok(());
-  }
-
-  let read_dir = fs::read_dir(root).map_err(|err| err.to_string())?;
-  for child in read_dir {
-    let child = child.map_err(|err| err.to_string())?;
-    let child_path = child.path();
-    if child_path.is_dir() {
-      collect_crew_tool_paths(child_path.as_path(), max_entries, entries)?;
-    } else {
-      entries.push(child_path);
-    }
-
-    if entries.len() >= max_entries {
-      break;
-    }
-  }
-
-  Ok(())
-}
-
-fn crew_glob_matches(pattern: &str, path: &Path, base_path: &Path) -> bool {
-  let normalized_pattern = pattern.trim().replace('\\', "/");
-  let absolute_text = normalize_path_for_match(path);
-  let relative_text = path
-    .strip_prefix(base_path)
-    .ok()
-    .map(normalize_path_for_match)
-    .unwrap_or_else(|| absolute_text.clone());
-  let file_name = path.file_name().and_then(|value| value.to_str()).unwrap_or_default();
-
-  wildcard_match(&normalized_pattern, &relative_text)
-    || wildcard_match(&normalized_pattern, &absolute_text)
-    || wildcard_match(&normalized_pattern, file_name)
-}
-
-async fn execute_crew_tool_call(
-  app: &tauri::AppHandle,
-  database: &Arc<Database>,
-  policy: &PolicyStatePayload,
-  context: &CrewToolContext,
-  tool_call: &OllamaToolCall,
-) -> (String, Vec<CrewExecutionLogRow>) {
-  let tool_id = canonical_policy_tool_id(&tool_call.function.name);
-  let args_json = serde_json::to_string_pretty(&Value::Object(tool_call.function.arguments.clone()))
-    .unwrap_or_else(|_| "{}".to_string());
-  let mut logs = vec![build_crew_log_row(
-    context,
-    format!("Tool gestartet: {}", tool_id),
-    truncate_chars(&args_json, 1_200),
-  )];
-
-  if tool_id == "delegate_task" {
-    match execute_crew_delegate_tool_call(app, database, policy, context, &tool_call.function.arguments).await {
-      Ok((result, extra_logs)) => {
-        logs.extend(extra_logs);
-        logs.push(build_crew_log_row(
-          context,
-          format!("Tool abgeschlossen: {}", tool_id),
-          truncate_chars(&result, 1_200),
-        ));
-        return (result, logs);
-      }
-      Err((error, extra_logs)) => {
-        logs.extend(extra_logs);
-        logs.push(build_crew_log_row(
-          context,
-          format!("Tool fehlgeschlagen: {}", tool_id),
-          truncate_chars(&error, 1_200),
-        ));
-        return (error, logs);
-      }
-    }
-  }
-
-  match execute_crew_tool_inner(app, database, policy, context, &tool_id, &tool_call.function.arguments).await {
-    Ok(result) => {
-      logs.push(build_crew_log_row(
-        context,
-        format!("Tool abgeschlossen: {}", tool_id),
-        truncate_chars(&result, 1_200),
-      ));
-      (result, logs)
-    }
-    Err(error) => {
-      let error_text = format!("Fehler: {}", error);
-      logs.push(build_crew_log_row(
-        context,
-        format!("Tool fehlgeschlagen: {}", tool_id),
-        truncate_chars(&error_text, 1_200),
-      ));
-      (error_text, logs)
-    }
-  }
-}
-
-async fn execute_crew_delegate_tool_call(
-  app: &tauri::AppHandle,
-  database: &Arc<Database>,
-  policy: &PolicyStatePayload,
-  context: &CrewToolContext,
-  arguments: &serde_json::Map<String, Value>,
-) -> Result<(String, Vec<CrewExecutionLogRow>), (String, Vec<CrewExecutionLogRow>)> {
-  let mut logs = Vec::new();
-
-  if !context.delegation_enabled {
-    return Err(("Delegation ist fuer diesen Agenten nicht aktiviert".to_string(), logs));
-  }
-
-  if context.delegation_depth >= MAX_CREW_DELEGATION_DEPTH {
-    return Err((
-      format!("Maximale Delegationstiefe von {} erreicht", MAX_CREW_DELEGATION_DEPTH),
-      logs,
-    ));
-  }
-
-  let Some(delegator) = context
-    .request_snapshot
-    .agents
-    .iter()
-    .find(|agent| agent.id == context.agent_id)
-    .cloned() else {
-      return Err((
-        format!("Delegierender Agent {} konnte nicht aufgeloest werden", context.agent_id),
-        logs,
-      ));
-    };
-
-  let available_targets = crew_active_delegate_targets(context);
-  if available_targets.is_empty() {
-    return Err(("Keine weiteren aktiven Crew-Mitglieder fuer Delegation verfuegbar".to_string(), logs));
-  }
-
-  let Some(target_agent_id) = tool_arg_string(arguments, &["agent_id", "target_agent_id", "delegate_to"]) else {
-    return Err(("delegate_task benoetigt agent_id".to_string(), logs));
-  };
-
-  let Some(target_agent) = available_targets
-    .iter()
-    .find(|agent| agent.id == target_agent_id)
-    .cloned() else {
-      let candidate_ids = available_targets
-        .iter()
-        .map(|agent| format!("{} [{}]", agent.name, agent.id))
-        .collect::<Vec<_>>()
-        .join(", ");
-      return Err((
-        format!(
-          "Delegationsziel {} ist nicht verfuegbar. Erlaubte Ziele: {}",
-          target_agent_id,
-          candidate_ids,
-        ),
-        logs,
-      ));
-    };
-
-  let Some(task_description) = tool_arg_string(arguments, &["task_description", "description", "prompt"]) else {
-    return Err(("delegate_task benoetigt task_description".to_string(), logs));
-  };
-  let expected_output = tool_arg_string(arguments, &["expected_output", "expectedOutput"]).unwrap_or_default();
-  let mut context_lines = tool_arg_string_array(arguments, &["context", "context_lines", "notes"]);
-  context_lines.push(format!(
-    "Delegiert von {} [{}]. Bearbeite nur diesen Unterauftrag und liefere kein Gesamtfazit fuer die gesamte Crew.",
-    delegator.name,
-    delegator.id,
-  ));
-
-  let synthetic_task_id = format!("{}::delegate::{}", context.task_id, uuid::Uuid::new_v4().simple());
-  logs.push(CrewExecutionLogRow {
-    id: uuid::Uuid::new_v4().to_string(),
-    crew_id: context.crew_id.clone(),
-    agent_id: delegator.id.clone(),
-    task_id: synthetic_task_id.clone(),
-    action: format!("Delegation gestartet an {}", target_agent.id),
-    result: truncate_chars(&task_description, 400),
-    timestamp: chrono::Utc::now().timestamp_millis(),
-  });
-
-  let delegated_task = CrewExecuteTaskRequest {
-    id: synthetic_task_id.clone(),
-    description: task_description.clone(),
-    expected_output,
-    agent_id: target_agent.id.clone(),
-    context: context_lines,
-    dependencies: Vec::new(),
-    async_execution: false,
-  };
-
-  let mut history = build_crew_task_history(&context.request_snapshot, &target_agent, &delegated_task, &HashMap::new());
-  history.push(ChatMessage {
-    role: "delegation".to_string(),
-    content: format!(
-      "Delegationsauftrag von {} [{}] an {} [{}]. Liefere nur den angeforderten Teilbeitrag in direkt nutzbarer Form.",
-      delegator.name,
-      delegator.id,
-      target_agent.name,
-      target_agent.id,
-    ),
-  });
-  let prompt = build_crew_task_prompt(&context.request_snapshot, &delegated_task);
-
-  let tool_context = match build_crew_tool_context(
-    &context.request_snapshot,
-    &target_agent,
-    &synthetic_task_id,
-    database,
-    context.delegation_depth + 1,
-  ) {
-    Ok(tool_context) => tool_context,
-    Err(error) => return Err((error, logs)),
-  };
-
-  let task_config = match resolve_crew_task_config(&context.request_snapshot, &target_agent) {
-    Ok(task_config) => task_config,
-    Err(error) => return Err((error, logs)),
-  };
-
-  let delegated_execution = Box::pin(execute_crew_chat(
-    app,
-    database,
-    policy,
-    task_config,
-    prompt,
-    history,
-    Some(&tool_context),
-    target_agent.max_iterations.max(1) as usize,
-  ));
-
-  match delegated_execution.await {
-    Ok(response) => {
-      logs.extend(response.logs);
-      logs.push(CrewExecutionLogRow {
-        id: uuid::Uuid::new_v4().to_string(),
-        crew_id: context.crew_id.clone(),
-        agent_id: target_agent.id.clone(),
-        task_id: synthetic_task_id,
-        action: format!("Delegation abgeschlossen: {}", target_agent.id),
-        result: truncate_chars(&response.assistant_message, 600),
-        timestamp: chrono::Utc::now().timestamp_millis(),
-      });
-      Ok((
-        format!(
-          "Delegiertes Ergebnis von {} [{}]:\n\n{}",
-          target_agent.name,
-          target_agent.id,
-          response.assistant_message,
-        ),
-        logs,
-      ))
-    }
-    Err(error) => {
-      logs.extend(error.logs);
-      logs.push(CrewExecutionLogRow {
-        id: uuid::Uuid::new_v4().to_string(),
-        crew_id: context.crew_id.clone(),
-        agent_id: target_agent.id.clone(),
-        task_id: synthetic_task_id,
-        action: format!("Delegation fehlgeschlagen: {}", target_agent.id),
-        result: truncate_chars(&error.message, 600),
-        timestamp: chrono::Utc::now().timestamp_millis(),
-      });
-      Err((
-        format!(
-          "Delegation an {} [{}] fehlgeschlagen: {}",
-          target_agent.name,
-          target_agent.id,
-          error.message,
-        ),
-        logs,
-      ))
-    }
-  }
-}
-
-async fn execute_crew_tool_inner(
-  app: &tauri::AppHandle,
-  database: &Arc<Database>,
-  policy: &PolicyStatePayload,
-  context: &CrewToolContext,
-  tool_id: &str,
-  arguments: &serde_json::Map<String, Value>,
-) -> Result<String, String> {
-  if !context.requested_tool_ids.iter().any(|requested| requested == tool_id) {
-    return Err(format!("Tool {} ist fuer diesen Agenten nicht freigegeben", tool_id));
-  }
-
-  match tool_id {
-    "bash" => {
-      let command_text = tool_arg_string(arguments, &["command", "cmd"])
-        .ok_or_else(|| "bash benoetigt command".to_string())?;
-      enforce_tool_policy(policy, "bash", &command_text, policy.flags.allow_shell_execution)?;
-      enforce_shell_command_guard(database, None, &command_text, context.cwd.as_deref())?;
-      let timeout_ms = tool_arg_u64(arguments, &["timeout_ms", "timeout"])
-        .unwrap_or(20_000)
-        .clamp(500, 120_000);
-      let (shell_override, env_vars, runtime_mode) = resolve_exec_runtime(database, None, None)?;
-      let response = run_command_once(
-        app,
-        None,
-        &command_text,
-        context.cwd.as_deref(),
-        timeout_ms,
-        shell_override.as_deref(),
-        runtime_mode.as_deref(),
-        &env_vars,
-      )?;
-
-      Ok(format!(
-        "Status: {}\nExit-Code: {}\nCWD: {}\nTimed out: {}\n\nSTDOUT:\n{}\n\nSTDERR:\n{}",
-        response.normalized_status,
-        response.exit_code.map(|value| value.to_string()).unwrap_or_else(|| "none".to_string()),
-        response.current_cwd.unwrap_or_else(|| context.cwd.clone().unwrap_or_default()),
-        response.timed_out,
-        response.stdout,
-        response.stderr,
-      ))
-    }
-    "read_file" => {
-      let file_path = tool_arg_string(arguments, &["file_path", "path"])
-        .ok_or_else(|| "read_file benoetigt file_path".to_string())?;
-      let resolved_path = resolve_crew_tool_path(&file_path, context.cwd.as_deref())?;
-      let canonical_target = ensure_run_file_access(database, None, &resolved_path, false)?;
-      let target_text = canonical_target.display().to_string();
-      enforce_tool_policy(policy, "read_file", &target_text, policy.flags.allow_file_read_extraction)?;
-
-      let offset = tool_arg_u64(arguments, &["offset", "start_line", "startLine"]).unwrap_or(0) as usize;
-      let limit = tool_arg_u64(arguments, &["limit", "max_lines", "maxLines"]).unwrap_or(120).clamp(1, 400) as usize;
-      let text = artifact_pipeline::extract_text_for_llm(canonical_target.as_path())?;
-      let lines = text.lines().collect::<Vec<_>>();
-      let excerpt = lines
-        .iter()
-        .enumerate()
-        .skip(offset)
-        .take(limit)
-        .map(|(index, line)| format!("{:>4}: {}", index + 1, line))
-        .collect::<Vec<_>>();
-
-      if excerpt.is_empty() {
-        return Ok(format!("Datei: {}\nKeine Zeilen im angeforderten Bereich.", target_text));
-      }
-
-      let end_line = offset + excerpt.len();
-      Ok(format!(
-        "Datei: {}\nZeilen {} bis {} von {}\n\n{}",
-        target_text,
-        offset + 1,
-        end_line,
-        lines.len(),
-        excerpt.join("\n"),
-      ))
-    }
-    "edit_file" => {
-      let file_path = tool_arg_string(arguments, &["file_path", "path"])
-        .ok_or_else(|| "edit_file benoetigt file_path".to_string())?;
-      let old_string = tool_arg_string(arguments, &["old_string", "oldText", "old_text"])
-        .ok_or_else(|| "edit_file benoetigt old_string".to_string())?;
-      let new_string = tool_arg_string(arguments, &["new_string", "newText", "new_text"])
-        .ok_or_else(|| "edit_file benoetigt new_string".to_string())?;
-      let resolved_path = resolve_crew_tool_path(&file_path, context.cwd.as_deref())?;
-      let canonical_target = ensure_run_file_access(database, None, &resolved_path, true)?;
-      let target_text = canonical_target.display().to_string();
-      enforce_tool_policy(policy, "edit_file", &target_text, true)?;
-
-      let current_content = fs::read_to_string(&canonical_target).map_err(|err| err.to_string())?;
-      let occurrences = current_content.matches(&old_string).count();
-      if occurrences == 0 {
-        return Err("old_string wurde nicht gefunden".to_string());
-      }
-      if occurrences > 1 {
-        return Err("old_string ist nicht eindeutig und kommt mehrfach vor".to_string());
-      }
-
-      let next_content = current_content.replacen(&old_string, &new_string, 1);
-      let app_data_dir = app.path().app_data_dir().map_err(|err| err.to_string())?;
-      let response = file_safety::write_text_file(&app_data_dir, &canonical_target, &next_content, true)?;
-      let details = file_safety::write_file_audit_details(
-        &response.path,
-        response.backup_path.as_deref(),
-        response.bytes_written,
-      );
-      let _ = audit::append_audit_event(app_data_dir, "file_safety", "write_text_file", Some(details));
-
-      Ok(format!("Datei aktualisiert: {}\n{}", response.path, truncate_chars(&response.diff, 4_000)))
-    }
-    "create_directory" => {
-      let path_text = tool_arg_string(arguments, &["path", "directory_path", "dir"])
-        .ok_or_else(|| "create_directory benoetigt path".to_string())?;
-      let resolved_path = resolve_crew_tool_path(&path_text, context.cwd.as_deref())?;
-      let canonical_target = ensure_run_file_access(database, None, &resolved_path, true)?;
-      let target_text = canonical_target.display().to_string();
-      enforce_tool_policy(policy, "create_directory", &target_text, true)?;
-      let response = file_safety::create_directory(&canonical_target)?;
-
-      let app_data_dir = app.path().app_data_dir().map_err(|err| err.to_string())?;
-      let details = file_safety::create_directory_audit_details(&response.path, response.created);
-      let _ = audit::append_audit_event(app_data_dir, "file_safety", "create_directory", Some(details));
-
-      Ok(serde_json::to_string_pretty(&serde_json::json!({
-        "path": response.path,
-        "created": response.created,
-      }))
-      .unwrap_or_else(|_| "{}".to_string()))
-    }
-    "move_path" => {
-      let source_path = tool_arg_string(arguments, &["source_path", "from", "path"])
-        .ok_or_else(|| "move_path benoetigt source_path".to_string())?;
-      let destination_path = tool_arg_string(arguments, &["destination_path", "to"])
-        .ok_or_else(|| "move_path benoetigt destination_path".to_string())?;
-      let overwrite = tool_arg_bool(arguments, &["overwrite"]).unwrap_or(false);
-      let resolved_source = resolve_crew_tool_path(&source_path, context.cwd.as_deref())?;
-      let resolved_destination = resolve_crew_tool_path(&destination_path, context.cwd.as_deref())?;
-      let canonical_source = ensure_run_file_access(database, None, &resolved_source, true)?;
-      let canonical_destination = ensure_run_file_access(database, None, &resolved_destination, true)?;
-      enforce_tool_policy(
-        policy,
-        "move_path",
-        &format!("{} -> {}", canonical_source.display(), canonical_destination.display()),
-        true,
-      )?;
-      let response = file_safety::move_path(&canonical_source, &canonical_destination, overwrite)?;
-
-      let app_data_dir = app.path().app_data_dir().map_err(|err| err.to_string())?;
-      let details = file_safety::mutate_path_audit_details(
-        "move",
-        &response.source_path,
-        &response.destination_path,
-        &response.item_kind,
-        response.created_parent,
-        response.replaced_existing,
-      );
-      let _ = audit::append_audit_event(app_data_dir, "file_safety", "move_path", Some(details));
-
-      Ok(serde_json::to_string_pretty(&serde_json::json!({
-        "sourcePath": response.source_path,
-        "destinationPath": response.destination_path,
-        "itemKind": response.item_kind,
-        "createdParent": response.created_parent,
-        "replacedExisting": response.replaced_existing,
-      }))
-      .unwrap_or_else(|_| "{}".to_string()))
-    }
-    "copy_path" => {
-      let source_path = tool_arg_string(arguments, &["source_path", "from", "path"])
-        .ok_or_else(|| "copy_path benoetigt source_path".to_string())?;
-      let destination_path = tool_arg_string(arguments, &["destination_path", "to"])
-        .ok_or_else(|| "copy_path benoetigt destination_path".to_string())?;
-      let overwrite = tool_arg_bool(arguments, &["overwrite"]).unwrap_or(false);
-      let resolved_source = resolve_crew_tool_path(&source_path, context.cwd.as_deref())?;
-      let resolved_destination = resolve_crew_tool_path(&destination_path, context.cwd.as_deref())?;
-      let canonical_source = ensure_run_file_access(database, None, &resolved_source, false)?;
-      let canonical_destination = ensure_run_file_access(database, None, &resolved_destination, true)?;
-      enforce_tool_policy(
-        policy,
-        "copy_path",
-        &format!("{} -> {}", canonical_source.display(), canonical_destination.display()),
-        true,
-      )?;
-      let response = file_safety::copy_path(&canonical_source, &canonical_destination, overwrite)?;
-
-      let app_data_dir = app.path().app_data_dir().map_err(|err| err.to_string())?;
-      let details = file_safety::mutate_path_audit_details(
-        "copy",
-        &response.source_path,
-        &response.destination_path,
-        &response.item_kind,
-        response.created_parent,
-        response.replaced_existing,
-      );
-      let _ = audit::append_audit_event(app_data_dir, "file_safety", "copy_path", Some(details));
-
-      Ok(serde_json::to_string_pretty(&serde_json::json!({
-        "sourcePath": response.source_path,
-        "destinationPath": response.destination_path,
-        "itemKind": response.item_kind,
-        "createdParent": response.created_parent,
-        "replacedExisting": response.replaced_existing,
-      }))
-      .unwrap_or_else(|_| "{}".to_string()))
-    }
-    "glob" => {
-      let pattern = tool_arg_string(arguments, &["pattern", "glob"])
-        .ok_or_else(|| "glob benoetigt pattern".to_string())?;
-      let base_input = tool_arg_string(arguments, &["path", "base_path", "basePath"]).unwrap_or_else(|| ".".to_string());
-      let resolved_base = resolve_crew_tool_path(&base_input, context.cwd.as_deref())?;
-      let canonical_base = ensure_run_file_access(database, None, &resolved_base, false)?;
-      enforce_tool_policy(
-        policy,
-        "glob",
-        &format!("{}:{}", canonical_base.display(), pattern),
-        true,
-      )?;
-
-      let limit = tool_arg_u64(arguments, &["limit", "max_results", "maxResults"]).unwrap_or(50).clamp(1, 200) as usize;
-      let scan_limit = limit.saturating_mul(20).clamp(200, 2_000);
-      let mut entries = Vec::new();
-      collect_crew_tool_paths(canonical_base.as_path(), scan_limit, &mut entries)?;
-
-      let matches = entries
-        .into_iter()
-        .filter(|path| crew_glob_matches(&pattern, path.as_path(), canonical_base.as_path()))
-        .take(limit)
-        .map(|path| path.display().to_string())
-        .collect::<Vec<_>>();
-
-      Ok(serde_json::to_string_pretty(&matches).unwrap_or_else(|_| "[]".to_string()))
-    }
-    "grep" => {
-      let pattern = tool_arg_string(arguments, &["pattern", "query", "text"])
-        .ok_or_else(|| "grep benoetigt pattern".to_string())?;
-      let base_input = tool_arg_string(arguments, &["path", "base_path", "basePath"]).unwrap_or_else(|| ".".to_string());
-      let include_pattern = tool_arg_string(arguments, &["include", "include_pattern", "includePattern"])
-        .unwrap_or_else(|| "*".to_string());
-      let resolved_base = resolve_crew_tool_path(&base_input, context.cwd.as_deref())?;
-      let canonical_base = ensure_run_file_access(database, None, &resolved_base, false)?;
-      enforce_tool_policy(
-        policy,
-        "grep",
-        &format!("{}:{}", canonical_base.display(), pattern),
-        true,
-      )?;
-
-      let limit = tool_arg_u64(arguments, &["limit", "max_results", "maxResults"]).unwrap_or(50).clamp(1, 200) as usize;
-      let scan_limit = limit.saturating_mul(20).clamp(200, 2_000);
-      let mut entries = Vec::new();
-      collect_crew_tool_paths(canonical_base.as_path(), scan_limit, &mut entries)?;
-
-      let pattern_lower = pattern.to_lowercase();
-      let mut matches = Vec::new();
-
-      for path in entries {
-        if !crew_glob_matches(&include_pattern, path.as_path(), canonical_base.as_path()) {
-          continue;
-        }
-
-        let text = match artifact_pipeline::extract_text_for_llm_limited(path.as_path(), 20_000) {
-          Ok((text, _)) => text,
-          Err(_) => continue,
-        };
-
-        for (index, line) in text.lines().enumerate() {
-          if line.to_lowercase().contains(&pattern_lower) {
-            matches.push(serde_json::json!({
-              "path": path.display().to_string(),
-              "line": index + 1,
-              "content": truncate_chars(line.trim(), 400),
-            }));
-
-            if matches.len() >= limit {
-              break;
-            }
-          }
-        }
-
-        if matches.len() >= limit {
-          break;
-        }
-      }
-
-      Ok(serde_json::to_string_pretty(&matches).unwrap_or_else(|_| "[]".to_string()))
-    }
-    "web_fetch" => {
-      let requested_url = tool_arg_string(arguments, &["url"])
-        .ok_or_else(|| "web_fetch benoetigt url".to_string())?;
-      let max_chars = tool_arg_u64(arguments, &["max_chars", "maxChars"]).unwrap_or(4_000).clamp(500, 30_000) as usize;
-      enforce_tool_policy(policy, "web_fetch", &requested_url, policy.flags.allow_web_fetch)?;
-      let result = execute_pipeline_web_fetch(&requested_url).await?;
-      Ok(truncate_chars(&result, max_chars))
-    }
-    "web_search" => {
-      let query = tool_arg_string(arguments, &["query", "q"])
-        .ok_or_else(|| "web_search benoetigt query".to_string())?;
-      enforce_tool_policy(policy, "web_search", &query, policy.flags.allow_web_search)?;
-      execute_pipeline_web_search(&query).await
-    }
-    "todo" => {
-      let action = tool_arg_string(arguments, &["action"])
-        .ok_or_else(|| "todo benoetigt action".to_string())?
-        .to_ascii_lowercase();
-      enforce_tool_policy(policy, "todo", &action, true)?;
-
-      match action.as_str() {
-        "create" => {
-          let title = tool_arg_string(arguments, &["title"])
-            .ok_or_else(|| "todo create benoetigt title".to_string())?;
-          let prompt = tool_arg_string(arguments, &["prompt", "description"]).unwrap_or_default();
-          let task_id = uuid::Uuid::new_v4().to_string();
-          let created_at = chrono::Utc::now().to_rfc3339();
-          database
-            .insert_task(&task_id, &title, &prompt, "todo", None, &created_at)
-            .map_err(|err| err.to_string())?;
-          Ok(serde_json::to_string_pretty(&serde_json::json!({
-            "taskId": task_id,
-            "title": title,
-            "prompt": prompt,
-            "status": "todo",
-          }))
-          .unwrap_or_else(|_| "{}".to_string()))
-        }
-        "list" => {
-          let limit = tool_arg_u64(arguments, &["limit", "max_results", "maxResults"]).unwrap_or(20).clamp(1, 50) as usize;
-          let tasks = database
-            .list_tasks()
-            .map_err(|err| err.to_string())?
-            .into_iter()
-            .take(limit)
-            .map(|(id, title, prompt, status, thread_id, created_at, updated_at, error)| {
-              serde_json::json!({
-                "id": id,
-                "title": title,
-                "prompt": prompt,
-                "status": status,
-                "threadId": thread_id,
-                "createdAt": created_at,
-                "updatedAt": updated_at,
-                "error": error,
-              })
-            })
-            .collect::<Vec<_>>();
-          Ok(serde_json::to_string_pretty(&tasks).unwrap_or_else(|_| "[]".to_string()))
-        }
-        "update" => {
-          let task_id = tool_arg_string(arguments, &["task_id", "id"])
-            .ok_or_else(|| "todo update benoetigt task_id".to_string())?;
-          let status = tool_arg_string(arguments, &["status"])
-            .ok_or_else(|| "todo update benoetigt status".to_string())?;
-          database.update_task_status(&task_id, &status).map_err(|err| err.to_string())?;
-          Ok(serde_json::to_string_pretty(&serde_json::json!({
-            "taskId": task_id,
-            "status": status,
-          }))
-          .unwrap_or_else(|_| "{}".to_string()))
-        }
-        _ => Err(format!("todo action {} wird nicht unterstuetzt", action)),
-      }
-    }
-    "mcp" => {
-      let server_name = tool_arg_string(arguments, &["server_name", "name"])
-        .ok_or_else(|| "mcp benoetigt server_name".to_string())?;
-      let tool_name = tool_arg_string(arguments, &["tool_name", "tool"])
-        .ok_or_else(|| "mcp benoetigt tool_name".to_string())?;
-      let tool_args = tool_arg_object(arguments, &["arguments", "tool_args", "toolArgs"])
-        .unwrap_or_default()
-        .into_iter()
-        .collect::<HashMap<_, _>>();
-
-      if !context.mcp_server_names.contains(&server_name) {
-        return Err(format!("MCP-Server {} ist fuer diesen Agenten nicht freigegeben", server_name));
-      }
-
-      enforce_tool_policy(
-        policy,
-        "mcp",
-        &format!("{}::{}", server_name, tool_name),
-        policy.flags.allow_mcp_tool_calls,
-      )?;
-
-      if !runtime_has_server(&server_name) {
-        return Err(format!("MCP-Server {} ist nicht gestartet", server_name));
-      }
-
-      let response = runtime_call_tool(&server_name, &tool_name, tool_args).map_err(map_mcp_error)?;
-      Ok(response.result)
-    }
-    "ask_user" => Err("ask_user ist in synchronen Crew-Laeufen derzeit nicht interaktiv verfuegbar".to_string()),
-    _ => Err(format!("Unbekanntes Crew-Tool: {}", tool_id)),
-  }
-}
-
-fn build_crew_system_prompt(request: &CrewExecuteRequest, agent: &CrewExecuteAgentRequest) -> String {
-  let effective_tools = build_effective_crew_tool_ids(request, agent);
-  let active_members = request
-    .agents
-    .iter()
-    .filter(|member| member.enabled)
-    .map(|member| {
-      let member_tools = build_effective_crew_tool_ids(request, member);
-      format!(
-        "- {} [{}] Rolle: {}; Ziel: {}; Delegation: {}; Tools: {}",
-        member.name,
-        member.id,
-        member.role,
-        member.goal,
-        crew_agent_can_delegate(request, member),
-        if member_tools.is_empty() { "keine".to_string() } else { member_tools.join(", ") },
-      )
-    })
-    .collect::<Vec<_>>()
-    .join("\n");
-  let delegation_hint = if crew_agent_can_delegate(request, agent) {
-    "Delegationshinweis: Du darfst delegate_task nutzen, um klar abgegrenzte Unterauftraege an andere aktive Crew-Mitglieder zu uebergeben. Verwende dafuer die exakte agent_id aus der Crew-Liste."
-  } else {
-    "Delegationshinweis: Delegation ist fuer dich deaktiviert. Bearbeite nur deinen eigenen Teilauftrag."
-  };
-  let manager_hint = request.manager_agent_id.as_ref().map_or(String::new(), |manager_id| {
-    if manager_id == &agent.id {
-      if request.process.eq_ignore_ascii_case("hierarchical") {
-        "Du bist der koordinierende Manager-Agent dieser Crew und darfst Aufgaben priorisieren, Ergebnisse bewerten und bei Bedarf Eskalationen formulieren.".to_string()
-      } else {
-        "Du bist zusaetzlich der koordinierende Manager-Agent dieser Crew.".to_string()
-      }
-    } else {
-      format!("Der koordinierende Manager-Agent hat die ID {} und kann Rueckfragen sowie Eskalationen ausloesen.", manager_id)
-    }
-  });
-  let provider_hint = agent.provider_kind.as_deref().unwrap_or("ollama");
-  let mcp_scope = if agent.mcp_server_names.is_empty() {
-    "keine MCP-Server freigegeben".to_string()
-  } else {
-    format!("freigegebene MCP-Server: {}", agent.mcp_server_names.join(", "))
-  };
-  let personality_hint = agent
-    .personality_id
-    .as_ref()
-    .map(|id| format!("Persoenlichkeitsprofil: {}", id))
-    .unwrap_or_else(|| "Persoenlichkeitsprofil: keines".to_string());
-  let skills_hint = if agent.skills_markdown.trim().is_empty() {
-    "kein skills.md hinterlegt".to_string()
-  } else {
-    agent.skills_markdown.trim().to_string()
-  };
-  let execution_guidelines = if request.execution_guidelines.trim().is_empty() {
-    "keine zusaetzlichen Crew-Anweisungen".to_string()
-  } else {
-    request.execution_guidelines.trim().to_string()
-  };
-  let workdir_hint = request
-    .cwd
-    .as_deref()
-    .map(str::trim)
-    .filter(|value| !value.is_empty())
-    .unwrap_or("(nicht gesetzt)");
-  let output_mode_hint = match request.output_mode.trim() {
-    "bullet-report" => "Liefere die Antwort als klar gegliederten Stichpunkt-Report mit Ergebnissen, Risiken und naechsten Schritten.",
-    "json" => "Liefere die Antwort als valides JSON-Objekt ohne Markdown-Codeblock.",
-    _ => "Liefere eine direkte, umsetzbare Antwort auf Deutsch.",
-  };
-
-  format!(
-    "Du arbeitest als Agent in der Crew \"{}\".\nBeschreibung: {}\nProzess: {}\n{}\n\nAgent:\n- Name: {}\n- Rolle: {}\n- Ziel: {}\n- Hintergrund: {}\n- skills.md: {}\n- {}\n- Provider: {}\n- Tools: {}\n- MCP-Zugriffe: {}\n- Arbeitsverzeichnis: {}\n- Delegation erlaubt: {}\n- Verbose: {}\n- Max Iterationen: {}\n- Max RPM der Crew: {}\n- Max parallele Tasks der Crew: {}\n- Verbose Crew-Kontext: {}\n- Crew-Zusatzanweisungen: {}\n- Gewuenschtes Ausgabeformat: {}\n- Stoppt nach erstem Fehler: {}\n- Retry-Versuche pro Task: {}\n- Manager-Review aktiv: {}\n- Teilt alle bisherigen Task-Ergebnisse global: {}\n- Zeichenlimit fuer geteilte Ergebnisse: {}\n\nAktive Crew-Mitglieder:\n{}\n\n{}\n\n{}",
-    request.name,
-    request.description,
-    request.process,
-    manager_hint,
-    agent.name,
-    agent.role,
-    agent.goal,
-    agent.backstory,
-    skills_hint,
-    personality_hint,
-    provider_hint,
-    effective_tools.join(", "),
-    mcp_scope,
-    workdir_hint,
-    crew_agent_can_delegate(request, agent),
-    agent.verbose,
-    agent.max_iterations,
-    request.max_rpm,
-    request.max_parallel_tasks.unwrap_or(1).max(1),
-    request.verbose,
-    execution_guidelines,
-    request.output_mode,
-    request.stop_on_failure,
-    request.retry_count.max(0),
-    request.manager_review_enabled,
-    request.share_all_task_outputs,
-    request.shared_output_char_limit.max(0),
-    active_members,
-    delegation_hint,
-    output_mode_hint,
-  )
-}
-
-fn truncate_shared_output(output: &str, limit: i32) -> String {
-  if limit <= 0 {
-    return output.to_string();
-  }
-
-  output.chars().take(limit as usize).collect()
-}
-
-fn build_crew_task_prompt(request: &CrewExecuteRequest, task: &CrewExecuteTaskRequest) -> String {
-  let manager_mode_hint = if request.process.eq_ignore_ascii_case("hierarchical") {
-    "Manager-Modus aktiv: Ergebnisse sollen fuer nachgelagerte Delegation oder Bewertung klar strukturiert sein."
-  } else {
-    ""
-  };
-  let output_mode_hint = match request.output_mode.trim() {
-    "bullet-report" => "Ausgabeformat fuer diesen Task: Stichpunkt-Report.",
-    "json" => "Ausgabeformat fuer diesen Task: valides JSON ohne Markdown-Codeblock.",
-    _ => "Ausgabeformat fuer diesen Task: Standardantwort.",
-  };
-  let execution_guidelines = if request.execution_guidelines.trim().is_empty() {
-    String::new()
-  } else {
-    format!("\nCrew-Zusatzanweisungen: {}", request.execution_guidelines.trim())
-  };
-  let workdir_hint = request
-    .cwd
-    .as_deref()
-    .map(str::trim)
-    .filter(|value| !value.is_empty())
-    .map(|value| format!("\nArbeitsverzeichnis: {}", value))
-    .unwrap_or_default();
-
-  format!(
-    "Crew: {}\nTask-ID: {}\nBeschreibung: {}\nErwartetes Ergebnis: {}\nAsynchrone Ausfuehrung erlaubt: {}\nCrew stoppt bei Fehler: {}\nRetry-Versuche fuer diesen Task: {}\n{}\n{}{}{}\n\nLiefere das Task-Ergebnis direkt.",
-    request.name,
-    task.id,
-    task.description,
-    if task.expected_output.trim().is_empty() { "(nicht angegeben)" } else { &task.expected_output },
-    task.async_execution,
-    request.stop_on_failure,
-    request.retry_count.max(0),
-    manager_mode_hint,
-    output_mode_hint,
-    workdir_hint,
-    execution_guidelines,
-  )
-}
-
-fn mark_skipped_crew_tasks(
-  request: &CrewExecuteRequest,
-  tasks: Vec<CrewExecuteTaskRequest>,
-  task_results: &mut Vec<CrewTaskExecutionRow>,
-  logs: &mut Vec<CrewExecutionLogRow>,
-  reason: &str,
-) {
-  for task in tasks {
-    task_results.push(CrewTaskExecutionRow {
-      task_id: task.id.clone(),
-      agent_id: task.agent_id.clone(),
-      status: "failed".to_string(),
-      output: Some(reason.to_string()),
-    });
-    logs.push(CrewExecutionLogRow {
-      id: uuid::Uuid::new_v4().to_string(),
-      crew_id: request.id.clone(),
-      agent_id: task.agent_id,
-      task_id: task.id,
-      action: "Task uebersprungen".to_string(),
-      result: reason.to_string(),
-      timestamp: chrono::Utc::now().timestamp_millis(),
-    });
-  }
-}
-
-fn build_crew_task_history(
-  request: &CrewExecuteRequest,
-  agent: &CrewExecuteAgentRequest,
-  task: &CrewExecuteTaskRequest,
-  task_outputs: &HashMap<String, String>,
-) -> Vec<ChatMessage> {
-  let mut history = vec![ChatMessage {
-    role: "system".to_string(),
-    content: build_crew_system_prompt(request, agent),
-  }];
-
-  for context_line in &task.context {
-    if !context_line.trim().is_empty() {
-      history.push(ChatMessage {
-        role: "context".to_string(),
-        content: context_line.clone(),
-      });
-    }
-  }
-
-  for dependency in &task.dependencies {
-    if let Some(output) = task_outputs.get(dependency) {
-      history.push(ChatMessage {
-        role: "dependency".to_string(),
-        content: format!(
-          "Ergebnis aus {}:\n{}",
-          dependency,
-          truncate_shared_output(output, request.shared_output_char_limit)
-        ),
-      });
-    }
-  }
-
-  if request.process.eq_ignore_ascii_case("hierarchical") {
-    if let Some(manager_id) = &request.manager_agent_id {
-      history.push(ChatMessage {
-        role: "manager".to_string(),
-        content: format!("Arbeite kompatibel mit dem Manager-Agenten {} und gib ein delegierbares Ergebnis zurueck.", manager_id),
-      });
-    }
-  }
-
-  if request.share_all_task_outputs {
-    for (task_id, output) in task_outputs {
-      if task_id != &task.id && !task.dependencies.contains(task_id) {
-        history.push(ChatMessage {
-          role: "memory".to_string(),
-          content: format!(
-            "Vorheriges Crew-Ergebnis aus {}:\n{}",
-            task_id,
-            truncate_shared_output(output, request.shared_output_char_limit)
-          ),
-        });
-      }
-    }
-  }
-
-  history
 }
 
 fn detect_crew_cycle(
@@ -2777,150 +1744,9 @@ fn validate_crew_request(
   Ok(())
 }
 
-async fn execute_manager_review(
-  app: &tauri::AppHandle,
-  database: &Arc<Database>,
-  policy: &PolicyStatePayload,
-  request: &CrewExecuteRequest,
-  manager_agent: CrewExecuteAgentRequest,
-  batch_summary: &str,
-) -> Vec<CrewExecutionLogRow> {
-  let history = vec![
-    ChatMessage {
-      role: "system".to_string(),
-      content: build_crew_system_prompt(request, &manager_agent),
-    },
-    ChatMessage {
-      role: "context".to_string(),
-      content: "Du bist im hierarchischen Crew-Modus fuer Review, Priorisierung und Eskalation zustaendig.".to_string(),
-    },
-  ];
-
-  let prompt = format!(
-    "Bewerte die folgenden Crew-Ergebnisse knapp und praxisnah. Benenne Risiken, notwendige Folgeaktionen und Eskalationen.{}\n\n{}",
-    if request.manager_review_guidelines.trim().is_empty() {
-      String::new()
-    } else {
-      format!("\nZusaetzliche Review-Anweisungen: {}", request.manager_review_guidelines.trim())
-    },
-    batch_summary,
-  );
-  let review_task_id = request
-    .manager_agent_id
-    .clone()
-    .unwrap_or_else(|| "manager-review".to_string());
-  let task_config = match resolve_crew_task_config(request, &manager_agent) {
-    Ok(config) => config,
-    Err(error) => {
-      return vec![CrewExecutionLogRow {
-        id: uuid::Uuid::new_v4().to_string(),
-        crew_id: request.id.clone(),
-        agent_id: manager_agent.id,
-        task_id: review_task_id,
-        action: "Manager Review fehlgeschlagen".to_string(),
-        result: error.chars().take(1200).collect(),
-        timestamp: chrono::Utc::now().timestamp_millis(),
-      }];
-    }
-  };
-
-  let tool_context = match build_crew_tool_context(request, &manager_agent, &review_task_id, database, 0) {
-    Ok(context) => context,
-    Err(error) => {
-      return vec![CrewExecutionLogRow {
-        id: uuid::Uuid::new_v4().to_string(),
-        crew_id: request.id.clone(),
-        agent_id: manager_agent.id,
-        task_id: review_task_id,
-        action: "Manager Review fehlgeschlagen".to_string(),
-        result: error.chars().take(1200).collect(),
-        timestamp: chrono::Utc::now().timestamp_millis(),
-      }];
-    }
-  };
-
-  match execute_crew_chat(
-    app,
-    database,
-    policy,
-    task_config,
-    prompt,
-    history,
-    Some(&tool_context),
-    manager_agent.max_iterations.max(1) as usize,
-  )
-  .await
-  {
-    Ok(response) => {
-      let mut logs = response.logs;
-      logs.push(CrewExecutionLogRow {
-        id: uuid::Uuid::new_v4().to_string(),
-        crew_id: request.id.clone(),
-        agent_id: manager_agent.id,
-        task_id: review_task_id,
-        action: "Manager Review".to_string(),
-        result: response.assistant_message.chars().take(1200).collect(),
-        timestamp: chrono::Utc::now().timestamp_millis(),
-      });
-      logs
-    }
-    Err(error) => {
-      let mut logs = error.logs;
-      logs.push(CrewExecutionLogRow {
-        id: uuid::Uuid::new_v4().to_string(),
-        crew_id: request.id.clone(),
-        agent_id: manager_agent.id,
-        task_id: review_task_id,
-        action: "Manager Review fehlgeschlagen".to_string(),
-        result: error.message.chars().take(1200).collect(),
-        timestamp: chrono::Utc::now().timestamp_millis(),
-      });
-      logs
-    }
-  }
-}
-
-fn resolve_crew_task_config(
-  request: &CrewExecuteRequest,
-  agent: &CrewExecuteAgentRequest,
-) -> Result<CrewTaskProviderConfig, String> {
-  match agent.provider_kind.as_deref().unwrap_or("ollama") {
-    "openai-compatible" => {
-      let mut config = request
-        .provider_configs
-        .open_ai_compatible
-        .clone()
-        .ok_or_else(|| "Kein OpenAI-kompatibles Crew-Profil konfiguriert".to_string())?;
-      if let Some(model_override) = agent.model_override.clone().filter(|value| !value.trim().is_empty()) {
-        config.model = model_override;
-      }
-      Ok(CrewTaskProviderConfig::OpenAiCompatible(config))
-    }
-    "openrouter" => {
-      let mut config = request
-        .provider_configs
-        .open_router
-        .clone()
-        .ok_or_else(|| "Kein OpenRouter-Crew-Profil konfiguriert".to_string())?;
-      if let Some(model_override) = agent.model_override.clone().filter(|value| !value.trim().is_empty()) {
-        config.model = model_override;
-      }
-      Ok(CrewTaskProviderConfig::OpenRouter(config))
-    }
-    _ => {
-      let mut task_config = request.config.clone();
-      if let Some(model_override) = agent.model_override.clone().filter(|value| !value.trim().is_empty()) {
-        let mut config = task_config.unwrap_or_default();
-        config.model = model_override;
-        task_config = Some(config);
-      }
-      Ok(CrewTaskProviderConfig::Ollama(task_config))
-    }
-  }
-}
-
 fn sanitize_crew_request_snapshot(request: &CrewExecuteRequest) -> CrewExecuteRequest {
   let mut snapshot = request.clone();
+  snapshot.governance_resume_approval_id = None;
 
   if let Some(config) = snapshot.provider_configs.open_ai_compatible.as_mut() {
     if !config.api_key.trim().is_empty() {
@@ -3074,6 +1900,8 @@ fn persist_crew_execution_response(
       payload_json.as_deref(),
     );
   }
+
+  persist_crew_run_memory_summary(database, request, run_id, response);
 }
 
 async fn execute_crew_request(
@@ -3100,12 +1928,23 @@ async fn execute_crew_request(
   }
 
   validate_crew_request(&request, &enabled_agents)?;
-  ensure_crew_run_is_approved(database, &request.id)?;
-
-  let runtime_payload = serde_json::to_value(&request).map_err(|error| error.to_string())?;
+  let governance = collect_crew_governance_payload(database, &request, &enabled_agents)?;
+  let memory_context = collect_crew_memory_payload(database, &request);
   let started_at = chrono::Utc::now().to_rfc3339();
   let run_id = uuid::Uuid::new_v4().to_string();
   let request_snapshot_json = serde_json::to_string(&sanitize_crew_request_snapshot(&request)).unwrap_or_else(|_| "{}".to_string());
+  let mut runtime_payload = serde_json::to_value(&request).map_err(|error| error.to_string())?;
+  if let Value::Object(payload) = &mut runtime_payload {
+    payload.insert(
+      "governance".to_string(),
+      serde_json::to_value(&governance).map_err(|error| error.to_string())?,
+    );
+    payload.insert(
+      "memoryContext".to_string(),
+      serde_json::to_value(&memory_context).map_err(|error| error.to_string())?,
+    );
+    payload.insert("runId".to_string(), Value::String(run_id.clone()));
+  }
 
   let _ = database.insert_crew_run_event(
     &uuid::Uuid::new_v4().to_string(),
@@ -3113,6 +1952,22 @@ async fn execute_crew_request(
     &request.id,
     "run_started",
     Some(&request_snapshot_json),
+  );
+  let runtime_context_payload = serde_json::json!({
+    "subject": governance.subject,
+    "subjectRoles": governance.subject_roles,
+    "pendingApprovalTypes": governance.pending_approval_types,
+    "memoryQuery": memory_context.query,
+    "memoryEntryCount": memory_context.entries.len(),
+    "userProfileCount": memory_context.user_profile.len(),
+  });
+  let runtime_context_json = serde_json::to_string(&runtime_context_payload).ok();
+  let _ = database.insert_crew_run_event(
+    &uuid::Uuid::new_v4().to_string(),
+    &run_id,
+    &request.id,
+    "runtime_context",
+    runtime_context_json.as_deref(),
   );
 
   if let Ok(mut canceled) = registry.canceled.lock() {
@@ -3184,179 +2039,6 @@ async fn execute_crew_request(
       Ok(response)
     }
   }
-}
-
-async fn execute_crew_task(
-  app: tauri::AppHandle,
-  database: Arc<Database>,
-  policy: PolicyStatePayload,
-  request: CrewExecuteRequest,
-  agent: CrewExecuteAgentRequest,
-  task: CrewExecuteTaskRequest,
-  task_outputs: HashMap<String, String>,
-) -> (CrewTaskExecutionRow, Vec<CrewExecutionLogRow>, Option<String>) {
-  let mut logs = vec![CrewExecutionLogRow {
-    id: uuid::Uuid::new_v4().to_string(),
-    crew_id: request.id.clone(),
-    agent_id: agent.id.clone(),
-    task_id: task.id.clone(),
-    action: format!("Task gestartet: {}", task.description.chars().take(80).collect::<String>()),
-    result: format!("Agent: {} [{}]", agent.name, agent.provider_kind.clone().unwrap_or_else(|| "ollama".to_string())),
-    timestamp: chrono::Utc::now().timestamp_millis(),
-  }];
-
-  let history = build_crew_task_history(&request, &agent, &task, &task_outputs);
-  let prompt = build_crew_task_prompt(&request, &task);
-  let tool_context = match build_crew_tool_context(&request, &agent, &task.id, &database, 0) {
-    Ok(context) => context,
-    Err(error) => {
-      logs.push(CrewExecutionLogRow {
-        id: uuid::Uuid::new_v4().to_string(),
-        crew_id: request.id.clone(),
-        agent_id: agent.id.clone(),
-        task_id: task.id.clone(),
-        action: "Task fehlgeschlagen".to_string(),
-        result: error.chars().take(200).collect(),
-        timestamp: chrono::Utc::now().timestamp_millis(),
-      });
-      return (
-        CrewTaskExecutionRow {
-          task_id: task.id,
-          agent_id: agent.id,
-          status: "failed".to_string(),
-          output: Some(error),
-        },
-        logs,
-        None,
-      );
-    }
-  };
-  let task_config = match resolve_crew_task_config(&request, &agent) {
-    Ok(config) => config,
-    Err(error) => {
-      logs.push(CrewExecutionLogRow {
-        id: uuid::Uuid::new_v4().to_string(),
-        crew_id: request.id.clone(),
-        agent_id: agent.id.clone(),
-        task_id: task.id.clone(),
-        action: "Task fehlgeschlagen".to_string(),
-        result: error.chars().take(200).collect(),
-        timestamp: chrono::Utc::now().timestamp_millis(),
-      });
-      return (
-        CrewTaskExecutionRow {
-          task_id: task.id,
-          agent_id: agent.id,
-          status: "failed".to_string(),
-          output: Some(error),
-        },
-        logs,
-        None,
-      );
-    }
-  };
-
-  if crew_agent_can_delegate(&request, &agent) && !matches!(&task_config, CrewTaskProviderConfig::Ollama(_)) {
-    logs.push(CrewExecutionLogRow {
-      id: uuid::Uuid::new_v4().to_string(),
-      crew_id: request.id.clone(),
-      agent_id: agent.id.clone(),
-      task_id: task.id.clone(),
-      action: "Delegation eingeschraenkt".to_string(),
-      result: "Dieser Provider unterstuetzt im Crew-Lauf derzeit keinen Tool-Loop. Echte Delegation ueber delegate_task ist aktuell nur mit Ollama verfuegbar.".to_string(),
-      timestamp: chrono::Utc::now().timestamp_millis(),
-    });
-  }
-
-  let max_attempts = request.retry_count.max(0) as usize + 1;
-  let mut last_error_text = String::new();
-
-  for attempt in 1..=max_attempts {
-    match execute_crew_chat(
-      &app,
-      &database,
-      &policy,
-      task_config.clone(),
-      prompt.clone(),
-      history.clone(),
-      Some(&tool_context),
-      agent.max_iterations.max(1) as usize,
-    )
-    .await
-    {
-      Ok(response) => {
-        let output = response.assistant_message;
-        logs.extend(response.logs);
-        logs.push(CrewExecutionLogRow {
-          id: uuid::Uuid::new_v4().to_string(),
-          crew_id: request.id.clone(),
-          agent_id: agent.id.clone(),
-          task_id: task.id.clone(),
-          action: if attempt > 1 {
-            format!("Task abgeschlossen nach Retry {}", attempt - 1)
-          } else {
-            "Task abgeschlossen".to_string()
-          },
-          result: output.chars().take(200).collect(),
-          timestamp: chrono::Utc::now().timestamp_millis(),
-        });
-        return (
-          CrewTaskExecutionRow {
-            task_id: task.id,
-            agent_id: agent.id,
-            status: "completed".to_string(),
-            output: Some(output.clone()),
-          },
-          logs,
-          Some(output),
-        );
-      }
-      Err(error) => {
-        logs.extend(error.logs);
-        last_error_text = error.message;
-        if attempt < max_attempts {
-          logs.push(CrewExecutionLogRow {
-            id: uuid::Uuid::new_v4().to_string(),
-            crew_id: request.id.clone(),
-            agent_id: agent.id.clone(),
-            task_id: task.id.clone(),
-            action: format!("Retry {} geplant", attempt),
-            result: last_error_text.chars().take(200).collect(),
-            timestamp: chrono::Utc::now().timestamp_millis(),
-          });
-          continue;
-        }
-      }
-    }
-  }
-
-  logs.push(CrewExecutionLogRow {
-    id: uuid::Uuid::new_v4().to_string(),
-    crew_id: request.id,
-    agent_id: agent.id.clone(),
-    task_id: task.id.clone(),
-    action: "Task fehlgeschlagen".to_string(),
-    result: last_error_text.chars().take(200).collect(),
-    timestamp: chrono::Utc::now().timestamp_millis(),
-  });
-  (
-    CrewTaskExecutionRow {
-      task_id: task.id,
-      agent_id: agent.id,
-      status: "failed".to_string(),
-      output: Some(last_error_text),
-    },
-    logs,
-    None,
-  )
-}
-
-fn is_crew_canceled(registry: &CrewExecutionRegistry, crew_id: &str) -> bool {
-  registry
-    .canceled
-    .lock()
-    .map(|canceled| canceled.contains(crew_id))
-    .unwrap_or(false)
 }
 
 #[tauri::command]
@@ -3448,308 +2130,6 @@ async fn pipeline_execute(
     step_results,
     error: None,
   })
-}
-
-async fn crew_execute_internal(
-  app: &tauri::AppHandle,
-  database: &Arc<Database>,
-  registry: &CrewExecutionRegistry,
-  request: CrewExecuteRequest,
-) -> Result<CrewExecutionResponse, String> {
-  let started_at = chrono::Utc::now().to_rfc3339();
-  let run_id = uuid::Uuid::new_v4().to_string();
-  let request_snapshot_json = serde_json::to_string(&sanitize_crew_request_snapshot(&request)).unwrap_or_else(|_| "{}".to_string());
-
-  if request.tasks.is_empty() {
-    return Err("Crew enthaelt keine Tasks".to_string());
-  }
-
-  let enabled_agents: HashMap<String, CrewExecuteAgentRequest> = request
-    .agents
-    .iter()
-    .filter(|agent| agent.enabled)
-    .cloned()
-    .map(|agent| (agent.id.clone(), agent))
-    .collect();
-
-  if enabled_agents.is_empty() {
-    return Err("Crew enthaelt keine aktiven Agenten".to_string());
-  }
-
-  validate_crew_request(&request, &enabled_agents)?;
-  let policy = load_policy_state(database)?;
-  let _ = database.insert_crew_run_event(
-    &uuid::Uuid::new_v4().to_string(),
-    &run_id,
-    &request.id,
-    "run_started",
-    Some(&request_snapshot_json),
-  );
-
-  if let Ok(mut canceled) = registry.canceled.lock() {
-    canceled.remove(&request.id);
-  }
-
-  let mut task_outputs: HashMap<String, String> = HashMap::new();
-  let mut task_results = Vec::with_capacity(request.tasks.len());
-  let mut logs = Vec::new();
-  let mut overall_status = "completed".to_string();
-  let mut overall_error: Option<String> = None;
-  let mut remaining_tasks = request.tasks.clone();
-
-  while !remaining_tasks.is_empty() {
-    if is_crew_canceled(&registry, &request.id) {
-      overall_status = "canceled".to_string();
-      overall_error = Some("Crew-Ausfuehrung abgebrochen".to_string());
-      break;
-    }
-
-    let mut ready_tasks = Vec::new();
-    let mut waiting_tasks = Vec::new();
-
-    for task in remaining_tasks.into_iter() {
-      if !enabled_agents.contains_key(&task.agent_id) {
-        let error = format!("Agent {} fuer Task {} ist deaktiviert oder nicht vorhanden", task.agent_id, task.id);
-        task_results.push(CrewTaskExecutionRow {
-          task_id: task.id.clone(),
-          agent_id: task.agent_id.clone(),
-          status: "failed".to_string(),
-          output: Some(error.clone()),
-        });
-        logs.push(CrewExecutionLogRow {
-          id: uuid::Uuid::new_v4().to_string(),
-          crew_id: request.id.clone(),
-          agent_id: task.agent_id.clone(),
-          task_id: task.id.clone(),
-          action: "Task blockiert".to_string(),
-          result: error.clone(),
-          timestamp: chrono::Utc::now().timestamp_millis(),
-        });
-        overall_status = "failed".to_string();
-        if overall_error.is_none() {
-          overall_error = Some(error);
-        }
-        continue;
-      }
-
-      if task.dependencies.iter().all(|dependency| task_outputs.contains_key(dependency)) {
-        ready_tasks.push(task);
-      } else {
-        waiting_tasks.push(task);
-      }
-    }
-
-    if ready_tasks.is_empty() {
-      let unresolved = waiting_tasks
-        .iter()
-        .map(|task| task.id.clone())
-        .collect::<Vec<_>>()
-        .join(", ");
-      let error = format!("Keine ausfuehrbaren Tasks mehr. Unerfuellte Abhaengigkeiten fuer: {}", unresolved);
-      for task in waiting_tasks {
-        task_results.push(CrewTaskExecutionRow {
-          task_id: task.id.clone(),
-          agent_id: task.agent_id.clone(),
-          status: "failed".to_string(),
-          output: Some(error.clone()),
-        });
-        logs.push(CrewExecutionLogRow {
-          id: uuid::Uuid::new_v4().to_string(),
-          crew_id: request.id.clone(),
-          agent_id: task.agent_id,
-          task_id: task.id,
-          action: "Task blockiert".to_string(),
-          result: error.clone(),
-          timestamp: chrono::Utc::now().timestamp_millis(),
-        });
-      }
-      overall_status = "failed".to_string();
-      if overall_error.is_none() {
-        overall_error = Some(error);
-      }
-      break;
-    }
-
-    if request.process.eq_ignore_ascii_case("parallel") {
-      let mut pending_parallel = ready_tasks;
-      let max_parallel = request.max_parallel_tasks.unwrap_or(1).max(1) as usize;
-
-      while !pending_parallel.is_empty() {
-        let batch_size = pending_parallel.len().min(max_parallel);
-        let current_batch = pending_parallel.drain(0..batch_size).collect::<Vec<_>>();
-        let mut batch_review_summary = Vec::new();
-        let batch_results = join_all(current_batch.into_iter().map(|task| {
-          let app_handle = app.clone();
-          let database = Arc::clone(database);
-          let policy = policy.clone();
-          let request_clone = request.clone();
-          let task_outputs_clone = task_outputs.clone();
-          let agent = enabled_agents
-            .get(&task.agent_id)
-            .cloned()
-            .expect("enabled agent missing for ready task");
-          async move { execute_crew_task(app_handle, database, policy, request_clone, agent, task, task_outputs_clone).await }
-        })).await;
-
-        for (task_row, task_logs, output) in batch_results {
-          batch_review_summary.push(format!(
-            "Task {} [{}]: {}",
-            task_row.task_id,
-            task_row.status,
-            task_row.output.clone().unwrap_or_default()
-          ));
-          if task_row.status == "completed" {
-            if let Some(text) = output {
-              task_outputs.insert(task_row.task_id.clone(), text);
-            }
-          } else {
-            overall_status = "failed".to_string();
-            if overall_error.is_none() {
-              overall_error = task_row.output.clone();
-            }
-          }
-          task_results.push(task_row);
-          logs.extend(task_logs);
-        }
-
-        if request.stop_on_failure && overall_status == "failed" {
-          let reason = overall_error
-            .clone()
-            .unwrap_or_else(|| "Crew wurde nach einem Task-Fehler gestoppt".to_string());
-          let mut skipped_tasks = pending_parallel.drain(..).collect::<Vec<_>>();
-          skipped_tasks.extend(waiting_tasks.drain(..));
-          mark_skipped_crew_tasks(&request, skipped_tasks, &mut task_results, &mut logs, &reason);
-          break;
-        }
-
-        if request.process.eq_ignore_ascii_case("hierarchical") && request.manager_review_enabled {
-          if let Some(manager_id) = &request.manager_agent_id {
-            if let Some(manager_agent) = enabled_agents.get(manager_id).cloned() {
-              if !batch_review_summary.is_empty() {
-                logs.extend(
-                  execute_manager_review(app, database, &policy, &request, manager_agent, &batch_review_summary.join("\n\n")).await,
-                );
-              }
-            }
-          }
-        }
-      }
-    } else {
-      let mut batch_review_summary = Vec::new();
-      let mut pending_ready = ready_tasks.into_iter();
-      while let Some(task) = pending_ready.next() {
-        let Some(agent) = enabled_agents.get(&task.agent_id).cloned() else {
-          continue;
-        };
-        let (task_row, task_logs, output) = execute_crew_task(
-          app.clone(),
-          Arc::clone(database),
-          policy.clone(),
-          request.clone(),
-          agent,
-          task,
-          task_outputs.clone(),
-        ).await;
-        batch_review_summary.push(format!(
-          "Task {} [{}]: {}",
-          task_row.task_id,
-          task_row.status,
-          task_row.output.clone().unwrap_or_default()
-        ));
-        if task_row.status == "completed" {
-          if let Some(text) = output {
-            task_outputs.insert(task_row.task_id.clone(), text);
-          }
-        } else {
-          overall_status = "failed".to_string();
-          if overall_error.is_none() {
-            overall_error = task_row.output.clone();
-          }
-        }
-        task_results.push(task_row);
-        logs.extend(task_logs);
-
-        if request.stop_on_failure && overall_status == "failed" {
-          let reason = overall_error
-            .clone()
-            .unwrap_or_else(|| "Crew wurde nach einem Task-Fehler gestoppt".to_string());
-          let mut skipped_tasks = pending_ready.collect::<Vec<_>>();
-          skipped_tasks.extend(waiting_tasks.drain(..));
-          mark_skipped_crew_tasks(&request, skipped_tasks, &mut task_results, &mut logs, &reason);
-          break;
-        }
-      }
-
-      if request.process.eq_ignore_ascii_case("hierarchical") && request.manager_review_enabled {
-        if let Some(manager_id) = &request.manager_agent_id {
-          if let Some(manager_agent) = enabled_agents.get(manager_id).cloned() {
-            if !batch_review_summary.is_empty() {
-              logs.extend(
-                execute_manager_review(app, database, &policy, &request, manager_agent, &batch_review_summary.join("\n\n")).await,
-              );
-            }
-          }
-        }
-      }
-    }
-
-    remaining_tasks = waiting_tasks;
-  }
-
-  if let Ok(mut canceled) = registry.canceled.lock() {
-    canceled.remove(&request.id);
-  }
-
-  let finished_at = chrono::Utc::now().to_rfc3339();
-  let crew_snapshot_json = request_snapshot_json;
-  let response = CrewExecutionResponse {
-    crew_id: request.id.clone(),
-    status: overall_status,
-    task_results,
-    logs,
-    error: overall_error,
-  };
-
-  let _ = database.insert_crew_run(
-    &run_id,
-    &request.id,
-    &request.name,
-    &request.process,
-    &response.status,
-    request.manager_agent_id.as_deref(),
-    response.error.as_deref(),
-    &crew_snapshot_json,
-    &started_at,
-    Some(&finished_at),
-  );
-  let _ = database.insert_crew_run_logs(&run_id, &response.logs);
-  let response_payload = serde_json::to_string(&response).ok();
-  let _ = database.insert_crew_run_event(
-    &uuid::Uuid::new_v4().to_string(),
-    &run_id,
-    &request.id,
-    "run_completed",
-    response_payload.as_deref(),
-  );
-  for log in &response.logs {
-    let payload = serde_json::json!({
-      "agentId": log.agent_id,
-      "taskId": log.task_id,
-      "action": log.action,
-      "result": log.result,
-      "timestamp": log.timestamp,
-    });
-    let payload_json = serde_json::to_string(&payload).ok();
-    let _ = database.insert_crew_run_event(
-      &uuid::Uuid::new_v4().to_string(),
-      &run_id,
-      &request.id,
-      "crew_log",
-      payload_json.as_deref(),
-    );
-  }
-
-  Ok(response)
 }
 
 #[tauri::command]
@@ -3922,18 +2302,42 @@ fn crew_approval_create(
 }
 
 #[tauri::command]
-fn crew_approval_resolve(
+async fn crew_approval_resolve(
+  app: tauri::AppHandle,
   state: tauri::State<'_, Arc<Database>>,
   request: CrewApprovalResolveRequest,
 ) -> Result<db::CrewApprovalRow, String> {
-  state
+  let approval = state
+    .get_crew_approval(&request.id)
+    .map_err(|error| error.to_string())?
+    .ok_or_else(|| format!("Crew-Approval {} nicht gefunden", request.id))?;
+
+  let resolved = state
     .resolve_crew_approval(
       &request.id,
       &request.status,
       request.resolved_by.as_deref(),
       request.resolution_note.as_deref(),
     )
-    .map_err(|error| error.to_string())
+    .map_err(|error| error.to_string())?;
+
+  if request.status.eq_ignore_ascii_case("approved") {
+    if let Some(payload_json) = approval.payload_json.as_deref() {
+      if let Ok(payload) = serde_json::from_str::<QueuedCrewApprovalPayload>(payload_json) {
+        let mut queued_request = payload.request;
+        queued_request.governance_resume_approval_id = Some(resolved.id.clone());
+        let app_handle = app.clone();
+        tauri::async_runtime::spawn(async move {
+          let database = app_handle.state::<Arc<Database>>();
+          let registry = app_handle.state::<CrewExecutionRegistry>();
+          let bridge = app_handle.state::<CrewPythonBridge>();
+          let _ = execute_crew_request(&app_handle, database.inner(), &registry, bridge.inner(), queued_request).await;
+        });
+      }
+    }
+  }
+
+  Ok(resolved)
 }
 
 #[tauri::command]

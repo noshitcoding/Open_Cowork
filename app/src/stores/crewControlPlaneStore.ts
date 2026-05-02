@@ -71,7 +71,7 @@ type CrewControlPlaneState = {
   upsertRoleBinding: (request: { id: string; scopeType: string; scopeRef?: string | null; role: string; subject: string }) => Promise<void>
   loadApprovals: (status?: string, crewId?: string) => Promise<void>
   createApproval: (request: { id: string; crewId?: string | null; runId?: string | null; approvalType: string; scopeRef?: string | null; status?: string; requestedBy?: string | null; payloadJson?: string | null }) => Promise<void>
-  resolveApproval: (request: { id: string; status: string; resolvedBy?: string | null; resolutionNote?: string | null }) => Promise<void>
+  resolveApproval: (request: { id: string; status: string; crewId?: string | null; resolvedBy?: string | null; resolutionNote?: string | null }) => Promise<void>
 }
 
 function serializeCrewDefinition(crew: Crew): Record<string, unknown> {
@@ -79,7 +79,10 @@ function serializeCrewDefinition(crew: Crew): Record<string, unknown> {
     id: crew.id,
     name: crew.name,
     description: crew.description,
+    executionSubject: crew.executionSubject,
     executionGuidelines: crew.executionGuidelines,
+    knowledgeFocus: crew.knowledgeFocus,
+    governanceMode: crew.governanceMode,
     outputMode: crew.outputMode,
     stopOnFailure: crew.stopOnFailure,
     retryCount: crew.retryCount,
@@ -239,7 +242,7 @@ export const useCrewControlPlaneStore = create<CrewControlPlaneState>()((set, ge
           resolutionNote: request.resolutionNote ?? null,
         },
       }, undefined)
-      await get().loadApprovals()
+      await get().loadApprovals(undefined, request.crewId ?? undefined)
       set({ loading: false })
     } catch (error) {
       set({ error: error instanceof Error ? error.message : String(error), loading: false })
