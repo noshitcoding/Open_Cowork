@@ -14,8 +14,9 @@ const EMBEDDED_WINDOWS_PYTHON_ARCHIVE_RELATIVE_PATH: &str = "python/windows.zip"
 const EMBEDDED_RUNTIME_SCRIPT_DIR: &str = "python/crew_runtime";
 const EMBEDDED_RUNTIME_WHEELS_ARCHIVE_RELATIVE_PATH: &str = "python/crew_runtime/wheels.zip";
 const ENV_CREW_PYTHON: &str = "OPEN_COWORK_CREW_PYTHON";
-const WINDOWS_PYTHON_VERSION: &str = "3.12.10";
-const WINDOWS_PYTHON_INSTALLER_URL: &str = "https://www.python.org/ftp/python/3.12.10/python-3.12.10-amd64.exe";
+const MANAGED_PYTHON_VERSION: &str = "3.12";
+const UV_VERSION: &str = "0.11.7";
+const UV_WINDOWS_DOWNLOAD_URL: &str = "https://github.com/astral-sh/uv/releases/download/0.11.7/uv-x86_64-pc-windows-msvc.zip";
 const MIN_SUPPORTED_PYTHON_MINOR: u32 = 10;
 const MAX_SUPPORTED_PYTHON_MINOR_EXCLUSIVE: u32 = 14;
 
@@ -207,8 +208,14 @@ fn resolve_embedded_python_path<R: Runtime>(app: &AppHandle<R>) -> Option<PathBu
         .filter(|path| path.exists())
 }
 
+#[cfg(target_os = "windows")]
 fn resolve_venv_python_path(runtime_root: &Path) -> PathBuf {
     runtime_root.join("venv").join("Scripts").join("python.exe")
+}
+
+#[cfg(not(target_os = "windows"))]
+fn resolve_venv_python_path(runtime_root: &Path) -> PathBuf {
+    runtime_root.join("venv").join("bin").join("python")
 }
 
 fn detect_base_python_command<R: Runtime>(app: &AppHandle<R>) -> Option<String> {
@@ -227,7 +234,26 @@ fn detect_base_python_command<R: Runtime>(app: &AppHandle<R>) -> Option<String> 
 }
 
 fn ensure_compatible_base_python<R: Runtime>(app: &AppHandle<R>) -> Result<String, String> {
-    if let Some(command) = detect_base_python_command(app).filter(|command| command_available(command)) {
+    if let Ok(path) = std::env::var(ENV_CREW_PYTHON) {
+        let command = path.trim();
+        if !command.is_empty() && command_available(command) {
+            let version = read_python_version(command).ok_or_else(|| {
+                format!("Python-Version fuer {} konnte nicht bestimmt werden", command)
+            })?;
+            if python_version_supported(&version) {
+                return Ok(command.to_string());
+            }
+            return Err(format!(
+                "OPEN_COWORK_CREW_PYTHON zeigt auf Python {}, CrewAI benoetigt Python 3.10 bis 3.13.",
+                version
+            ));
+        }
+    }
+
+    if let Some(command) = resolve_embedded_python_path(app)
+        .map(|path| path.display().to_string())
+        .filter(|command| command_available(command))
+    {
         if let Some(version) = read_python_version(&command) {
             if python_version_supported(&version) {
                 return Ok(command);
@@ -237,81 +263,110 @@ fn ensure_compatible_base_python<R: Runtime>(app: &AppHandle<R>) -> Result<Strin
 
     #[cfg(target_os = "windows")]
     {
-        install_windows_python(app)?;
-        if let Some(path) = resolve_embedded_python_path(app) {
-            let command = path.display().to_string();
-            let version = read_python_version(&command).ok_or_else(|| {
-                format!("Python-Version fuer heruntergeladenes Python konnte nicht bestimmt werden: {}", command)
-            })?;
-            if python_version_supported(&version) {
-                return Ok(command);
-            }
-            return Err(format!(
-                "Heruntergeladenes Python {} ist fuer CrewAI nicht kompatibel; erwartet wird Python {}.",
-                version, WINDOWS_PYTHON_VERSION
-            ));
-        }
+        let runtime_root = resolve_runtime_root(app)?;
+        let uv = ensure_managed_uv(app)?;
+        install_managed_python(&uv, &runtime_root)?;
+        Ok(uv)
     }
 
-    Err("Kein kompatibler Python-Interpreter verfuegbar. Unterstuetzt wird Python 3.10 bis 3.13; fuer Windows wird Python 3.12 bei Bedarf heruntergeladen.".to_string())
+    #[cfg(not(target_os = "windows"))]
+    {
+        Err("Kein kompatibler Python-Interpreter verfuegbar. Unterstuetzt wird Python 3.10 bis 3.13.".to_string())
+    }
 }
 
 #[cfg(target_os = "windows")]
-fn install_windows_python<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
+fn resolve_uv_path(runtime_root: &Path) -> PathBuf {
+    runtime_root.join("tools").join("uv").join("uv.exe")
+}
+
+#[cfg(target_os = "windows")]
+fn ensure_managed_uv<R: Runtime>(app: &AppHandle<R>) -> Result<String, String> {
     let runtime_root = resolve_runtime_root(app)?;
-    let python_dir = runtime_root.join("python").join("windows");
-    let python_exe = python_dir.join("python.exe");
-    if python_exe.exists() {
-        return Ok(());
+    let uv_exe = resolve_uv_path(&runtime_root);
+    if uv_exe.exists() {
+        return Ok(uv_exe.display().to_string());
     }
 
-    fs::create_dir_all(&python_dir)
-        .map_err(|error| format!("Python-Zielordner konnte nicht erstellt werden: {}", error))?;
+    let uv_dir = uv_exe
+        .parent()
+        .ok_or_else(|| "uv-Zielordner konnte nicht aufgeloest werden".to_string())?;
+    fs::create_dir_all(uv_dir)
+        .map_err(|error| format!("uv-Zielordner konnte nicht erstellt werden: {}", error))?;
     let downloads_dir = runtime_root.join("downloads");
     fs::create_dir_all(&downloads_dir)
-        .map_err(|error| format!("Download-Ordner fuer Python konnte nicht erstellt werden: {}", error))?;
-    let installer_path = downloads_dir.join(format!("python-{}-amd64.exe", WINDOWS_PYTHON_VERSION));
+        .map_err(|error| format!("Download-Ordner fuer uv konnte nicht erstellt werden: {}", error))?;
+    let archive_path = downloads_dir.join(format!("uv-{}-x86_64-pc-windows-msvc.zip", UV_VERSION));
 
-    if !installer_path.exists() {
-        let response = reqwest::blocking::get(WINDOWS_PYTHON_INSTALLER_URL)
-            .map_err(|error| format!("Python {} konnte nicht heruntergeladen werden: {}", WINDOWS_PYTHON_VERSION, error))?;
+    if !archive_path.exists() {
+        let response = reqwest::blocking::get(UV_WINDOWS_DOWNLOAD_URL)
+            .map_err(|error| format!("uv {} konnte nicht heruntergeladen werden: {}", UV_VERSION, error))?;
         if !response.status().is_success() {
-            return Err(format!(
-                "Python {} Download fehlgeschlagen: HTTP {}",
-                WINDOWS_PYTHON_VERSION,
-                response.status()
-            ));
+            return Err(format!("uv {} Download fehlgeschlagen: HTTP {}", UV_VERSION, response.status()));
         }
         let bytes = response
             .bytes()
-            .map_err(|error| format!("Python Download konnte nicht gelesen werden: {}", error))?;
-        fs::write(&installer_path, bytes)
-            .map_err(|error| format!("Python Installer konnte nicht gespeichert werden: {}", error))?;
+            .map_err(|error| format!("uv Download konnte nicht gelesen werden: {}", error))?;
+        fs::write(&archive_path, bytes)
+            .map_err(|error| format!("uv Archiv konnte nicht gespeichert werden: {}", error))?;
     }
 
-    let target_dir = format!("TargetDir={}", python_dir.display());
-    let status = Command::new(&installer_path)
-        .args([
-            "/quiet",
-            "InstallAllUsers=0",
-            "PrependPath=0",
-            "Include_launcher=0",
-            "Include_test=0",
-            "Include_doc=0",
-            "Include_tcltk=0",
-            "Include_pip=1",
-            target_dir.as_str(),
-        ])
-        .status()
-        .map_err(|error| format!("Python Installer konnte nicht gestartet werden: {}", error))?;
-    if !status.success() {
-        return Err(format!("Python Installer beendete sich mit {}", status));
+    extract_file_from_zip(&archive_path, "uv.exe", &uv_exe)?;
+    if !uv_exe.exists() {
+        return Err(format!("uv wurde nicht gefunden: {}", uv_exe.display()));
     }
-    if !python_exe.exists() {
-        return Err(format!("Python Installation wurde nicht gefunden: {}", python_exe.display()));
+
+    Ok(uv_exe.display().to_string())
+}
+
+#[cfg(target_os = "windows")]
+fn install_managed_python(uv: &str, runtime_root: &Path) -> Result<(), String> {
+    let python_install_dir = runtime_root.join("python").join("managed");
+    fs::create_dir_all(&python_install_dir)
+        .map_err(|error| format!("Python-Installationsordner konnte nicht erstellt werden: {}", error))?;
+
+    let status = Command::new(uv)
+        .args(["python", "install", MANAGED_PYTHON_VERSION])
+        .env("UV_PYTHON_INSTALL_DIR", &python_install_dir)
+        .env("UV_CACHE_DIR", runtime_root.join("cache").join("uv"))
+        .status()
+        .map_err(|error| format!("App-interner Python-Download konnte nicht gestartet werden: {}", error))?;
+    if !status.success() {
+        return Err(format!("App-interner Python-Download beendete sich mit {}", status));
     }
 
     Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn extract_file_from_zip(zip_path: &Path, file_name: &str, destination: &Path) -> Result<(), String> {
+    let file = fs::File::open(zip_path)
+        .map_err(|error| format!("Archiv konnte nicht geoeffnet werden ({}): {}", zip_path.display(), error))?;
+    let mut archive = ZipArchive::new(file)
+        .map_err(|error| format!("Archiv konnte nicht gelesen werden ({}): {}", zip_path.display(), error))?;
+
+    for index in 0..archive.len() {
+        let mut entry = archive
+            .by_index(index)
+            .map_err(|error| format!("Archiv-Eintrag konnte nicht gelesen werden ({}): {}", zip_path.display(), error))?;
+        let Some(entry_path) = entry.enclosed_name().map(PathBuf::from) else {
+            continue;
+        };
+        if entry_path.file_name().and_then(|value| value.to_str()) != Some(file_name) {
+            continue;
+        }
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|error| format!("Zielordner konnte nicht erstellt werden ({}): {}", parent.display(), error))?;
+        }
+        let mut output = fs::File::create(destination)
+            .map_err(|error| format!("Datei konnte nicht geschrieben werden ({}): {}", destination.display(), error))?;
+        std::io::copy(&mut entry, &mut output)
+            .map_err(|error| format!("Datei konnte nicht entpackt werden ({}): {}", destination.display(), error))?;
+        return Ok(());
+    }
+
+    Err(format!("{} wurde im Archiv {} nicht gefunden", file_name, zip_path.display()))
 }
 
 fn command_available(command: &str) -> bool {
@@ -588,8 +643,16 @@ fn crew_runtime_status_internal<R: Runtime>(
 
     let scripts_path = resolve_runtime_scripts_path(&app);
     let main_script = scripts_path.join("main.py");
-    let base_python = detect_base_python_command(&app);
-    let detected_python_path = base_python.clone().filter(|command| command_available(command));
+    let venv_python = resolve_venv_python_path(&runtime_root);
+    let venv_exists = venv_python.exists();
+    let base_python = if venv_exists {
+        Some(venv_python.display().to_string())
+    } else {
+        detect_base_python_command(&app)
+            .filter(|command| command != "python")
+            .filter(|command| command_available(command))
+    };
+    let detected_python_path = base_python.clone();
     let detected_python_version = detected_python_path
         .as_ref()
         .and_then(|command| read_python_version(command));
@@ -610,11 +673,12 @@ fn crew_runtime_status_internal<R: Runtime>(
         ));
     }
 
-    let venv_python = resolve_venv_python_path(&runtime_root);
     let preferred_python = if venv_python.exists() {
         Some(venv_python)
-    } else {
+    } else if python_compatible {
         detected_python_path.as_ref().map(PathBuf::from)
+    } else {
+        None
     };
 
     let status_json = preferred_python
@@ -625,11 +689,11 @@ fn crew_runtime_status_internal<R: Runtime>(
         "Crew runtime Status erfolgreich geladen".to_string()
     } else if detected_python_path.is_some() && !python_compatible {
         format!(
-            "Erkannter Python-Interpreter ({}) ist fuer CrewAI nicht kompatibel. Unterstuetzt wird Python 3.10 bis 3.13; fuer Produktiv-Builds wird das gebuendelte Python 3.12 erwartet.",
+            "Erkannter Python-Interpreter ({}) ist fuer CrewAI nicht kompatibel. Die App-interne Runtime wird beim Initialisieren mit Python 3.12 vorbereitet.",
             detected_python_version.clone().unwrap_or_else(|| "unbekannt".to_string())
         )
     } else if preferred_python.is_none() {
-        "Kein Python-Interpreter verfuegbar. Fuer produktive Builds wird die eingebettete Runtime erwartet.".to_string()
+        "Crew runtime muss initialisiert werden. Python 3.12 und CrewAI werden isoliert in den App-Datenordner heruntergeladen.".to_string()
     } else {
         "Crew runtime vorhanden, aber noch nicht vorbereitet".to_string()
     };
@@ -674,25 +738,32 @@ pub fn crew_runtime_bootstrap(
     }
 
     let base_python = ensure_compatible_base_python(&app)?;
-    let base_python_version = read_python_version(&base_python).ok_or_else(|| {
-        format!("Python-Version fuer Crew runtime konnte nicht bestimmt werden: {}", base_python)
-    })?;
-    if !python_version_supported(&base_python_version) {
-        return Err(format!(
-            "Python {} ist fuer CrewAI nicht kompatibel. Erforderlich ist Python 3.10 bis 3.13; gebuendeltes Python 3.12 wird erwartet.",
-            base_python_version
-        ));
-    }
     let use_local_wheels = local_wheels_available(&wheels_path);
 
     let force_reinstall = request.as_ref().map(|value| value.force_reinstall).unwrap_or(false);
-    if force_reinstall && venv_root.exists() {
+    let venv_python_supported = if venv_python.exists() {
+        read_python_version(venv_python.to_string_lossy().as_ref())
+            .as_deref()
+            .map(python_version_supported)
+            .unwrap_or(false)
+    } else {
+        true
+    };
+    if venv_root.exists() && (force_reinstall || !venv_python_supported) {
         fs::remove_dir_all(&venv_root).map_err(|error| format!("Bestehende Crew runtime konnte nicht entfernt werden: {}", error))?;
     }
 
     if !venv_python.exists() {
-        let status = Command::new(&base_python)
-            .args(["-m", "venv", venv_root.to_string_lossy().as_ref()])
+        let mut command = Command::new(&base_python);
+        if base_python.ends_with("uv.exe") {
+            command
+                .args(["venv", "--python", MANAGED_PYTHON_VERSION, venv_root.to_string_lossy().as_ref()])
+                .env("UV_PYTHON_INSTALL_DIR", runtime_root.join("python").join("managed"))
+                .env("UV_CACHE_DIR", runtime_root.join("cache").join("uv"));
+        } else {
+            command.args(["-m", "venv", venv_root.to_string_lossy().as_ref()]);
+        }
+        let status = command
             .status()
             .map_err(|error| format!("Crew runtime venv konnte nicht erstellt werden: {}", error))?;
         if !status.success() {
@@ -700,7 +771,7 @@ pub fn crew_runtime_bootstrap(
         }
     }
 
-    if !use_local_wheels {
+    if !use_local_wheels && !base_python.ends_with("uv.exe") {
         let pip_upgrade = Command::new(&venv_python)
             .args(["-m", "pip", "install", "--upgrade", "pip"])
             .status()
@@ -712,8 +783,18 @@ pub fn crew_runtime_bootstrap(
 
     let requirements_path_arg = requirements_path.to_string_lossy().to_string();
     let wheels_path_arg = wheels_path.to_string_lossy().to_string();
-    let mut install_requirements_command = Command::new(&venv_python);
-    install_requirements_command.args(["-m", "pip", "install"]);
+    let mut install_requirements_command = if base_python.ends_with("uv.exe") {
+        let mut command = Command::new(&base_python);
+        command
+            .args(["pip", "install", "--python", venv_python.to_string_lossy().as_ref()])
+            .env("UV_PYTHON_INSTALL_DIR", runtime_root.join("python").join("managed"))
+            .env("UV_CACHE_DIR", runtime_root.join("cache").join("uv"));
+        command
+    } else {
+        let mut command = Command::new(&venv_python);
+        command.args(["-m", "pip", "install"]);
+        command
+    };
     if use_local_wheels {
         install_requirements_command.args(["--no-index", "--find-links", wheels_path_arg.as_str()]);
     }

@@ -35,10 +35,8 @@
       "resources/pdfium/bin/pdfium.dll",
       "resources/pdfium/LICENSE",
       "resources/pdfium/VERSION",
-      "resources/python/windows/**/*",
       "python/crew_runtime/main.py",
-      "python/crew_runtime/requirements.txt",
-      "python/crew_runtime/wheels/**/*"
+      "python/crew_runtime/requirements.txt"
     ],
     "icon": [
       "icons/32x32.png",
