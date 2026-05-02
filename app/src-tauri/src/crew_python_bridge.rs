@@ -7,10 +7,15 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager, Runtime, State};
+use zip::ZipArchive;
 
 const EMBEDDED_WINDOWS_PYTHON_RELATIVE_PATH: &str = "python/windows/python.exe";
+const EMBEDDED_WINDOWS_PYTHON_ARCHIVE_RELATIVE_PATH: &str = "python/windows.zip";
 const EMBEDDED_RUNTIME_SCRIPT_DIR: &str = "python/crew_runtime";
+const EMBEDDED_RUNTIME_WHEELS_ARCHIVE_RELATIVE_PATH: &str = "python/crew_runtime/wheels.zip";
 const ENV_CREW_PYTHON: &str = "OPEN_COWORK_CREW_PYTHON";
+const WINDOWS_PYTHON_VERSION: &str = "3.12.10";
+const WINDOWS_PYTHON_INSTALLER_URL: &str = "https://www.python.org/ftp/python/3.12.10/python-3.12.10-amd64.exe";
 const MIN_SUPPORTED_PYTHON_MINOR: u32 = 10;
 const MAX_SUPPORTED_PYTHON_MINOR_EXCLUSIVE: u32 = 14;
 
@@ -188,6 +193,13 @@ fn resolve_requirements_path<R: Runtime>(app: &AppHandle<R>) -> PathBuf {
 }
 
 fn resolve_embedded_python_path<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
+    if let Ok(runtime_root) = resolve_runtime_root(app) {
+        let extracted = runtime_root.join(EMBEDDED_WINDOWS_PYTHON_RELATIVE_PATH);
+        if extracted.exists() {
+            return Some(extracted);
+        }
+    }
+
     app.path()
         .resource_dir()
         .ok()
@@ -212,6 +224,94 @@ fn detect_base_python_command<R: Runtime>(app: &AppHandle<R>) -> Option<String> 
     }
 
     Some("python".to_string())
+}
+
+fn ensure_compatible_base_python<R: Runtime>(app: &AppHandle<R>) -> Result<String, String> {
+    if let Some(command) = detect_base_python_command(app).filter(|command| command_available(command)) {
+        if let Some(version) = read_python_version(&command) {
+            if python_version_supported(&version) {
+                return Ok(command);
+            }
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        install_windows_python(app)?;
+        if let Some(path) = resolve_embedded_python_path(app) {
+            let command = path.display().to_string();
+            let version = read_python_version(&command).ok_or_else(|| {
+                format!("Python-Version fuer heruntergeladenes Python konnte nicht bestimmt werden: {}", command)
+            })?;
+            if python_version_supported(&version) {
+                return Ok(command);
+            }
+            return Err(format!(
+                "Heruntergeladenes Python {} ist fuer CrewAI nicht kompatibel; erwartet wird Python {}.",
+                version, WINDOWS_PYTHON_VERSION
+            ));
+        }
+    }
+
+    Err("Kein kompatibler Python-Interpreter verfuegbar. Unterstuetzt wird Python 3.10 bis 3.13; fuer Windows wird Python 3.12 bei Bedarf heruntergeladen.".to_string())
+}
+
+#[cfg(target_os = "windows")]
+fn install_windows_python<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
+    let runtime_root = resolve_runtime_root(app)?;
+    let python_dir = runtime_root.join("python").join("windows");
+    let python_exe = python_dir.join("python.exe");
+    if python_exe.exists() {
+        return Ok(());
+    }
+
+    fs::create_dir_all(&python_dir)
+        .map_err(|error| format!("Python-Zielordner konnte nicht erstellt werden: {}", error))?;
+    let downloads_dir = runtime_root.join("downloads");
+    fs::create_dir_all(&downloads_dir)
+        .map_err(|error| format!("Download-Ordner fuer Python konnte nicht erstellt werden: {}", error))?;
+    let installer_path = downloads_dir.join(format!("python-{}-amd64.exe", WINDOWS_PYTHON_VERSION));
+
+    if !installer_path.exists() {
+        let response = reqwest::blocking::get(WINDOWS_PYTHON_INSTALLER_URL)
+            .map_err(|error| format!("Python {} konnte nicht heruntergeladen werden: {}", WINDOWS_PYTHON_VERSION, error))?;
+        if !response.status().is_success() {
+            return Err(format!(
+                "Python {} Download fehlgeschlagen: HTTP {}",
+                WINDOWS_PYTHON_VERSION,
+                response.status()
+            ));
+        }
+        let bytes = response
+            .bytes()
+            .map_err(|error| format!("Python Download konnte nicht gelesen werden: {}", error))?;
+        fs::write(&installer_path, bytes)
+            .map_err(|error| format!("Python Installer konnte nicht gespeichert werden: {}", error))?;
+    }
+
+    let target_dir = format!("TargetDir={}", python_dir.display());
+    let status = Command::new(&installer_path)
+        .args([
+            "/quiet",
+            "InstallAllUsers=0",
+            "PrependPath=0",
+            "Include_launcher=0",
+            "Include_test=0",
+            "Include_doc=0",
+            "Include_tcltk=0",
+            "Include_pip=1",
+            target_dir.as_str(),
+        ])
+        .status()
+        .map_err(|error| format!("Python Installer konnte nicht gestartet werden: {}", error))?;
+    if !status.success() {
+        return Err(format!("Python Installer beendete sich mit {}", status));
+    }
+    if !python_exe.exists() {
+        return Err(format!("Python Installation wurde nicht gefunden: {}", python_exe.display()));
+    }
+
+    Ok(())
 }
 
 fn command_available(command: &str) -> bool {
@@ -256,6 +356,13 @@ fn python_version_supported(version: &str) -> bool {
 }
 
 fn resolve_local_wheels_path<R: Runtime>(app: &AppHandle<R>) -> PathBuf {
+    if let Ok(runtime_root) = resolve_runtime_root(app) {
+        let extracted = runtime_root.join("python").join("crew_runtime").join("wheels");
+        if extracted.exists() {
+            return extracted;
+        }
+    }
+
     resolve_runtime_scripts_path(app).join("wheels")
 }
 
@@ -273,6 +380,89 @@ fn local_wheels_available(path: &Path) -> bool {
             })
         })
         .unwrap_or(false)
+}
+
+fn ensure_bundled_runtime_assets<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
+    let resource_dir = match app.path().resource_dir() {
+        Ok(path) => path,
+        Err(_) => return Ok(()),
+    };
+
+    let runtime_root = resolve_runtime_root(app)?;
+    fs::create_dir_all(&runtime_root).map_err(|error| format!("Crew runtime root konnte nicht erstellt werden: {}", error))?;
+
+    let python_archive = resource_dir.join(EMBEDDED_WINDOWS_PYTHON_ARCHIVE_RELATIVE_PATH);
+    if python_archive.exists() {
+        extract_zip_if_needed(&python_archive, &runtime_root.join("python").join("windows"))?;
+    }
+
+    let wheels_archive = resource_dir.join(EMBEDDED_RUNTIME_WHEELS_ARCHIVE_RELATIVE_PATH);
+    if wheels_archive.exists() {
+        extract_zip_if_needed(&wheels_archive, &runtime_root.join("python").join("crew_runtime").join("wheels"))?;
+    }
+
+    Ok(())
+}
+
+fn extract_zip_if_needed(zip_path: &Path, destination: &Path) -> Result<(), String> {
+    let marker = destination.join(".open_cowork_extract_complete");
+    let zip_metadata = fs::metadata(zip_path).map_err(|error| format!("Archiv konnte nicht gelesen werden ({}): {}", zip_path.display(), error))?;
+    let zip_len = zip_metadata.len().to_string();
+    let zip_modified = zip_metadata
+        .modified()
+        .ok()
+        .and_then(|value| value.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|value| value.as_secs().to_string())
+        .unwrap_or_else(|| "0".to_string());
+    let expected_marker = format!("{}:{}", zip_len, zip_modified);
+
+    if marker.exists() {
+        if let Ok(current_marker) = fs::read_to_string(&marker) {
+            if current_marker.trim() == expected_marker {
+                return Ok(());
+            }
+        }
+        fs::remove_dir_all(destination)
+            .map_err(|error| format!("Veraltete Archivdaten konnten nicht entfernt werden ({}): {}", destination.display(), error))?;
+    }
+
+    fs::create_dir_all(destination)
+        .map_err(|error| format!("Zielordner fuer Archiv konnte nicht erstellt werden ({}): {}", destination.display(), error))?;
+
+    let file = fs::File::open(zip_path)
+        .map_err(|error| format!("Archiv konnte nicht geoeffnet werden ({}): {}", zip_path.display(), error))?;
+    let mut archive = ZipArchive::new(file)
+        .map_err(|error| format!("Archiv konnte nicht gelesen werden ({}): {}", zip_path.display(), error))?;
+
+    for index in 0..archive.len() {
+        let mut entry = archive
+            .by_index(index)
+            .map_err(|error| format!("Archiv-Eintrag konnte nicht gelesen werden ({}): {}", zip_path.display(), error))?;
+        let Some(entry_name) = entry.enclosed_name().map(PathBuf::from) else {
+            continue;
+        };
+        let output_path = destination.join(entry_name);
+
+        if entry.is_dir() {
+            fs::create_dir_all(&output_path)
+                .map_err(|error| format!("Archivordner konnte nicht erstellt werden ({}): {}", output_path.display(), error))?;
+            continue;
+        }
+
+        if let Some(parent) = output_path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|error| format!("Archivziel konnte nicht erstellt werden ({}): {}", parent.display(), error))?;
+        }
+
+        let mut output = fs::File::create(&output_path)
+            .map_err(|error| format!("Archivdatei konnte nicht geschrieben werden ({}): {}", output_path.display(), error))?;
+        std::io::copy(&mut entry, &mut output)
+            .map_err(|error| format!("Archivdatei konnte nicht entpackt werden ({}): {}", output_path.display(), error))?;
+    }
+
+    fs::write(&marker, expected_marker)
+        .map_err(|error| format!("Archivmarker konnte nicht geschrieben werden ({}): {}", marker.display(), error))?;
+    Ok(())
 }
 
 fn run_python_json_command(
@@ -390,6 +580,7 @@ fn crew_runtime_status_internal<R: Runtime>(
     app: &AppHandle<R>,
     bridge: &CrewPythonBridge,
 ) -> Result<CrewRuntimeStatusResponse, String> {
+    ensure_bundled_runtime_assets(app)?;
     let runtime_root = resolve_runtime_root(&app)?;
     if !runtime_root.exists() {
         fs::create_dir_all(&runtime_root).map_err(|error| format!("Crew runtime root konnte nicht erstellt werden: {}", error))?;
@@ -468,6 +659,7 @@ pub fn crew_runtime_bootstrap(
     bridge: State<'_, CrewPythonBridge>,
     request: Option<CrewRuntimeBootstrapRequest>,
 ) -> Result<CrewRuntimeBootstrapResponse, String> {
+    ensure_bundled_runtime_assets(&app)?;
     let runtime_root = resolve_runtime_root(&app)?;
     fs::create_dir_all(&runtime_root).map_err(|error| format!("Crew runtime root konnte nicht erstellt werden: {}", error))?;
     let venv_root = runtime_root.join("venv");
@@ -481,9 +673,7 @@ pub fn crew_runtime_bootstrap(
         return Err(format!("Crew runtime Skript fehlt: {}", main_script.display()));
     }
 
-    let base_python = detect_base_python_command(&app)
-        .filter(|command| command_available(command))
-        .ok_or_else(|| "Kein Python-Interpreter verfuegbar. Lege fuer Windows-Builds eine eingebettete Runtime unter resources/python/windows ab oder setze OPEN_COWORK_CREW_PYTHON.".to_string())?;
+    let base_python = ensure_compatible_base_python(&app)?;
     let base_python_version = read_python_version(&base_python).ok_or_else(|| {
         format!("Python-Version fuer Crew runtime konnte nicht bestimmt werden: {}", base_python)
     })?;

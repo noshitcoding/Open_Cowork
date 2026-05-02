@@ -7,6 +7,11 @@ app/.vite/
 # Rust
 app/src-tauri/target/
 
+# Generated Python runtime artifacts
+app/src-tauri/python/crew_runtime/wheels/
+app/src-tauri/python/crew_runtime/wheels.zip
+app/src-tauri/resources/python/
+
 # Logs and temp
 *.log
 *.tmp
