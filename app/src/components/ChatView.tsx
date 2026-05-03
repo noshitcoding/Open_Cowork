@@ -1120,6 +1120,20 @@ export default function ChatView() {
 
   const handleStop = () => {
     engineAbort()
+    if (activeThreadId) {
+      const streamingMessage = [...activeMessages].reverse().find((message) => message.role === 'assistant' && message.streaming)
+      if (streamingMessage) {
+        const content = streamingMessage.content?.trim()
+          ? `${streamingMessage.content}\n\nGenerierung abgebrochen.`
+          : 'Generierung abgebrochen.'
+        updateMessage(activeThreadId, streamingMessage.id, {
+          content,
+          streaming: false,
+        }, {
+          persist: true,
+        })
+      }
+    }
     setBusy(false)
     setError(null)
   }

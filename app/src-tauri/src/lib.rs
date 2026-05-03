@@ -19,7 +19,7 @@ mod worker_sandbox;
 use claude_code_bridge::ClaudeCodeBridge;
 use crew_python_bridge::{
     crew_runtime_bootstrap, crew_runtime_execute_request, crew_runtime_status,
-    crew_runtime_validate_definition, CrewPythonBridge,
+    crew_runtime_validate_definition, CrewPythonBridge, CrewRuntimeExecutionLog,
 };
 use db::Database;
 use mcp::{
@@ -100,6 +100,11 @@ struct WatchRegistry {
 
 #[derive(Default)]
 struct CrewExecutionRegistry {
+    canceled: Mutex<HashSet<String>>,
+}
+
+#[derive(Default)]
+struct ChatStreamRegistry {
     canceled: Mutex<HashSet<String>>,
 }
 
@@ -816,6 +821,8 @@ struct CrewExecuteRequest {
     provider_configs: CrewProviderConfigsRequest,
     #[serde(default)]
     cwd: Option<String>,
+    #[serde(default)]
+    stream_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -901,7 +908,7 @@ struct CrewStopRequest {
     crew_id: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct CrewExecutionLogRow {
     id: String,
@@ -930,6 +937,40 @@ struct CrewExecutionResponse {
     task_results: Vec<CrewTaskExecutionRow>,
     logs: Vec<CrewExecutionLogRow>,
     error: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct CrewExecutionLogEventPayload {
+    stream_id: Option<String>,
+    run_id: Option<String>,
+    log: CrewExecutionLogRow,
+}
+
+fn runtime_log_to_row(entry: CrewRuntimeExecutionLog) -> CrewExecutionLogRow {
+    CrewExecutionLogRow {
+        id: entry.id,
+        crew_id: entry.crew_id,
+        agent_id: entry.agent_id,
+        task_id: entry.task_id,
+        action: entry.action,
+        result: entry.result,
+        timestamp: entry.timestamp,
+    }
+}
+
+fn emit_crew_execution_log_event(
+    app: &tauri::AppHandle,
+    stream_id: Option<String>,
+    run_id: Option<String>,
+    log: CrewExecutionLogRow,
+) {
+    let payload = CrewExecutionLogEventPayload {
+        stream_id,
+        run_id,
+        log,
+    };
+    let _ = app.emit("crew-execution-log", payload);
 }
 
 #[derive(Debug, Serialize)]
@@ -1810,6 +1851,7 @@ fn validate_crew_request(
 fn sanitize_crew_request_snapshot(request: &CrewExecuteRequest) -> CrewExecuteRequest {
     let mut snapshot = request.clone();
     snapshot.governance_resume_approval_id = None;
+    snapshot.stream_id = None;
 
     if let Some(config) = snapshot.provider_configs.open_ai_compatible.as_mut() {
         if !config.api_key.trim().is_empty() {
@@ -2060,7 +2102,53 @@ async fn execute_crew_request(
         canceled.remove(&request.id);
     }
 
-    let runtime_result = crew_runtime_execute_request(app, bridge, &runtime_payload);
+    emit_crew_execution_log_event(
+        app,
+        request.stream_id.clone(),
+        Some(run_id.clone()),
+        CrewExecutionLogRow {
+            id: uuid::Uuid::new_v4().to_string(),
+            crew_id: request.id.clone(),
+            agent_id: request
+                .manager_agent_id
+                .clone()
+                .unwrap_or_else(|| "crew-runtime".to_string()),
+            task_id: request
+                .tasks
+                .first()
+                .map(|task| task.id.clone())
+                .unwrap_or_else(|| "runtime".to_string()),
+            action: "run_started".to_string(),
+            result: format!(
+                "Crew '{}' startet mit {} Task(s), Prozess {}.",
+                request.name,
+                request.tasks.len(),
+                request.process
+            ),
+            timestamp: chrono::Utc::now().timestamp_millis(),
+        },
+    );
+
+    let app_for_runtime_logs = app.clone();
+    let stream_id_for_runtime_logs = request.stream_id.clone();
+    let run_id_for_runtime_logs = run_id.clone();
+    let runtime_result = crew_runtime_execute_request(
+        app,
+        bridge,
+        &runtime_payload,
+        move |event| {
+            let stream_id = event
+                .stream_id
+                .or_else(|| stream_id_for_runtime_logs.clone());
+            let run_id = event.run_id.or_else(|| Some(run_id_for_runtime_logs.clone()));
+            emit_crew_execution_log_event(
+                &app_for_runtime_logs,
+                stream_id,
+                run_id,
+                runtime_log_to_row(event.log),
+            );
+        },
+    );
 
     if let Ok(mut canceled) = registry.canceled.lock() {
         canceled.remove(&request.id);
@@ -2555,14 +2643,19 @@ async fn chat_turn(request: ChatTurnRequest) -> Result<ollama::ChatTurnResponse,
 #[tauri::command]
 async fn chat_turn_stream(
     app: tauri::AppHandle,
+    registry: tauri::State<'_, ChatStreamRegistry>,
     request: ChatTurnRequest,
 ) -> Result<ollama::ChatTurnResponse, String> {
     let stream_id = request
         .stream_id
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let app_for_emit = app.clone();
+    if let Ok(mut canceled) = registry.canceled.lock() {
+        canceled.remove(&stream_id);
+    }
+    let stream_id_for_check = stream_id.clone();
 
-    chat_turn_stream_internal(
+    let result = chat_turn_stream_internal(
         stream_id,
         request.config,
         request.prompt,
@@ -2573,9 +2666,33 @@ async fn chat_turn_stream(
                 .emit("ollama-chat-chunk", payload)
                 .map_err(|error| OllamaError::RequestFailed(error.to_string()))
         },
+        || {
+            registry
+                .canceled
+                .lock()
+                .map(|canceled| canceled.contains(&stream_id_for_check))
+                .unwrap_or(false)
+        },
     )
-    .await
-    .map_err(map_ollama_error)
+    .await;
+
+    if let Ok(mut canceled) = registry.canceled.lock() {
+        canceled.remove(&stream_id_for_check);
+    }
+
+    result.map_err(map_ollama_error)
+}
+
+#[tauri::command]
+fn chat_turn_stream_cancel(
+    registry: tauri::State<'_, ChatStreamRegistry>,
+    stream_id: String,
+) -> Result<bool, String> {
+    let mut canceled = registry
+        .canceled
+        .lock()
+        .map_err(|_| "Chat-Stream-Registry gesperrt".to_string())?;
+    Ok(canceled.insert(stream_id))
 }
 
 // -- Claude Code Bridge commands --------------------------------------------
@@ -4439,6 +4556,20 @@ fn execute_task(
                 .map_err(|e| e.to_string())?;
             thread::sleep(Duration::from_millis(50));
 
+            let current_status = state
+                .list_tasks()
+                .map_err(|e| e.to_string())?
+                .into_iter()
+                .find(|(id, _, _, _, _, _, _, _)| id == &task_id)
+                .map(|(_, _, _, status, _, _, _, _)| status)
+                .unwrap_or_else(|| "failed".to_string());
+            if current_status == "cancelled" {
+                state
+                    .update_step_state(&step_id, "skipped", Some("Task wurde abgebrochen"))
+                    .map_err(|e| e.to_string())?;
+                return Ok(());
+            }
+
             let output = format!("Automatisch ausgefuehrt: {}", title);
             state
                 .update_step_state(&step_id, "completed", Some(&output))
@@ -6146,10 +6277,7 @@ async fn crew_provider_health_check(
             .map(|response| response.status())
             .map_err(|error| error.to_string())?
     } else {
-        match probe_connector_method(&client, &probe_url, Method::HEAD, api_key).await {
-            Ok(status) => status,
-            Err(_) => probe_connector_method(&client, &probe_url, Method::GET, api_key).await?,
-        }
+        probe_connector_method(&client, &probe_url, Method::GET, api_key).await?
     };
 
     let (reachable, message) = interpret_connector_status(status);
@@ -8493,6 +8621,7 @@ pub fn run() {
             app.manage(shared_database);
             app.manage(WatchRegistry::default());
             app.manage(CrewExecutionRegistry::default());
+            app.manage(ChatStreamRegistry::default());
             app.manage(CrewPythonBridge::default());
             app.manage(ClaudeCodeBridge::new());
             configure_pdfium_search_paths(app.handle());
@@ -8504,6 +8633,7 @@ pub fn run() {
             generate_plan,
             chat_turn,
             chat_turn_stream,
+            chat_turn_stream_cancel,
             // Claude Code Bridge
             claude_code_start,
             claude_code_stop,

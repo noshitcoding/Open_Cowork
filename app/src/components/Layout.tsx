@@ -1,11 +1,10 @@
-import { useEffect } from 'react'
+﻿import { useEffect } from 'react'
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useUiStore } from '../stores/uiStore'
 import { useConfigStore } from '../stores/configStore'
 import LeftSidebar from './LeftSidebar'
 import CommandPalette from './CommandPalette'
-import RightSidebar from './RightSidebar'
 
 export default function Layout() {
   const { t } = useTranslation()
@@ -13,9 +12,7 @@ export default function Layout() {
   
   const {
     leftSidebarOpen,
-    rightSidebarOpen,
     toggleLeftSidebar,
-    toggleRightSidebar,
     toggleTheme,
     setCommandPaletteOpen,
     commandPaletteOpen,
@@ -84,9 +81,9 @@ export default function Layout() {
       <div className="top-bar">
         <div className="top-bar-brand">
           <button type="button" className="btn-toggle-sidebar" onClick={toggleLeftSidebar} title="Sidebar (Ctrl+Shift+B)">
-            ☰
+            Menu
           </button>
-          <span className="brand-icon">✦</span>
+          <span className="brand-icon">*</span>
           <span className="brand-name">Open_Cowork</span>
         </div>
 
@@ -106,14 +103,11 @@ export default function Layout() {
         </div>
 
         <div className="top-bar-actions">
-          <button type="button" className="btn-toggle-sidebar" onClick={toggleRightSidebar} title="Rechte Sidebar">
-            ☷
-          </button>
           <button type="button" className="btn-toggle-sidebar" onClick={toggleTheme} title="Theme (Ctrl+Shift+L)">
-            🌗
+            Theme
           </button>
           <button type="button" className="btn-toggle-sidebar" onClick={() => setCommandPaletteOpen(true)} title="Command Palette (Ctrl+K)">
-            ⌘K
+            Ctrl K
           </button>
         </div>
       </div>
@@ -128,9 +122,6 @@ export default function Layout() {
           <Outlet />
         </div>
 
-        {rightSidebarOpen && !focusMode && (
-          <RightSidebar />
-        )}
       </div>
 
       <CommandPalette />

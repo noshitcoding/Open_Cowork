@@ -5,6 +5,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import sys
 import time
 import traceback
@@ -87,6 +88,117 @@ def validate_definition(payload: dict) -> dict:
 
 def now_ms() -> int:
     return int(time.time() * 1000)
+
+
+ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+
+
+def clean_log_text(value: object) -> str:
+    return ANSI_ESCAPE_RE.sub("", str(value or "").replace("\r", "\n")).strip()
+
+
+def make_execution_log(crew_id: str, agent_id: str, task_id: str, action: str, result: object) -> dict:
+    return {
+        "id": str(uuid.uuid4()),
+        "crewId": crew_id,
+        "agentId": agent_id,
+        "taskId": task_id,
+        "action": action,
+        "result": clean_log_text(result)[:4000],
+        "timestamp": now_ms(),
+    }
+
+
+def emit_protocol_log(log: dict, stream_id: str | None, run_id: str | None) -> None:
+    stdout = sys.__stdout__
+    if stdout is None:
+        return
+
+    envelope = {
+        "openCoworkEvent": "crew_log",
+        "payload": log,
+    }
+    if stream_id:
+        envelope["streamId"] = stream_id
+    if run_id:
+        envelope["runId"] = run_id
+
+    try:
+        os.write(stdout.fileno(), (json.dumps(envelope) + "\n").encode("utf-8"))
+    except Exception:
+        pass
+
+
+def record_execution_log(
+    logs: list[dict],
+    crew_id: str,
+    agent_id: str,
+    task_id: str,
+    action: str,
+    result: object,
+    stream_id: str | None,
+    run_id: str | None,
+    emit: bool = True,
+) -> dict | None:
+    result_text = clean_log_text(result)
+    if not result_text:
+        return None
+
+    log = make_execution_log(crew_id, agent_id, task_id, action, result_text)
+    logs.append(log)
+    if emit:
+        emit_protocol_log(log, stream_id, run_id)
+    return log
+
+
+class LiveCapture(io.StringIO):
+    def __init__(
+        self,
+        logs: list[dict],
+        crew_id: str,
+        agent_id: str,
+        task_id: str,
+        action: str,
+        stream_id: str | None,
+        run_id: str | None,
+    ) -> None:
+        super().__init__()
+        self.logs = logs
+        self.crew_id = crew_id
+        self.agent_id = agent_id
+        self.task_id = task_id
+        self.action = action
+        self.stream_id = stream_id
+        self.run_id = run_id
+        self._pending_line = ""
+
+    def write(self, value: str) -> int:
+        written = super().write(value)
+        self._pending_line += str(value)
+
+        while "\n" in self._pending_line:
+            line, self._pending_line = self._pending_line.split("\n", 1)
+            self._record_line(line)
+
+        return written
+
+    def flush(self) -> None:
+        if self._pending_line.strip():
+            self._record_line(self._pending_line)
+            self._pending_line = ""
+        super().flush()
+
+    def _record_line(self, line: str) -> None:
+        record_execution_log(
+            self.logs,
+            self.crew_id,
+            self.agent_id,
+            self.task_id,
+            self.action,
+            line,
+            self.stream_id,
+            self.run_id,
+        )
 
 
 def normalize_text(value: object) -> str:
@@ -351,6 +463,8 @@ def execute_definition(payload: dict) -> dict:
     from crewai import Crew, Task  # type: ignore
 
     crew_id = str(payload.get("id") or "crew-runtime")
+    stream_id = str(payload.get("streamId") or "").strip() or None
+    run_id = str(payload.get("runId") or "").strip() or None
     process_name = str(payload.get("process") or "sequential")
     agent_payloads = payload.get("agents") or []
     task_payloads = payload.get("tasks") or []
@@ -442,31 +556,140 @@ def execute_definition(payload: dict) -> dict:
     if manager_agent is not None:
         crew_kwargs["manager_agent"] = manager_agent
 
-    stdout_buffer = io.StringIO()
-    stderr_buffer = io.StringIO()
     task_results: list[dict] = []
     logs: list[dict] = []
     status = "completed"
     error_message = None
+    runtime_task_id = ordered_task_bindings[0][0].get("id") if ordered_task_bindings else "runtime"
+    runtime_agent_id = manager_agent_id or "python-runtime"
+    stdout_buffer = LiveCapture(
+        logs,
+        crew_id,
+        runtime_agent_id,
+        runtime_task_id,
+        "runtime_stdout",
+        stream_id,
+        run_id,
+    )
+    stderr_buffer = LiveCapture(
+        logs,
+        crew_id,
+        runtime_agent_id,
+        runtime_task_id,
+        "runtime_stderr",
+        stream_id,
+        run_id,
+    )
 
-    logs.append({
-        "id": str(uuid.uuid4()),
-        "crewId": crew_id,
-        "agentId": manager_agent_id or "python-runtime",
-        "taskId": ordered_task_bindings[0][0].get("id") if ordered_task_bindings else "runtime",
-        "action": "runtime_context",
-        "result": summarize_runtime_context(payload)[:4000],
-        "timestamp": now_ms(),
-    })
+    record_execution_log(
+        logs,
+        crew_id,
+        runtime_agent_id,
+        runtime_task_id,
+        "runtime_context",
+        summarize_runtime_context(payload),
+        stream_id,
+        run_id,
+    )
+
+    for agent_payload in agent_payloads:
+        if not isinstance(agent_payload, dict):
+            continue
+        agent_id = str(agent_payload.get("id") or "runtime-agent")
+        record_execution_log(
+            logs,
+            crew_id,
+            agent_id,
+            runtime_task_id,
+            "agent_ready",
+            " | ".join([
+                f"Name: {str(agent_payload.get('name') or agent_payload.get('role') or agent_id).strip()}",
+                f"Role: {str(agent_payload.get('role') or '-').strip()}",
+                f"Provider: {str(agent_payload.get('providerKind') or 'ollama').strip()}",
+                f"Model override: {str(agent_payload.get('modelOverride') or '-').strip() or '-'}",
+                f"Delegation: {'erlaubt' if bool(agent_payload.get('allowDelegation')) else 'gesperrt'}",
+                f"Tools: {format_value_list(agent_payload.get('tools') or [])}",
+                f"MCP: {format_value_list(agent_payload.get('mcpServerNames') or [])}",
+            ]),
+            stream_id,
+            run_id,
+        )
+
+    for index, (task_payload, _) in enumerate(ordered_task_bindings):
+        task_id = str(task_payload.get("id") or f"task-{index}")
+        agent_id = str(task_payload.get("agentId") or "runtime-agent")
+        agent_payload = next(
+            (
+                candidate
+                for candidate in agent_payloads
+                if isinstance(candidate, dict) and str(candidate.get("id") or "").strip() == agent_id
+            ),
+            {},
+        )
+        agent_name = str(agent_payload.get("name") or agent_payload.get("role") or agent_id).strip()
+        context_refs = dedupe_task_refs([
+            str(value)
+            for value in [*(task_payload.get("context") or []), *(task_payload.get("dependencies") or [])]
+            if str(value).strip()
+        ])
+        record_execution_log(
+            logs,
+            crew_id,
+            agent_id,
+            task_id,
+            "task_handoff",
+            "\n".join([
+                f"Task an Agent uebergeben: {agent_name}",
+                f"Beschreibung: {truncate_text(task_payload.get('description') or '', 900)}",
+                f"Erwartetes Ergebnis: {truncate_text(task_payload.get('expectedOutput') or '', 500)}",
+                f"Kontext/Dependencies: {', '.join(context_refs) if context_refs else '-'}",
+                f"Async: {'ja' if bool(task_payload.get('asyncExecution')) else 'nein'}",
+            ]),
+            stream_id,
+            run_id,
+        )
 
     try:
         crew = Crew(**crew_kwargs)
+        record_execution_log(
+            logs,
+            crew_id,
+            runtime_agent_id,
+            runtime_task_id,
+            "crew_kickoff",
+            f"CrewAI startet: process={process_name}, agents={len(crew_agents)}, tasks={len(ordered_task_bindings)}",
+            stream_id,
+            run_id,
+        )
         with contextlib.redirect_stdout(stdout_buffer), contextlib.redirect_stderr(stderr_buffer):
             crew.kickoff()
+        stdout_buffer.flush()
+        stderr_buffer.flush()
+        record_execution_log(
+            logs,
+            crew_id,
+            runtime_agent_id,
+            runtime_task_id,
+            "crew_finished",
+            "CrewAI kickoff abgeschlossen.",
+            stream_id,
+            run_id,
+        )
     except Exception as exc:
         status = "failed"
         error_message = f"{exc.__class__.__name__}: {exc}"
         stderr_buffer.write(traceback.format_exc())
+        stderr_buffer.flush()
+        record_execution_log(
+            logs,
+            crew_id,
+            runtime_agent_id,
+            runtime_task_id,
+            "runtime_failed",
+            error_message,
+            stream_id,
+            run_id,
+        )
 
     for task_payload, task_obj in ordered_task_bindings:
         task_id = str(task_payload.get("id") or "runtime-task")
@@ -480,49 +703,53 @@ def execute_definition(payload: dict) -> dict:
             "output": output if output is not None else (error_message if task_status == "failed" else None),
         })
         if output:
-            logs.append({
-                "id": str(uuid.uuid4()),
-                "crewId": crew_id,
-                "agentId": agent_id,
-                "taskId": task_id,
-                "action": "task_completed",
-                "result": output[:4000],
-                "timestamp": now_ms(),
-            })
+            record_execution_log(
+                logs,
+                crew_id,
+                agent_id,
+                task_id,
+                "task_completed",
+                output,
+                stream_id,
+                run_id,
+            )
 
     captured_stdout = stdout_buffer.getvalue().strip()
     captured_stderr = stderr_buffer.getvalue().strip()
-    if captured_stdout:
-        logs.append({
-            "id": str(uuid.uuid4()),
-            "crewId": crew_id,
-            "agentId": manager_agent_id or "python-runtime",
-            "taskId": ordered_task_bindings[-1][0].get("id") if ordered_task_bindings else "runtime",
-            "action": "runtime_stdout",
-            "result": captured_stdout[:4000],
-            "timestamp": now_ms(),
-        })
-    if captured_stderr:
-        logs.append({
-            "id": str(uuid.uuid4()),
-            "crewId": crew_id,
-            "agentId": manager_agent_id or "python-runtime",
-            "taskId": ordered_task_bindings[-1][0].get("id") if ordered_task_bindings else "runtime",
-            "action": "runtime_stderr",
-            "result": captured_stderr[:4000],
-            "timestamp": now_ms(),
-        })
+    if captured_stdout and not any(entry.get("action") == "runtime_stdout" for entry in logs):
+        record_execution_log(
+            logs,
+            crew_id,
+            runtime_agent_id,
+            ordered_task_bindings[-1][0].get("id") if ordered_task_bindings else "runtime",
+            "runtime_stdout",
+            captured_stdout,
+            stream_id,
+            run_id,
+        )
+    if captured_stderr and not any(entry.get("action") == "runtime_stderr" for entry in logs):
+        record_execution_log(
+            logs,
+            crew_id,
+            runtime_agent_id,
+            ordered_task_bindings[-1][0].get("id") if ordered_task_bindings else "runtime",
+            "runtime_stderr",
+            captured_stderr,
+            stream_id,
+            run_id,
+        )
 
     if status == "failed" and error_message and not any(entry.get("action") == "runtime_stderr" for entry in logs):
-        logs.append({
-            "id": str(uuid.uuid4()),
-            "crewId": crew_id,
-            "agentId": manager_agent_id or "python-runtime",
-            "taskId": ordered_task_bindings[-1][0].get("id") if ordered_task_bindings else "runtime",
-            "action": "runtime_failed",
-            "result": error_message[:4000],
-            "timestamp": now_ms(),
-        })
+        record_execution_log(
+            logs,
+            crew_id,
+            runtime_agent_id,
+            ordered_task_bindings[-1][0].get("id") if ordered_task_bindings else "runtime",
+            "runtime_failed",
+            error_message,
+            stream_id,
+            run_id,
+        )
 
     return {
         "crewId": crew_id,

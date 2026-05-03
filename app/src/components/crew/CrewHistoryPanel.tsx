@@ -143,7 +143,7 @@ export default function CrewHistoryPanel({ activeCrewId }: Props) {
       {runs.length === 0 ? (
         <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Noch keine gespeicherten Runs fuer diese Crew.</div>
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(220px, 0.9fr) 1.1fr', gap: 12 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 12 }}>
           <div style={{ display: 'grid', gap: 8, maxHeight: 320, overflowY: 'auto' }}>
             {runs.map((run) => (
               <button

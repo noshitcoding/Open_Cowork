@@ -1,13 +1,14 @@
-import { useEffect, useMemo, useState } from 'react'
+﻿import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { SessionSummary } from '../engine'
 import { useChatStore } from '../stores/chatStore'
 import { useUiStore } from '../stores/uiStore'
 import { useConfigStore } from '../stores/configStore'
-import { useCoworkStore } from '../stores/coworkStore'
 import { useEngineStore } from '../stores/engineStore'
+import { useTaskStore } from '../stores/taskStore'
 import { useWorkTasksStore, type WorkTask } from '../stores/workTasksStore'
 import { createChatProviderSelection, getChatProviderState } from '../utils/chatProvider'
+import { ContextPanel, OutputsPanel, ProgressPanel, WorkingFolderPanel } from './RightSidebar'
 
 function isAbsolutePath(path: string): boolean {
   const trimmed = path.trim()
@@ -20,7 +21,7 @@ function getTaskSidebarTitle(task: WorkTask): string {
 
   const prompt = task.prompt.trim().replace(/\s+/g, ' ')
   if (!prompt) return task.id
-  return prompt.length > 36 ? `${prompt.slice(0, 36)}…` : prompt
+  return prompt.length > 36 ? `${prompt.slice(0, 36)}...` : prompt
 }
 
 function buildTaskSidebarSummary(task: WorkTask): string {
@@ -55,16 +56,15 @@ export default function LeftSidebar() {
   } = useChatStore()
   const setActiveMode = useUiStore((s) => s.setActiveMode)
   const setWorkingFolder = useUiStore((s) => s.setWorkingFolder)
-  const mcpServer = useConfigStore((s) => s.mcpServer)
   const ollama = useConfigStore((s) => s.ollama)
   const availableModels = useConfigStore((s) => s.availableModels)
   const llmProfiles = useConfigStore((s) => s.llmProfiles)
   const defaultLlmProfileIds = useConfigStore((s) => s.defaultLlmProfileIds)
   const llmProfileModels = useConfigStore((s) => s.llmProfileModels)
-  const connectors = useCoworkStore((s) => s.connectors)
-  const plugins = useCoworkStore((s) => s.plugins)
   const workTasks = useWorkTasksStore((s) => s.tasks)
   const updateWorkTask = useWorkTasksStore((s) => s.updateTask)
+  const tasks = useTaskStore((s) => s.tasks)
+  const activeTaskId = useTaskStore((s) => s.activeTaskId)
   const activeProvider = useEngineStore((s) => s.activeProvider)
   const getSessions = useEngineStore((s) => s.getSessions)
   const loadSessionById = useEngineStore((s) => s.loadSessionById)
@@ -74,8 +74,6 @@ export default function LeftSidebar() {
   const [loadingSessions, setLoadingSessions] = useState(false)
   const [filter, setFilter] = useState<SidebarFilter>('all')
 
-  const enabledConnectors = connectors.filter((entry) => entry.enabled).length
-  const enabledPlugins = plugins.filter((entry) => entry.enabled).length
   const activeThread = useMemo(
     () => threads.find((thread) => thread.id === activeThreadId),
     [activeThreadId, threads],
@@ -90,6 +88,7 @@ export default function LeftSidebar() {
     }, activeProvider, activeThread?.providerSettings),
     [activeProvider, activeThread?.providerSettings, availableModels, defaultLlmProfileIds, llmProfileModels, llmProfiles, ollama],
   )
+  const activeTask = tasks.find((task) => task.id === activeTaskId)
 
   useEffect(() => {
     let cancelled = false
@@ -171,7 +170,7 @@ export default function LeftSidebar() {
       result.push({
         id: `task-${task.id}`,
         type: 'task',
-        title: `${getTaskSidebarTitle(task)} · ${task.status}`,
+        title: `${getTaskSidebarTitle(task)} - ${task.status}`,
         status: task.status,
         onClick: () => handleOpenTaskThread(task),
       })
@@ -225,32 +224,14 @@ export default function LeftSidebar() {
         + Neuer Chat
       </button>
       <button type="button" className="btn-sm" style={{ width: '100%', marginBottom: 12 }} onClick={() => navigate('/crew')}>
-        🚀 Crew Studio
+        Crew Studio
       </button>
 
-      {/* Context Panel */}
-      <div className="sidebar-section">
-        <h3 className="sidebar-section-title">🔗 Kontext</h3>
-        <div className="context-items">
-          <div className="context-item">
-            <span className="context-label">Modell</span>
-            <span className="context-value" title={`${providerState.label}: ${providerState.model}`}>
-              {providerState.model || providerState.label}
-            </span>
-          </div>
-          <div className="context-item">
-            <span className="context-label">MCP Server</span>
-            <span className="context-value" title={mcpServer.name}>{mcpServer.name}</span>
-          </div>
-          <div className="context-item">
-            <span className="context-label">Connectors</span>
-            <span className="context-value">{enabledConnectors} aktiv</span>
-          </div>
-          <div className="context-item">
-            <span className="context-label">Plugins</span>
-            <span className="context-value">{enabledPlugins} aktiv</span>
-          </div>
-        </div>
+      <div className="sidebar-status-panels">
+        <ProgressPanel task={activeTask} />
+        <WorkingFolderPanel />
+        <OutputsPanel task={activeTask} />
+        <ContextPanel />
       </div>
 
       {/* Unified History */}
@@ -282,9 +263,9 @@ export default function LeftSidebar() {
                 onClick={item.onClick}
               >
                 <span className="session-icon">
-                  {item.type === 'task' && '🧩'}
-                  {item.type === 'chat' && '💬'}
-                  {item.type === 'session' && '🗂'}
+                  {item.type === 'task' && 'T'}
+                  {item.type === 'chat' && 'C'}
+                  {item.type === 'session' && 'S'}
                 </span>
                 <span className="session-title">{item.title}</span>
                 <span className={`session-badge badge-${item.type}`}>
@@ -298,9 +279,9 @@ export default function LeftSidebar() {
                   type="button"
                   className="session-delete"
                   onClick={(e) => { e.stopPropagation(); item.onDelete!() }}
-                  title="Löschen"
+                  title="Loeschen"
                 >
-                  ×
+                  x
                 </button>
               )}
             </div>
@@ -310,7 +291,7 @@ export default function LeftSidebar() {
           )}
           {!loadingSessions && filteredItems.length === 0 && (
             <p className="hint-text">
-              {filter === 'all' ? 'Noch keine Einträge' : `Keine ${filter === 'task' ? 'Tasks' : filter === 'chat' ? 'Chats' : 'Sessions'}`}
+              {filter === 'all' ? 'Noch keine Eintraege' : `Keine ${filter === 'task' ? 'Tasks' : filter === 'chat' ? 'Chats' : 'Sessions'}`}
             </p>
           )}
         </div>

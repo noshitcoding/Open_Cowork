@@ -455,6 +455,7 @@ pub async fn chat_turn_stream<F>(
     history: Vec<ChatMessage>,
     tools: Vec<ChatToolDef>,
     mut on_chunk: F,
+    is_cancelled: impl Fn() -> bool,
 ) -> Result<ChatTurnResponse, OllamaError>
 where
     F: FnMut(ChatStreamChunkPayload) -> Result<(), OllamaError>,
@@ -513,6 +514,10 @@ where
     let mut assistant_message = String::new();
 
     while let Some(next) = stream.next().await {
+        if is_cancelled() {
+            return Err(OllamaError::RequestFailed("Chat-Generierung abgebrochen.".to_string()));
+        }
+
         let bytes = match next {
             Ok(bytes) => bytes,
             Err(error) => {

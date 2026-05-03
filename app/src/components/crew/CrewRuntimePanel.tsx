@@ -1,6 +1,13 @@
 import { useEffect } from 'react'
 import { useCrewRuntimeStore } from '../../stores/crewRuntimeStore'
 
+const longPathStyle = {
+  fontSize: 11,
+  color: 'var(--text-secondary)',
+  marginTop: 4,
+  overflowWrap: 'anywhere' as const,
+}
+
 function formatTimestamp(value: string | null): string {
   if (!value) return 'nie'
   const date = new Date(value)
@@ -50,23 +57,23 @@ export default function CrewRuntimePanel() {
 
       {status && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
-          <div>
+          <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Python</div>
             <div style={{ fontSize: 13 }}>{status.pythonVersion ?? 'unbekannt'}</div>
-            <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 4 }}>{status.detectedPythonPath ?? status.embeddedPythonPath ?? 'kein Interpreter erkannt'}</div>
+            <div style={longPathStyle}>{status.detectedPythonPath ?? status.embeddedPythonPath ?? 'kein Interpreter erkannt'}</div>
           </div>
-          <div>
+          <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>CrewAI</div>
             <div style={{ fontSize: 13 }}>{status.crewaiInstalled ? `installiert${status.crewaiVersion ? ` (${status.crewaiVersion})` : ''}` : 'nicht installiert'}</div>
             <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 4 }}>Letztes Bootstrap: {formatTimestamp(status.lastBootstrapAt)}</div>
           </div>
-          <div>
+          <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Runtime Root</div>
-            <div style={{ fontSize: 11, color: 'var(--text-secondary)', wordBreak: 'break-word' }}>{status.runtimeRoot}</div>
+            <div style={{ ...longPathStyle, marginTop: 0 }}>{status.runtimeRoot}</div>
           </div>
-          <div>
+          <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Venv</div>
-            <div style={{ fontSize: 11, color: 'var(--text-secondary)', wordBreak: 'break-word' }}>{status.venvPythonPath ?? 'noch nicht erzeugt'}</div>
+            <div style={{ ...longPathStyle, marginTop: 0 }}>{status.venvPythonPath ?? 'noch nicht erzeugt'}</div>
           </div>
         </div>
       )}

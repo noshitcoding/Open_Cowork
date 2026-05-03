@@ -2,10 +2,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
-use std::io::Write;
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
+use std::thread;
 use tauri::{AppHandle, Manager, Runtime, State};
 use zip::ZipArchive;
 
@@ -97,6 +98,25 @@ pub struct CrewRuntimeExecutionLog {
     pub action: String,
     pub result: String,
     pub timestamp: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct CrewRuntimeLogEvent {
+    pub stream_id: Option<String>,
+    pub run_id: Option<String>,
+    pub log: CrewRuntimeExecutionLog,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CrewRuntimeProtocolEvent {
+    #[serde(rename = "openCoworkEvent")]
+    open_cowork_event: String,
+    #[serde(default)]
+    stream_id: Option<String>,
+    #[serde(default)]
+    run_id: Option<String>,
+    payload: CrewRuntimeExecutionLog,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -701,6 +721,27 @@ fn run_python_json_command(
     payload: Option<&Value>,
     active_run: Option<(&CrewPythonBridge, &str)>,
 ) -> Result<Value, String> {
+    run_python_json_command_with_events(
+        python,
+        script,
+        subcommand,
+        payload,
+        active_run,
+        |_event| {},
+    )
+}
+
+fn run_python_json_command_with_events<F>(
+    python: &Path,
+    script: &Path,
+    subcommand: &str,
+    payload: Option<&Value>,
+    active_run: Option<(&CrewPythonBridge, &str)>,
+    mut on_log_event: F,
+) -> Result<Value, String>
+where
+    F: FnMut(CrewRuntimeLogEvent),
+{
     let mut command = Command::new(python);
     command
         .arg(script)
@@ -728,23 +769,64 @@ fn run_python_json_command(
                 if let Some((bridge, run_id)) = &active_key {
                     bridge.clear_active_run(run_id);
                 }
+                let _ = child.kill();
                 format!("Crew runtime stdin fehlgeschlagen: {}", error)
             })?;
         }
     }
 
-    let output = child
-        .wait_with_output()
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "Crew runtime stdout konnte nicht gelesen werden".to_string())?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| "Crew runtime stderr konnte nicht gelesen werden".to_string())?;
+
+    let stderr_handle = thread::spawn(move || {
+        let mut output = String::new();
+        for line in BufReader::new(stderr).lines() {
+            match line {
+                Ok(line) => {
+                    output.push_str(&line);
+                    output.push('\n');
+                }
+                Err(error) => {
+                    output.push_str(&format!("Crew runtime stderr Lesefehler: {}\n", error));
+                    break;
+                }
+            }
+        }
+        output
+    });
+
+    let mut stdout_lines = Vec::new();
+    for line in BufReader::new(stdout).lines() {
+        let line = line.map_err(|error| format!("Crew runtime stdout Lesefehler: {}", error))?;
+        if let Some(event) = parse_runtime_protocol_event(&line) {
+            on_log_event(event);
+        } else {
+            stdout_lines.push(line);
+        }
+    }
+
+    let status = child
+        .wait()
         .map_err(|error| format!("Crew runtime Prozessfehler: {}", error))?;
     if let Some((bridge, run_id)) = &active_key {
         bridge.clear_active_run(run_id);
     }
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let stdout = stdout_lines.join("\n").trim().to_string();
+    let stderr = stderr_handle
+        .join()
+        .unwrap_or_else(|_| "Crew runtime stderr Thread fehlgeschlagen".to_string())
+        .trim()
+        .to_string();
 
-    if !output.status.success() {
+    if !status.success() {
         let message = if stderr.is_empty() {
-            format!("Crew runtime beendete sich mit {}", output.status)
+            format!("Crew runtime beendete sich mit {}", status)
         } else {
             stderr
         };
@@ -754,8 +836,42 @@ fn run_python_json_command(
     parse_python_json_stdout(&stdout, &stderr)
 }
 
+fn parse_runtime_protocol_event(line: &str) -> Option<CrewRuntimeLogEvent> {
+    let normalized = line.trim();
+    if normalized.is_empty() || !normalized.contains("\"openCoworkEvent\"") {
+        return None;
+    }
+
+    let event = serde_json::from_str::<CrewRuntimeProtocolEvent>(normalized).ok()?;
+    if event.open_cowork_event != "crew_log" {
+        return None;
+    }
+
+    Some(CrewRuntimeLogEvent {
+        stream_id: event.stream_id,
+        run_id: event.run_id,
+        log: event.payload,
+    })
+}
+
 fn parse_python_json_stdout(stdout: &str, stderr: &str) -> Result<Value, String> {
-    let mut deserializer = serde_json::Deserializer::from_str(stdout);
+    let trimmed = stdout.trim();
+    let mut deserializer = serde_json::Deserializer::from_str(trimmed);
+    if let Ok(value) = Value::deserialize(&mut deserializer) {
+        return Ok(value);
+    }
+
+    for line in trimmed.lines().rev() {
+        let candidate = line.trim();
+        if candidate.is_empty() || candidate.contains("\"openCoworkEvent\"") {
+            continue;
+        }
+        if let Ok(value) = serde_json::from_str::<Value>(candidate) {
+            return Ok(value);
+        }
+    }
+
+    let mut deserializer = serde_json::Deserializer::from_str(trimmed);
     Value::deserialize(&mut deserializer).map_err(|error| {
         format!(
             "Crew runtime Antwort konnte nicht gelesen werden: {}. Stdout: {}. Stderr: {}",
@@ -1050,11 +1166,15 @@ pub fn crew_runtime_bootstrap(
     })
 }
 
-pub fn crew_runtime_execute_request<R: Runtime>(
+pub fn crew_runtime_execute_request<R: Runtime, F>(
     app: &AppHandle<R>,
     bridge: &CrewPythonBridge,
     payload: &Value,
-) -> Result<CrewRuntimeExecuteResponse, String> {
+    on_log_event: F,
+) -> Result<CrewRuntimeExecuteResponse, String>
+where
+    F: FnMut(CrewRuntimeLogEvent),
+{
     let status = crew_runtime_status_internal(app, bridge)?;
     if !status.ready {
         return Err(
@@ -1086,12 +1206,13 @@ pub fn crew_runtime_execute_request<R: Runtime>(
         .and_then(Value::as_str)
         .unwrap_or("runtime-crew")
         .to_string();
-    let result = run_python_json_command(
+    let result = run_python_json_command_with_events(
         &venv_python,
         &main_script,
         "execute",
         Some(payload),
         Some((bridge, &run_id)),
+        on_log_event,
     );
 
     let response = result?;

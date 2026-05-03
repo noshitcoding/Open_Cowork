@@ -230,7 +230,7 @@ body {
   padding: 16px;
 }
 
-/* === App Body (three-panel) === */
+/* === App Body (sidebar + main) === */
 .app-body {
   display: flex;
   flex: 1;
@@ -240,8 +240,8 @@ body {
 
 /* === Left Sidebar === */
 .left-sidebar {
-  width: clamp(220px, 18vw, 280px);
-  min-width: 220px;
+  width: clamp(280px, 22vw, 360px);
+  min-width: 280px;
   background: var(--bg-sidebar);
   border-right: 1px solid var(--border-color);
   display: flex;
@@ -249,6 +249,24 @@ body {
   padding: 12px;
   gap: 16px;
   overflow-y: auto;
+}
+
+.sidebar-status-panels {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.left-sidebar .right-panel {
+  padding: 10px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--bg-white) 70%, transparent);
+}
+
+.left-sidebar .right-panel-title {
+  font-size: 11px;
+  margin-bottom: 8px;
 }
 
 .btn-new-task {
@@ -2277,8 +2295,8 @@ button.compact-send-btn {
 /* === Responsive === */
 @media (max-width: 1200px) {
   .left-sidebar {
-    width: 220px;
-    min-width: 220px;
+    width: 280px;
+    min-width: 280px;
   }
 
   .right-sidebar {
@@ -2293,6 +2311,7 @@ button.compact-send-btn {
 
 @media (max-width: 900px) {
   .left-sidebar { width: 60px; min-width: 60px; padding: 8px; }
+  .sidebar-status-panels { display: none; }
   .btn-new-task span:not(.btn-new-task-icon) { display: none; }
   .session-title, .session-time, .session-delete { display: none; }
   .sidebar-section-title { display: none; }

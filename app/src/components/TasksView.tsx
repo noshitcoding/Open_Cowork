@@ -1,5 +1,6 @@
 import { open } from '@tauri-apps/plugin-dialog'
-import { useEffect, useMemo, useState } from 'react'
+import { listen } from '@tauri-apps/api/event'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useChatStore } from '../stores/chatStore'
 import { useConfigStore } from '../stores/configStore'
@@ -38,6 +39,12 @@ type CrewExecutionLog = {
   timestamp: number
 }
 
+type CrewExecutionLogEvent = {
+  streamId?: string | null
+  runId?: string | null
+  log: CrewExecutionLog
+}
+
 type CrewTaskExecutionResponse = {
   taskId: string
   agentId: string
@@ -60,6 +67,9 @@ type CrewResolvedProviderConfigs = {
 
 function resolveDefaultAgentId(crew: Crew): string | null {
   if (crew.process === 'hierarchical' && crew.managerAgentId) {
+    const worker = crew.agents.find((agent) => agent.enabled && agent.id !== crew.managerAgentId)
+    if (worker) return worker.id
+
     const manager = crew.agents.find((agent) => agent.enabled && agent.id === crew.managerAgentId)
     if (manager) return manager.id
   }
@@ -140,6 +150,79 @@ function applyCrewDefaultModel(
   return { config, providerConfigs }
 }
 
+function buildWorkTaskCrewGuidelines(crew: Crew, task: WorkTask): string {
+  const workTaskContext = [
+    `Work-Task-Auftrag: ${deriveTaskName(task)}`,
+    task.prompt.trim(),
+    task.expectedOutput.trim() ? `Erwartetes Gesamtergebnis:\n${task.expectedOutput.trim()}` : '',
+  ].filter(Boolean).join('\n\n')
+
+  return [
+    crew.executionGuidelines.trim(),
+    workTaskContext,
+  ].filter(Boolean).join('\n\n')
+}
+
+function buildCrewRuntimeTasks(crew: Crew, task: WorkTask, enabledAgentIds: Set<string>) {
+  const crewTasks = crew.tasks ?? []
+  const runnableCrewTasks = crewTasks.filter((crewTask) => enabledAgentIds.has(crewTask.agentId))
+
+  if (crewTasks.length > 0 && runnableCrewTasks.length === 0) {
+    throw new Error('Keine ausfuehrbaren Crew-Tasks vorhanden: alle zugewiesenen Crew-Mitglieder sind deaktiviert oder fehlen.')
+  }
+
+  if (runnableCrewTasks.length > 0) {
+    const runnableTaskIds = new Set(runnableCrewTasks.map((crewTask) => crewTask.id))
+    return runnableCrewTasks.map((crewTask) => ({
+      id: crewTask.id,
+      description: crewTask.description,
+      expectedOutput: crewTask.expectedOutput || task.expectedOutput || 'Erstelle ein vollstaendiges Ergebnis.',
+      agentId: crewTask.agentId,
+      context: crewTask.context.filter((contextId) => runnableTaskIds.has(contextId)),
+      dependencies: crewTask.dependencies.filter((dependencyId) => runnableTaskIds.has(dependencyId)),
+      asyncExecution: crew.process === 'parallel' ? true : crewTask.asyncExecution,
+    }))
+  }
+
+  const agentId = resolveDefaultAgentId(crew)
+  if (!agentId) {
+    throw new Error('Crew hat keinen Agenten.')
+  }
+
+  return [
+    {
+      id: task.id,
+      description: task.prompt,
+      expectedOutput: task.expectedOutput || 'Erstelle ein vollstaendiges Ergebnis.',
+      agentId,
+      context: [],
+      dependencies: [],
+      asyncExecution: crew.process === 'parallel',
+    },
+  ]
+}
+
+function buildCrewRunOutput(response: CrewExecutionResponse, fallbackTaskId: string): string {
+  const directResult = response.taskResults.find((result) => result.taskId === fallbackTaskId)
+  if (directResult?.output?.trim()) {
+    return directResult.output
+  }
+
+  const renderedResults = response.taskResults
+    .filter((result) => result.output?.trim())
+    .map((result) => [
+      `Task: ${result.taskId}`,
+      `Agent: ${result.agentId}`,
+      result.output?.trim() ?? '',
+    ].filter(Boolean).join('\n'))
+
+  if (renderedResults.length > 0) {
+    return renderedResults.join('\n\n---\n\n')
+  }
+
+  return response.error ?? 'Crew-Lauf abgeschlossen ohne Textausgabe.'
+}
+
 function formatTimestamp(ts: number | null | undefined): string {
   if (!ts) return '—'
   try {
@@ -167,6 +250,14 @@ function isAbsolutePath(path: string): boolean {
   return /^(?:[a-zA-Z]:[\\/]|\\\\|\/)/.test(trimmed)
 }
 
+function createCrewStreamId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return `crew-${crypto.randomUUID()}`
+  }
+
+  return `crew-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+}
+
 function buildTaskThreadSummary(task: WorkTask): string {
   const lines = [
     `Task angelegt: ${deriveTaskName(task)}`,
@@ -192,10 +283,27 @@ function buildTaskPromptMessage(task: WorkTask): string {
   return parts.filter(Boolean).join('\n\n')
 }
 
+function getCrewLogActionLabel(action: string): string {
+  switch (action) {
+    case 'run_started': return 'Lauf gestartet'
+    case 'runtime_context': return 'Runtime-Kontext'
+    case 'agent_ready': return 'Agent bereit'
+    case 'task_handoff': return 'Uebergabe'
+    case 'crew_kickoff': return 'CrewAI gestartet'
+    case 'runtime_stdout': return 'Runtime-Ausgabe'
+    case 'runtime_stderr': return 'Runtime-Fehlerausgabe'
+    case 'crew_finished': return 'CrewAI abgeschlossen'
+    case 'task_completed': return 'Task abgeschlossen'
+    case 'runtime_failed': return 'Runtime fehlgeschlagen'
+    default: return action
+  }
+}
+
 function formatCrewLogMessage(log: CrewExecutionLog): string {
   return [
-    `Aktion: ${log.action}`,
+    `Crew Live: ${getCrewLogActionLabel(log.action)}`,
     `Agent: ${log.agentId}`,
+    `Task: ${log.taskId}`,
     log.result.trim(),
   ].filter(Boolean).join('\n\n')
 }
@@ -314,6 +422,9 @@ export default function TasksView() {
   const [newRunner, setNewRunner] = useState<WorkTaskRunner>('crew')
   const [newCrewId, setNewCrewId] = useState<string>('')
   const [newModel, setNewModel] = useState<string>('')
+  const runningTaskControllersRef = useRef(new Map<string, AbortController>())
+  const runningCrewTaskIdsRef = useRef(new Map<string, string>())
+  const canceledTaskIdsRef = useRef(new Set<string>())
 
   const normalizedNewWorkDir = newWorkDir.trim()
   const canCreateTask = newPrompt.trim().length > 0
@@ -522,6 +633,9 @@ export default function TasksView() {
       output: '',
       error: null,
     })
+    canceledTaskIdsRef.current.delete(task.id)
+    const abortController = new AbortController()
+    runningTaskControllersRef.current.set(task.id, abortController)
 
     await ensureAllowedTaskFolder(normalizedWorkDir)
     addChatMessage(threadId, {
@@ -562,11 +676,30 @@ export default function TasksView() {
             config,
           },
           (chunk) => {
+            if (abortController.signal.aborted) return
             buffered += chunk
             updateTask(task.id, { output: buffered })
             updateChatMessage(threadId, assistantMessageId, { content: buffered })
           },
+          { signal: abortController.signal },
         )
+
+        if (abortController.signal.aborted || canceledTaskIdsRef.current.has(task.id)) {
+          const message = 'Task abgebrochen.'
+          updateTask(task.id, {
+            status: 'canceled',
+            error: null,
+            output: buffered || message,
+            lastRunAt: Date.now(),
+          })
+          updateChatMessage(threadId, assistantMessageId, {
+            content: buffered ? `${buffered}\n\n${message}` : message,
+            streaming: false,
+          }, {
+            persist: true,
+          })
+          return
+        }
 
         updateTask(task.id, {
           status: 'completed',
@@ -581,21 +714,39 @@ export default function TasksView() {
         })
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
+        const aborted = abortController.signal.aborted || canceledTaskIdsRef.current.has(task.id)
         updateTask(task.id, {
-          status: 'failed',
-          error: message,
-          output: message,
+          status: aborted ? 'canceled' : 'failed',
+          error: aborted ? null : message,
+          output: aborted ? 'Task abgebrochen.' : message,
           lastRunAt: Date.now(),
         })
         updateChatMessage(threadId, assistantMessageId, {
-          content: message,
+          content: aborted ? 'Task abgebrochen.' : message,
           streaming: false,
         }, {
           persist: true,
         })
+      } finally {
+        runningTaskControllersRef.current.delete(task.id)
+        canceledTaskIdsRef.current.delete(task.id)
       }
 
       return
+    }
+
+    const crewStreamId = createCrewStreamId()
+    const streamedCrewLogIds = new Set<string>()
+    let unlistenCrewLogs: (() => void) | null = null
+    const appendCrewLogToChat = (log: CrewExecutionLog) => {
+      if (!log.id || streamedCrewLogIds.has(log.id)) return
+      streamedCrewLogIds.add(log.id)
+      addChatMessage(threadId, {
+        role: 'system',
+        content: formatCrewLogMessage(log),
+        visibleInChat: true,
+        timestamp: log.timestamp || Date.now(),
+      })
     }
 
     try {
@@ -613,10 +764,8 @@ export default function TasksView() {
         throw new Error('Keine aktiven Crew-Mitglieder vorhanden.')
       }
 
-      const agentId = resolveDefaultAgentId(crew)
-      if (!agentId) {
-        throw new Error('Crew hat keinen Agenten.')
-      }
+      const enabledAgentIds = new Set(enabledAgents.map((agent) => agent.id))
+      const runtimeTasks = buildCrewRuntimeTasks(crew, task, enabledAgentIds)
 
       const defaultOpenAICompatibleProfile = llmProfiles.find((profile) => profile.id === defaultLlmProfileIds['openai-compatible'] && profile.provider === 'openai-compatible')
         ?? llmProfiles.find((profile) => profile.provider === 'openai-compatible')
@@ -645,14 +794,26 @@ export default function TasksView() {
       config = appliedCrewDefault.config
       providerConfigs = appliedCrewDefault.providerConfigs
       const crewDefaultProvider = crew.defaultProvider ?? 'ollama'
+      runningCrewTaskIdsRef.current.set(task.id, crew.id)
+
+      try {
+        unlistenCrewLogs = await listen<CrewExecutionLogEvent>('crew-execution-log', (event) => {
+          const payload = event.payload
+          if (!payload || payload.streamId !== crewStreamId) return
+          appendCrewLogToChat(payload.log)
+        })
+      } catch {
+        // In browser-only tests or fallback environments the Tauri event bus is unavailable.
+      }
 
       const response = await safeInvoke<CrewExecutionResponse>('crew_execute', {
         request: {
           id: crew.id,
+          streamId: crewStreamId,
           name: crew.name,
           description: crew.description,
           executionSubject: crew.executionSubject,
-          executionGuidelines: crew.executionGuidelines,
+          executionGuidelines: buildWorkTaskCrewGuidelines(crew, taskForRun),
           knowledgeFocus: crew.knowledgeFocus,
           governanceMode: crew.governanceMode,
           outputMode: crew.outputMode,
@@ -685,33 +846,31 @@ export default function TasksView() {
             verbose: agent.verbose,
             maxIterations: agent.maxIterations,
           })),
-          tasks: [
-            {
-              id: task.id,
-              description: task.prompt,
-              expectedOutput: task.expectedOutput,
-              agentId,
-              context: [],
-              dependencies: [],
-              asyncExecution: crew.process === 'parallel',
-            },
-          ],
+          tasks: runtimeTasks,
           cwd: normalizedWorkDir || null,
           config,
         },
       })
 
-      const taskResult = response.taskResults.find((result) => result.taskId === task.id) ?? response.taskResults[0]
       const mappedStatus = response.status === 'completed' ? 'completed' : 'failed'
-      const output = taskResult?.output ?? response.error ?? 'Crew-Lauf abgeschlossen ohne Textausgabe.'
+      if (canceledTaskIdsRef.current.has(task.id) || response.status === 'canceled') {
+        updateTask(task.id, {
+          status: 'canceled',
+          output: 'Task abgebrochen.',
+          error: null,
+          lastRunAt: Date.now(),
+        })
+        addChatMessage(threadId, {
+          role: 'assistant',
+          content: 'Task abgebrochen.',
+          timestamp: Date.now(),
+        })
+        return
+      }
+      const output = buildCrewRunOutput(response, task.id)
 
       for (const log of response.logs) {
-        addChatMessage(threadId, {
-          role: 'system',
-          content: formatCrewLogMessage(log),
-          visibleInChat: true,
-          timestamp: log.timestamp,
-        })
+        appendCrewLogToChat(log)
       }
 
       addChatMessage(threadId, {
@@ -728,19 +887,40 @@ export default function TasksView() {
       })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
+      const aborted = canceledTaskIdsRef.current.has(task.id) || abortController.signal.aborted
       const waitingForApproval = message.trim().toLowerCase().startsWith('crew wartet auf freigabe:')
       addChatMessage(threadId, {
         role: 'assistant',
-        content: message,
+        content: aborted ? 'Task abgebrochen.' : message,
         timestamp: Date.now(),
       })
       updateTask(task.id, {
-        status: waitingForApproval ? 'waiting_approval' : 'failed',
-        error: message,
-        output: message,
+        status: aborted ? 'canceled' : waitingForApproval ? 'waiting_approval' : 'failed',
+        error: aborted ? null : message,
+        output: aborted ? 'Task abgebrochen.' : message,
         lastRunAt: Date.now(),
       })
+    } finally {
+      unlistenCrewLogs?.()
+      runningTaskControllersRef.current.delete(task.id)
+      runningCrewTaskIdsRef.current.delete(task.id)
+      canceledTaskIdsRef.current.delete(task.id)
     }
+  }
+
+  const handleCancelTask = async (task: WorkTask) => {
+    canceledTaskIdsRef.current.add(task.id)
+    runningTaskControllersRef.current.get(task.id)?.abort()
+    const crewId = runningCrewTaskIdsRef.current.get(task.id)
+    if (crewId) {
+      await safeInvoke('crew_stop', { request: { crewId } }, null)
+    }
+    updateTask(task.id, {
+      status: 'canceled',
+      error: null,
+      output: task.output?.trim() ? `${task.output}\n\nTask abgebrochen.` : 'Task abgebrochen.',
+      lastRunAt: Date.now(),
+    })
   }
 
   const handleUpsertSchedule = async (task: WorkTask) => {
@@ -776,8 +956,15 @@ export default function TasksView() {
       const { crew, metadata } = await resolveCrewScheduleSource(currentCrew)
 
       const enabledAgents = crew.agents.filter((agent) => agent.enabled)
-      const agentId = resolveDefaultAgentId(crew)
-      if (!agentId || enabledAgents.length === 0) {
+      if (enabledAgents.length === 0) {
+        updateTask(task.id, { scheduleEnabled: false })
+        return
+      }
+      const enabledAgentIds = new Set(enabledAgents.map((agent) => agent.id))
+      let runtimeTasks
+      try {
+        runtimeTasks = buildCrewRuntimeTasks(crew, task, enabledAgentIds)
+      } catch {
         updateTask(task.id, { scheduleEnabled: false })
         return
       }
@@ -814,7 +1001,10 @@ export default function TasksView() {
         id: crew.id,
         name: crew.name,
         description: crew.description,
-        executionGuidelines: crew.executionGuidelines,
+        executionSubject: crew.executionSubject,
+        executionGuidelines: buildWorkTaskCrewGuidelines(crew, task),
+        knowledgeFocus: crew.knowledgeFocus,
+        governanceMode: crew.governanceMode,
         outputMode: crew.outputMode,
         stopOnFailure: crew.stopOnFailure,
         retryCount: crew.retryCount,
@@ -833,17 +1023,7 @@ export default function TasksView() {
           modelOverride: agent.modelOverride?.trim() ? agent.modelOverride : null,
           providerKind: crewDefaultProvider,
         })),
-        tasks: [
-          {
-            id: task.id,
-            description: task.prompt,
-            expectedOutput: task.expectedOutput,
-            agentId,
-            context: [],
-            dependencies: [],
-            asyncExecution: crew.process === 'parallel',
-          },
-        ],
+        tasks: runtimeTasks,
         config,
         cwd: normalizedWorkDir || null,
         snapshotSource: metadata.snapshotSource,
@@ -1007,7 +1187,7 @@ export default function TasksView() {
                       <span style={{ fontSize: 11, padding: '1px 6px', borderRadius: 8, background: 'var(--accent)', color: '#fff' }}>
                         {task.runner === 'crew' ? 'Crew' : 'Modell'}
                       </span>
-                      <span style={{ fontSize: 11, padding: '1px 6px', borderRadius: 8, background: task.status === 'completed' ? 'var(--success)' : task.status === 'failed' ? 'var(--danger)' : task.status === 'running' ? 'var(--accent)' : task.status === 'waiting_approval' ? 'var(--warning)' : 'var(--border-color)', color: task.status === 'idle' ? 'var(--text-secondary)' : '#fff' }}>
+                      <span style={{ fontSize: 11, padding: '1px 6px', borderRadius: 8, background: task.status === 'completed' ? 'var(--success)' : task.status === 'failed' ? 'var(--danger)' : task.status === 'running' ? 'var(--accent)' : task.status === 'waiting_approval' ? 'var(--warning)' : task.status === 'canceled' ? 'var(--text-muted)' : 'var(--border-color)', color: task.status === 'idle' ? 'var(--text-secondary)' : '#fff' }}>
                         {task.status}
                       </span>
                     </div>
@@ -1018,6 +1198,11 @@ export default function TasksView() {
                       <button type="button" onClick={() => void handleRunTask(task)} disabled={(task.status === 'running' || task.status === 'waiting_approval') || !task.prompt.trim() || (task.runner === 'crew' && !task.crewId) || Boolean(task.workDir.trim() && !isAbsolutePath(task.workDir))}>
                         Start
                       </button>
+                      {task.status === 'running' && (
+                        <button type="button" className="btn-stop" onClick={() => void handleCancelTask(task)}>
+                          Stopp
+                        </button>
+                      )}
                       <button type="button" className="btn-secondary" onClick={() => removeTask(task.id)} disabled={task.status === 'running'}>
                         Loeschen
                       </button>

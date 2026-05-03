@@ -1,5 +1,6 @@
 import { Suspense, lazy, useEffect } from 'react'
 import { MemoryRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import Layout from './components/Layout'
 import { useUiStore } from './stores/uiStore'
 import { useChatStore } from './stores/chatStore'
@@ -7,7 +8,10 @@ import { useTaskStore } from './stores/taskStore'
 import { useLogStore } from './stores/logStore'
 import { useConfigStore } from './stores/configStore'
 import { useCoworkStore } from './stores/coworkStore'
+import { useCrewStore } from './stores/crewStore'
 import { useCrewRuntimeStore } from './stores/crewRuntimeStore'
+import { useEngineStore } from './stores/engineStore'
+import { useWorkTasksStore } from './stores/workTasksStore'
 import { writeAuditEvent } from './utils/audit'
 import { seedDefaultPersonalities, seedDefaultMemory } from './utils/defaultSeeds'
 import { startScheduledWorker, stopScheduledWorker } from './engine/scheduledWorker'
@@ -23,6 +27,28 @@ type BackendPolicyState = {
   flags: Record<string, boolean>
   denyRules: string[]
   enabledToolIds: string[]
+}
+
+function hasRunningWork(): boolean {
+  const chatState = useChatStore.getState()
+  const legacyTasks = useTaskStore.getState().tasks
+  const workTasks = useWorkTasksStore.getState().tasks
+  const crews = useCrewStore.getState().crews
+  const engineStatus = useEngineStore.getState().status
+
+  return chatState.busy
+    || chatState.threads.some((thread) => thread.messages.some((message) => message.streaming))
+    || legacyTasks.some((task) => task.status === 'running' || task.status === 'waiting_approval')
+    || workTasks.some((task) => task.status === 'running' || task.status === 'waiting_approval')
+    || crews.some((crew) => crew.status === 'running' || crew.status === 'awaiting-approval')
+    || engineStatus === 'streaming'
+    || engineStatus === 'tool_running'
+    || engineStatus === 'waiting_approval'
+}
+
+function confirmCloseWithRunningWork(): boolean {
+  if (!hasRunningWork()) return true
+  return window.confirm('Es laufen noch Tasks oder Chat-Antworten. App wirklich schliessen? Laufende Ausfuehrungen koennen abgebrochen werden.')
 }
 
 function AppRoutes() {
@@ -110,6 +136,31 @@ function App() {
     media.addEventListener('change', onChange)
     return () => media.removeEventListener('change', onChange)
   }, [preferences.syncThemeWithSystem, setTheme])
+
+  useEffect(() => {
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      if (!hasRunningWork()) return
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', beforeUnload)
+
+    let unlistenClose: (() => void) | null = null
+    if (hasTauriRuntime()) {
+      void getCurrentWindow().onCloseRequested((event) => {
+        if (!confirmCloseWithRunningWork()) {
+          event.preventDefault()
+        }
+      }).then((unlisten) => {
+        unlistenClose = unlisten
+      }).catch(() => {})
+    }
+
+    return () => {
+      window.removeEventListener('beforeunload', beforeUnload)
+      unlistenClose?.()
+    }
+  }, [])
 
   return (
     <MemoryRouter>

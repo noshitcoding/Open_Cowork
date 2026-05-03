@@ -4,12 +4,12 @@ import { useConfigStore } from '../stores/configStore'
 import { useCoworkStore } from '../stores/coworkStore'
 import type { Task } from '../stores/taskStore'
 
-function ProgressPanel({ task }: { task: Task | undefined }) {
+export function ProgressPanel({ task }: { task: Task | undefined }) {
   if (!task || task.steps.length === 0) {
     return (
       <div className="right-panel">
         <h3 className="right-panel-title">
-          <span className="panel-icon">📊</span> Fortschritt
+          <span className="panel-icon">P</span> Fortschritt
         </h3>
         <p className="panel-empty">Kein aktiver Task</p>
       </div>
@@ -22,7 +22,7 @@ function ProgressPanel({ task }: { task: Task | undefined }) {
   return (
     <div className="right-panel">
       <h3 className="right-panel-title">
-        <span className="panel-icon">📊</span> Fortschritt
+        <span className="panel-icon">P</span> Fortschritt
       </h3>
       <div className="progress-bar-wrapper">
         <div className="progress-bar">
@@ -35,12 +35,12 @@ function ProgressPanel({ task }: { task: Task | undefined }) {
           <li key={step.id} className={`step-check-item step-${step.state}`}>
             <span className="step-check-icon">
               {step.state === 'completed'
-                ? '✓'
+                ? 'OK'
                 : step.state === 'running'
-                  ? '⟳'
+                  ? '...'
                   : step.state === 'failed'
-                    ? '✗'
-                    : '○'}
+                    ? 'X'
+                    : '-'}
             </span>
             <span className="step-check-label">{step.title}</span>
           </li>
@@ -50,14 +50,14 @@ function ProgressPanel({ task }: { task: Task | undefined }) {
   )
 }
 
-function WorkingFolderPanel() {
+export function WorkingFolderPanel() {
   const workingFolder = useUiStore((s) => s.workingFolder)
   const workingPathKind = useUiStore((s) => s.workingPathKind)
 
   return (
     <div className="right-panel">
       <h3 className="right-panel-title">
-        <span className="panel-icon">📁</span> Arbeitsordner
+        <span className="panel-icon">D</span> Arbeitsordner
       </h3>
       {workingFolder ? (
         <div className="folder-display">
@@ -67,19 +67,19 @@ function WorkingFolderPanel() {
           <span className="folder-path">{workingFolder}</span>
         </div>
       ) : (
-        <p className="panel-empty">Kein Ordner ausgewählt</p>
+        <p className="panel-empty">Kein Ordner ausgewaehlt</p>
       )}
     </div>
   )
 }
 
-function OutputsPanel({ task }: { task: Task | undefined }) {
+export function OutputsPanel({ task }: { task: Task | undefined }) {
   const outputs = task?.steps.filter((s) => s.output) ?? []
 
   return (
     <div className="right-panel">
       <h3 className="right-panel-title">
-        <span className="panel-icon">📤</span> Ausgaben
+        <span className="panel-icon">O</span> Ausgaben
       </h3>
       {outputs.length === 0 ? (
         <p className="panel-empty">Noch keine Ausgaben</p>
@@ -97,7 +97,7 @@ function OutputsPanel({ task }: { task: Task | undefined }) {
   )
 }
 
-function ContextPanel() {
+export function ContextPanel() {
   const mcpServer = useConfigStore((s) => s.mcpServer)
   const ollama = useConfigStore((s) => s.ollama)
   const connectors = useCoworkStore((s) => s.connectors)
@@ -111,7 +111,7 @@ function ContextPanel() {
   return (
     <div className="right-panel">
       <h3 className="right-panel-title">
-        <span className="panel-icon">🔗</span> Kontext
+        <span className="panel-icon">K</span> Kontext
       </h3>
       <div className="context-items">
         <div className="context-item">

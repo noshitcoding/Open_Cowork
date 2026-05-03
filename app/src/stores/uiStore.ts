@@ -10,7 +10,6 @@ type UiState = {
   workingFolder: string | null
   workingPathKind: WorkingPathKind | null
   leftSidebarOpen: boolean
-  rightSidebarOpen: boolean
   theme: ThemeMode
   commandPaletteOpen: boolean
   shortcutsOverlayOpen: boolean
@@ -18,7 +17,6 @@ type UiState = {
   setWorkingPath: (path: string | null, kind?: WorkingPathKind | null) => void
   setWorkingFolder: (folder: string | null) => void
   toggleLeftSidebar: () => void
-  toggleRightSidebar: () => void
   setTheme: (theme: ThemeMode) => void
   toggleTheme: () => void
   setCommandPaletteOpen: (open: boolean) => void
@@ -32,7 +30,6 @@ export const useUiStore = create<UiState>()(
       workingFolder: null,
       workingPathKind: null,
       leftSidebarOpen: true,
-      rightSidebarOpen: true,
       theme: 'light',
       commandPaletteOpen: false,
       shortcutsOverlayOpen: false,
@@ -43,8 +40,6 @@ export const useUiStore = create<UiState>()(
         set({ workingFolder: folder, workingPathKind: folder ? 'folder' : null }),
       toggleLeftSidebar: () =>
         set((state) => ({ leftSidebarOpen: !state.leftSidebarOpen })),
-      toggleRightSidebar: () =>
-        set((state) => ({ rightSidebarOpen: !state.rightSidebarOpen })),
       setTheme: (theme) => set({ theme }),
       toggleTheme: () =>
         set((state) => ({ theme: state.theme === 'light' ? 'dark' : 'light' })),
