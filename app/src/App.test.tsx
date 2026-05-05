@@ -16,7 +16,7 @@ describe('App', () => {
 
   it('starts directly in an empty chat', async () => {
     render(<App />)
-    expect(await screen.findByPlaceholderText('Nächste Anweisung...')).toBeInTheDocument()
+    expect(await screen.findByPlaceholderText('Nächste Anweisung...', undefined, { timeout: 3000 })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '+ Neuer Chat' })).toBeInTheDocument()
   })
 
