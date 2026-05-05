@@ -16,6 +16,11 @@ import { useSkillStore } from '../stores/skillStore'
 import { useCrewStore } from '../stores/crewStore'
 import { useEngineStore } from '../stores/engineStore'
 import { useUiStore } from '../stores/uiStore'
+import {
+  getEnabledProjectAttachments,
+  getProjectForThread,
+  useProjectStore,
+} from '../stores/projectStore'
 import type { ContentBlock, ToolUIRequest } from '../engine'
 import type { ToolProgressData } from '../engine/types'
 import { checkOllamaConnection } from '../engine/api/ollamaClient'
@@ -773,6 +778,8 @@ export default function CoworkView() {
   const toolDenyRules = useCoworkStore((s) => s.toolDenyRules)
   const policyFlags = useCoworkStore((s) => s.policyFlags)
   const plugins = useCoworkStore((s) => s.plugins)
+  const projects = useProjectStore((s) => s.projects)
+  const setProjectResourceEnabled = useProjectStore((s) => s.setResourceEnabled)
   const activeThread = useChatStore(getActiveThread)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const logRef = useRef<HTMLDivElement>(null)
@@ -780,6 +787,14 @@ export default function CoworkView() {
   const emptyThreadBootstrapRef = useRef<string | null>(null)
   const activeMessages = Array.isArray(activeThread?.messages) ? activeThread.messages : []
   const lastActiveMessage = activeMessages[activeMessages.length - 1]
+  const activeProject = useMemo(
+    () => getProjectForThread(projects, activeThreadId),
+    [activeThreadId, projects],
+  )
+  const activeProjectAttachments = useMemo(
+    () => getEnabledProjectAttachments(activeProject),
+    [activeProject],
+  )
   const providerContext = useMemo(
     () => ({
       ollama,
@@ -1127,7 +1142,9 @@ export default function CoworkView() {
   ) => {
     const text = rawInput.trim()
     const hasDraftAttachments = Array.isArray(draftAttachments) && draftAttachments.length > 0
-    if ((!text && !hasDraftAttachments) || busy) return
+    const projectContextAttachments = activeProjectAttachments
+    const hasProjectAttachments = projectContextAttachments.length > 0
+    if ((!text && !hasDraftAttachments && !hasProjectAttachments) || busy) return
     const fallbackAttachmentPrompt = 'Bitte analysiere die angehaengten Dateien/Ordner und fuehre die Aufgabe aus.'
     const effectiveInput = text || fallbackAttachmentPrompt
     const replyingToAskUser = !!askUserQuestion
@@ -2407,7 +2424,10 @@ export default function CoworkView() {
           )
         : baseUserPrompt
     const hasApprovalBypassMarker = /\[approval-beduerftig\]/i.test(rawPrompt)
-    const mergedForSend = mergeAttachments([], draftAttachments)
+    const mergedForSend = mergeAttachments([], [...projectContextAttachments, ...draftAttachments])
+    const attachmentLimitNotice = mergedForSend.rejectedCount > 0
+      ? 'Maximal 25 Projekt- und Nachrichtenanhaenge pro Anfrage erreicht.'
+      : null
     const attachmentBuild = await buildAttachmentPromptContext(mergedForSend.next, rawPrompt)
     const attachmentContext = attachmentBuild.context
     const shouldRunInPlanMode = slash?.command === 'plan' || skillPlanMode || claudePlanMode
@@ -2447,6 +2467,7 @@ export default function CoworkView() {
         prompt: rawPrompt,
         promptWithAttachments,
         attachments: mergedForSend.next,
+        projectId: activeProject?.id ?? null,
         history,
         compactedHistory: compactedHistory.compacted,
         compactedDroppedItems: compactedHistory.droppedCount,
@@ -2459,7 +2480,7 @@ export default function CoworkView() {
     }
     setInputValue('')
     setAttachments([])
-    setAttachmentNotice(null)
+    setAttachmentNotice(attachmentLimitNotice)
     setBusy(true)
     setError(null)
 
@@ -2483,6 +2504,7 @@ export default function CoworkView() {
           promptChars: promptWithAttachments.length,
           parsedAttachments: attachmentBuild.parsedFiles,
           failedAttachments: attachmentBuild.failedFiles.length,
+          projectResources: projectContextAttachments.length,
           source: skillInvocationActive ? 'chat_skill' : 'chat',
         },
       })

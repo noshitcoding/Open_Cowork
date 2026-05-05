@@ -1,4 +1,5 @@
-﻿import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import type { DragEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { SessionSummary } from '../engine'
 import { useChatStore } from '../stores/chatStore'
@@ -7,8 +8,11 @@ import { useConfigStore } from '../stores/configStore'
 import { useEngineStore } from '../stores/engineStore'
 import { useTaskStore } from '../stores/taskStore'
 import { useWorkTasksStore, type WorkTask } from '../stores/workTasksStore'
+import { useProjectStore } from '../stores/projectStore'
 import { createChatProviderSelection, getChatProviderState } from '../utils/chatProvider'
 import { ContextPanel, OutputsPanel, ProgressPanel, WorkingFolderPanel } from './RightSidebar'
+
+const THREAD_DND_MIME = 'application/open-cowork-thread-id'
 
 function isAbsolutePath(path: string): boolean {
   const trimmed = path.trim()
@@ -33,15 +37,25 @@ function buildTaskSidebarSummary(task: WorkTask): string {
   ].filter(Boolean).join('\n')
 }
 
-type SidebarFilter = 'all' | 'task' | 'chat' | 'session'
+function readDraggedThreadId(event: DragEvent): string {
+  const typed = event.dataTransfer.getData(THREAD_DND_MIME).trim()
+  if (typed) return typed
+
+  const plain = event.dataTransfer.getData('text/plain').trim()
+  return plain.startsWith('thread:') ? plain.slice('thread:'.length).trim() : plain
+}
+
+type SidebarFilter = 'all' | 'project' | 'task' | 'chat' | 'session'
 
 interface SidebarItem {
   id: string
   type: SidebarFilter
   title: string
   status?: string
+  threadId?: string
   onClick: () => void
   onDelete?: () => void
+  onDropThread?: (threadId: string) => void
 }
 
 export default function LeftSidebar() {
@@ -70,6 +84,12 @@ export default function LeftSidebar() {
   const loadSessionById = useEngineStore((s) => s.loadSessionById)
   const currentSessionId = useEngineStore((s) => s.currentSessionId)
   const deleteSessionById = useEngineStore((s) => s.deleteSessionById)
+  const projects = useProjectStore((s) => s.projects)
+  const activeProjectId = useProjectStore((s) => s.activeProjectId)
+  const addProject = useProjectStore((s) => s.addProject)
+  const deleteProject = useProjectStore((s) => s.deleteProject)
+  const setActiveProject = useProjectStore((s) => s.setActiveProject)
+  const attachThread = useProjectStore((s) => s.attachThread)
   const [persistedSessions, setPersistedSessions] = useState<SessionSummary[]>([])
   const [loadingSessions, setLoadingSessions] = useState(false)
   const [filter, setFilter] = useState<SidebarFilter>('all')
@@ -111,9 +131,13 @@ export default function LeftSidebar() {
     () => new Set(workTasks.map((task) => task.threadId).filter((threadId): threadId is string => typeof threadId === 'string' && threadId.trim().length > 0)),
     [workTasks],
   )
+  const projectThreadIds = useMemo(
+    () => new Set(projects.flatMap((project) => project.threadIds)),
+    [projects],
+  )
   const historyThreads = useMemo(
-    () => threads.filter((thread) => !taskThreadIds.has(thread.id)),
-    [taskThreadIds, threads],
+    () => threads.filter((thread) => !taskThreadIds.has(thread.id) && !projectThreadIds.has(thread.id)),
+    [projectThreadIds, taskThreadIds, threads],
   )
 
   const handleNewTask = () => {
@@ -121,6 +145,24 @@ export default function LeftSidebar() {
     setActiveMode('work')
     setActiveThread(threadId)
     navigate('/')
+  }
+
+  const handleNewProject = () => {
+    const projectId = addProject(`Projekt ${projects.length + 1}`)
+    setActiveProject(projectId)
+    navigate('/projects')
+  }
+
+  const handleOpenProjects = () => {
+    if (!activeProjectId && projects[0]) {
+      setActiveProject(projects[0].id)
+    }
+    navigate('/projects')
+  }
+
+  const handleOpenProject = (projectId: string) => {
+    setActiveProject(projectId)
+    navigate('/projects')
   }
 
   const handleOpenThread = (threadId: string) => {
@@ -163,8 +205,40 @@ export default function LeftSidebar() {
     navigate('/')
   }
 
+  const handleThreadDragStart = (event: DragEvent, threadId: string) => {
+    event.dataTransfer.setData(THREAD_DND_MIME, threadId)
+    event.dataTransfer.setData('text/plain', `thread:${threadId}`)
+    event.dataTransfer.effectAllowed = 'move'
+  }
+
+  const handleProjectDragOver = (event: DragEvent) => {
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'move'
+  }
+
+  const handleProjectDrop = (event: DragEvent, onDropThread: (threadId: string) => void) => {
+    event.preventDefault()
+    const threadId = readDraggedThreadId(event)
+    if (threadId && threadIds.has(threadId)) {
+      onDropThread(threadId)
+    }
+  }
+
   const items: SidebarItem[] = useMemo(() => {
     const result: SidebarItem[] = []
+
+    projects.forEach((project) => {
+      const existingThreadCount = project.threadIds.filter((threadId) => threadIds.has(threadId)).length
+      result.push({
+        id: `project-${project.id}`,
+        type: 'project',
+        title: project.title,
+        status: `${existingThreadCount} Chats`,
+        onClick: () => handleOpenProject(project.id),
+        onDelete: () => deleteProject(project.id),
+        onDropThread: (threadId) => attachThread(project.id, threadId),
+      })
+    })
 
     workTasks.forEach((task) => {
       result.push({
@@ -181,6 +255,7 @@ export default function LeftSidebar() {
         id: `chat-${t.id}`,
         type: 'chat',
         title: t.title,
+        threadId: t.id,
         onClick: () => handleOpenThread(t.id),
         onDelete: () => deleteThread(t.id),
       })
@@ -197,7 +272,7 @@ export default function LeftSidebar() {
     })
 
     return result
-  }, [workTasks, historyThreads, persistedSessions, threadIds])
+  }, [projects, threadIds, workTasks, historyThreads, persistedSessions])
 
   const filteredItems = useMemo(() => {
     if (filter === 'all') return items
@@ -205,6 +280,9 @@ export default function LeftSidebar() {
   }, [items, filter])
 
   const isActive = (item: SidebarItem): boolean => {
+    if (item.type === 'project') {
+      return item.id.replace('project-', '') === activeProjectId
+    }
     if (item.type === 'chat') {
       return item.id.replace('chat-', '') === activeThreadId
     }
@@ -218,10 +296,24 @@ export default function LeftSidebar() {
     return false
   }
 
+  const getEmptyLabel = (): string => {
+    if (filter === 'all') return 'Noch keine Eintraege'
+    if (filter === 'project') return 'Keine Projekte'
+    if (filter === 'task') return 'Keine Tasks'
+    if (filter === 'chat') return 'Keine Chats'
+    return 'Keine Sessions'
+  }
+
   return (
     <aside className="left-sidebar">
       <button type="button" className="btn-new-task" onClick={handleNewTask}>
         + Neuer Chat
+      </button>
+      <button type="button" className="btn-new-task" onClick={handleNewProject}>
+        + Neues Projekt
+      </button>
+      <button type="button" className="btn-sm" style={{ width: '100%', marginBottom: 6 }} onClick={handleOpenProjects}>
+        Projekte
       </button>
       <button type="button" className="btn-sm" style={{ width: '100%', marginBottom: 12 }} onClick={() => navigate('/crew')}>
         Crew Studio
@@ -234,10 +326,9 @@ export default function LeftSidebar() {
         <ContextPanel />
       </div>
 
-      {/* Unified History */}
       <div className="sidebar-section">
         <div className="sidebar-filter-bar">
-          {(['all', 'task', 'chat', 'session'] as SidebarFilter[]).map((f) => (
+          {(['all', 'project', 'task', 'chat', 'session'] as SidebarFilter[]).map((f) => (
             <button
               key={f}
               type="button"
@@ -245,6 +336,7 @@ export default function LeftSidebar() {
               onClick={() => setFilter(f)}
             >
               {f === 'all' && 'Alle'}
+              {f === 'project' && 'Projekte'}
               {f === 'task' && 'Tasks'}
               {f === 'chat' && 'Chats'}
               {f === 'session' && 'Sessions'}
@@ -256,6 +348,12 @@ export default function LeftSidebar() {
             <div
               key={item.id}
               className={`session-item${isActive(item) ? ' active' : ''}`}
+              draggable={Boolean(item.threadId)}
+              onDragStart={(event) => {
+                if (item.threadId) handleThreadDragStart(event, item.threadId)
+              }}
+              onDragOver={item.onDropThread ? handleProjectDragOver : undefined}
+              onDrop={item.onDropThread ? (event) => handleProjectDrop(event, item.onDropThread!) : undefined}
             >
               <button
                 type="button"
@@ -263,12 +361,14 @@ export default function LeftSidebar() {
                 onClick={item.onClick}
               >
                 <span className="session-icon">
+                  {item.type === 'project' && 'P'}
                   {item.type === 'task' && 'T'}
                   {item.type === 'chat' && 'C'}
                   {item.type === 'session' && 'S'}
                 </span>
                 <span className="session-title">{item.title}</span>
                 <span className={`session-badge badge-${item.type}`}>
+                  {item.type === 'project' && 'Projekt'}
                   {item.type === 'task' && 'Task'}
                   {item.type === 'chat' && 'Chat'}
                   {item.type === 'session' && 'Session'}
@@ -290,9 +390,7 @@ export default function LeftSidebar() {
             <p className="hint-text">Wird geladen...</p>
           )}
           {!loadingSessions && filteredItems.length === 0 && (
-            <p className="hint-text">
-              {filter === 'all' ? 'Noch keine Eintraege' : `Keine ${filter === 'task' ? 'Tasks' : filter === 'chat' ? 'Chats' : 'Sessions'}`}
-            </p>
+            <p className="hint-text">{getEmptyLabel()}</p>
           )}
         </div>
       </div>
