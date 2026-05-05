@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { OllamaConfig } from './configStore'
 import { safeInvoke } from '../utils/safeInvoke'
+import { DEFAULT_PERSONALITIES } from '../utils/defaultSeeds'
 
 export type AgentRole = 'researcher' | 'writer' | 'reviewer' | 'planner' | 'executor' | 'analyst' | 'custom'
 export type CrewProcess = 'sequential' | 'parallel' | 'hierarchical'
@@ -100,6 +101,13 @@ export type CrewExecutionLog = {
   timestamp: number
 }
 
+export type CrewPersonalityProfile = {
+  id: string
+  name: string
+  description: string
+  modelOverride: string | null
+}
+
 type CrewTaskExecutionResponse = {
   taskId: string
   agentId: string
@@ -132,6 +140,7 @@ type CrewState = {
   updateCrewAgent: (crewId: string, agentId: string, patch: Partial<CrewAgent>) => void
   removeAgent: (id: string) => void
   loadAgents: () => void
+  syncAgentsFromPersonalityProfiles: (profiles: CrewPersonalityProfile[]) => void
 
   addTask: (crewId: string, task: CrewTask) => void
   updateTask: (crewId: string, taskId: string, patch: Partial<CrewTask>) => void
@@ -277,9 +286,47 @@ const DEFAULT_CREW_PROVIDER_PROFILES: CrewProviderProfiles = {
 const DEFAULT_CREW_OUTPUT_MODE: CrewOutputMode = 'standard'
 const DEFAULT_CREW_PROVIDER: CrewProviderKind = 'ollama'
 const DEFAULT_CREW_GOVERNANCE_MODE: CrewGovernanceMode = 'allow-all'
+const DEFAULT_PERSONALITY_IDS = new Set(DEFAULT_PERSONALITIES.map((entry) => entry.id))
+const PERSONALITY_AGENT_ID_PREFIX = 'agent-personality-'
 
 function isCrewAwaitingApproval(message: string): boolean {
   return message.trim().toLowerCase().startsWith('crew wartet auf freigabe:')
+}
+
+function createPersonalityCrewAgentId(personalityId: string): string {
+  return `${PERSONALITY_AGENT_ID_PREFIX}${personalityId}`
+}
+
+function isSyncablePersonalityProfile(profile: CrewPersonalityProfile): boolean {
+  return profile.name.trim().length > 0 && !DEFAULT_PERSONALITY_IDS.has(profile.id)
+}
+
+function isSamePersonalityAgent(agent: CrewAgent, personalityId: string): boolean {
+  return agent.personalityId === personalityId || agent.id === createPersonalityCrewAgentId(personalityId)
+}
+
+function buildCrewAgentFromPersonality(profile: CrewPersonalityProfile): CrewAgent {
+  const trimmedName = profile.name.trim()
+  const trimmedDescription = profile.description.trim()
+  const trimmedModelOverride = profile.modelOverride?.trim() || null
+
+  return {
+    id: createPersonalityCrewAgentId(profile.id),
+    name: trimmedName,
+    role: 'custom',
+    goal: trimmedDescription || `Arbeite im Stil von ${trimmedName}.`,
+    backstory: '',
+    skillsMarkdown: '',
+    personalityId: profile.id,
+    modelOverride: trimmedModelOverride,
+    providerKind: 'ollama',
+    tools: [],
+    mcpServerNames: [],
+    enabled: true,
+    allowDelegation: true,
+    verbose: true,
+    maxIterations: 8,
+  }
 }
 
 function resolveCrewRuntimeConfig(crew: Crew, fallbackConfig?: OllamaConfig) {
@@ -483,6 +530,63 @@ export const useCrewStore = create<CrewState>()(
           set({ agents: [...DEFAULT_AGENTS] })
         }
       },
+
+      syncAgentsFromPersonalityProfiles: (profiles) =>
+        set((state) => {
+          const syncableProfiles = Array.from(
+            new Map(
+              profiles
+                .filter(isSyncablePersonalityProfile)
+                .map((profile) => [profile.id, profile]),
+            ).values(),
+          )
+
+          if (syncableProfiles.length === 0) {
+            return state
+          }
+
+          const syncedAgents = syncableProfiles.map(buildCrewAgentFromPersonality)
+          const nextAgents = state.agents.length > 0
+            ? state.agents.map(cloneCrewAgent)
+            : DEFAULT_AGENTS.map(cloneCrewAgent)
+          let agentsChanged = state.agents.length === 0
+
+          for (const agent of syncedAgents) {
+            if (nextAgents.some((existingAgent) => isSamePersonalityAgent(existingAgent, agent.personalityId ?? ''))) {
+              continue
+            }
+
+            nextAgents.push(cloneCrewAgent(agent))
+            agentsChanged = true
+          }
+
+          let crewsChanged = false
+          const nextCrews = state.crews.map((crew) => {
+            const missingAgents = syncedAgents.filter(
+              (agent) => !crew.agents.some((existingAgent) => isSamePersonalityAgent(existingAgent, agent.personalityId ?? '')),
+            )
+
+            if (missingAgents.length === 0) {
+              return crew
+            }
+
+            crewsChanged = true
+            return {
+              ...crew,
+              agents: dedupeCrewAgents([...crew.agents, ...missingAgents.map(cloneCrewAgent)]),
+              updatedAt: Date.now(),
+            }
+          })
+
+          if (!agentsChanged && !crewsChanged) {
+            return state
+          }
+
+          return {
+            agents: dedupeCrewAgents(nextAgents),
+            crews: nextCrews,
+          }
+        }),
 
       addTask: (crewId, task) =>
         set(s => ({

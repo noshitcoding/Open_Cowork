@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useConfigStore, type OllamaConfig } from '../stores/configStore'
 import { useCoworkStore } from '../stores/coworkStore'
 import { useCrewStore, type AgentRole, type CrewAgent, type CrewExternalProviderConfig, type CrewOutputMode, type CrewProcess, type CrewProviderKind } from '../stores/crewStore'
+import { usePersonalityStore } from '../stores/personalityStore'
 import CrewControlPlanePanel from './crew/CrewControlPlanePanel'
 import CrewGovernancePanel from './crew/CrewGovernancePanel'
 import CrewHistoryPanel from './crew/CrewHistoryPanel'
@@ -207,10 +208,13 @@ export default function CrewPanel() {
     setActiveCrew,
     loadAgents,
     installDefaultAgents,
+    syncAgentsFromPersonalityProfiles,
     updateCrewAgent,
   } = useCrewStore()
   const { availableModels, defaultLlmProfileIds, llmProfiles, mcpServer, mcpServers, ollama } = useConfigStore()
   const claudeTools = useCoworkStore((state) => state.claudeTools)
+  const personalities = usePersonalityStore((state) => state.personalities)
+  const loadPersonalities = usePersonalityStore((state) => state.loadPersonalities)
 
   const [crewName, setCrewName] = useState('')
   const [providerModelOptions, setProviderModelOptions] = useState<Record<string, ProviderModelState>>({})
@@ -225,6 +229,21 @@ export default function CrewPanel() {
     loadAgents()
     installDefaultAgents()
   }, [installDefaultAgents, loadAgents])
+
+  useEffect(() => {
+    void loadPersonalities()
+  }, [loadPersonalities])
+
+  useEffect(() => {
+    if (personalities.length === 0) return
+
+    syncAgentsFromPersonalityProfiles(personalities.map((personality) => ({
+      id: personality.id,
+      name: personality.name,
+      description: personality.description,
+      modelOverride: personality.model_override,
+    })))
+  }, [personalities, syncAgentsFromPersonalityProfiles])
 
   useEffect(() => {
     if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return

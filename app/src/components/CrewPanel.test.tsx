@@ -4,6 +4,7 @@ import CrewPanel from './CrewPanel'
 import { safeInvoke } from '../utils/safeInvoke'
 import { useConfigStore } from '../stores/configStore'
 import { useCrewStore, type CrewAgent } from '../stores/crewStore'
+import { usePersonalityStore } from '../stores/personalityStore'
 
 vi.mock('../utils/safeInvoke', () => ({
   safeInvoke: vi.fn(),
@@ -141,6 +142,17 @@ describe('CrewPanel', () => {
       activeCrewId: 'crew-1',
       loading: false,
     })
+
+    usePersonalityStore.setState({
+      personalities: [],
+      activeId: null,
+      loading: false,
+      error: null,
+      loadPersonalities: vi.fn().mockResolvedValue(undefined),
+      upsertPersonality: vi.fn().mockResolvedValue(undefined),
+      deletePersonality: vi.fn().mockResolvedValue(undefined),
+      setActive: vi.fn(),
+    })
   })
 
   it('syncs member providers to the crew provider when changing the crew provider', async () => {
@@ -198,5 +210,40 @@ describe('CrewPanel', () => {
 
     const crew = useCrewStore.getState().crews[0]
     expect(crew.agents.every((agent) => agent.mcpServerNames.includes('workspace-mcp'))).toBe(true)
+  })
+
+  it('adds newly created custom personalities to existing crew members automatically', async () => {
+    usePersonalityStore.setState((state) => ({
+      ...state,
+      personalities: [
+        {
+          id: 'personality-product-owner',
+          name: 'Product Owner',
+          description: 'Priorisiert Anforderungen und strukturiert den Arbeitsfokus.',
+          system_prompt: 'Arbeite wie ein Product Owner.',
+          temperature: null,
+          model_override: 'qwen3:14b',
+          icon: 'PO',
+          is_default: false,
+          created_at: '2026-05-04T00:00:00.000Z',
+          updated_at: '2026-05-04T00:00:00.000Z',
+        },
+      ],
+    }))
+
+    await act(async () => {
+      render(<CrewPanel />)
+    })
+
+    const crew = useCrewStore.getState().crews[0]
+    const syncedAgent = crew.agents.find((agent) => agent.personalityId === 'personality-product-owner')
+
+    expect(crew.agents).toHaveLength(3)
+    expect(syncedAgent).toMatchObject({
+      id: 'agent-personality-personality-product-owner',
+      name: 'Product Owner',
+      role: 'custom',
+      modelOverride: 'qwen3:14b',
+    })
   })
 })
