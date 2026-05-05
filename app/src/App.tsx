@@ -1,6 +1,7 @@
 import { Suspense, lazy, useEffect } from 'react'
 import { MemoryRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { getCurrentWindow } from '@tauri-apps/api/window'
+import { confirm as confirmDialog } from '@tauri-apps/plugin-dialog'
 import Layout from './components/Layout'
 import { useUiStore } from './stores/uiStore'
 import { useChatStore } from './stores/chatStore'
@@ -47,9 +48,31 @@ function hasRunningWork(): boolean {
     || engineStatus === 'waiting_approval'
 }
 
-function confirmCloseWithRunningWork(): boolean {
-  if (!hasRunningWork()) return true
-  return window.confirm('Es laufen noch Tasks oder Chat-Antworten. App wirklich schliessen? Laufende Ausfuehrungen koennen abgebrochen werden.')
+function shouldConfirmAppClose(): boolean {
+  return useConfigStore.getState().preferences.confirmOnCloseWithRunningTasks
+}
+
+async function confirmAppClose(): Promise<boolean> {
+  const runningWork = hasRunningWork()
+  const message = runningWork
+    ? 'Es laufen noch Tasks oder Chat-Antworten. Open Cowork wirklich schliessen? Laufende Ausfuehrungen koennen abgebrochen werden.'
+    : 'Moechtest du Open Cowork wirklich schliessen?'
+
+  try {
+    return await confirmDialog(message, {
+      title: 'Open Cowork schliessen',
+      kind: runningWork ? 'warning' : 'info',
+      okLabel: 'Schliessen',
+      cancelLabel: 'Abbrechen',
+    })
+  } catch (error) {
+    console.warn('Close confirmation dialog failed:', error)
+    try {
+      return window.confirm(message)
+    } catch {
+      return false
+    }
+  }
 }
 
 function AppRoutes() {
@@ -141,7 +164,7 @@ function App() {
 
   useEffect(() => {
     const beforeUnload = (event: BeforeUnloadEvent) => {
-      if (!hasRunningWork()) return
+      if (!shouldConfirmAppClose() || !hasRunningWork()) return
       event.preventDefault()
       event.returnValue = ''
     }
@@ -149,9 +172,28 @@ function App() {
 
     let unlistenClose: (() => void) | null = null
     if (hasTauriRuntime()) {
-      void getCurrentWindow().onCloseRequested((event) => {
-        if (!confirmCloseWithRunningWork()) {
-          event.preventDefault()
+      const appWindow = getCurrentWindow()
+      let closePromptOpen = false
+      let closeConfirmed = false
+
+      void appWindow.onCloseRequested(async (event) => {
+        if (closeConfirmed || !shouldConfirmAppClose()) return
+
+        event.preventDefault()
+        if (closePromptOpen) return
+
+        closePromptOpen = true
+        const confirmed = await confirmAppClose()
+        closePromptOpen = false
+
+        if (confirmed) {
+          closeConfirmed = true
+          try {
+            await appWindow.close()
+          } catch (error) {
+            closeConfirmed = false
+            console.warn('Closing the app window failed:', error)
+          }
         }
       }).then((unlisten) => {
         unlistenClose = unlisten

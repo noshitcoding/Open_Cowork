@@ -367,7 +367,7 @@ export default function SettingsView() {
             <Section title="Benachrichtigungen & Sound" icon="🔔">
               <Toggle label="Desktop-Benachrichtigungen" hint="Windows-Notifications bei wichtigen Ereignissen" {...pref('notificationsEnabled')} />
               <Toggle label="Sounds aktivieren" hint="Akustisches Feedback bei Aktionen" {...pref('soundsEnabled')} />
-              <Toggle label="Bestaetigung beim Schliessen mit laufenden Tasks" hint="Warnung vor versehentlichem Beenden" {...pref('confirmOnCloseWithRunningTasks')} />
+              <Toggle label="Bestaetigung beim Schliessen" hint="Fragt vor dem Beenden der Desktop-App nach" {...pref('confirmOnCloseWithRunningTasks')} />
             </Section>
           </div>
         )}
