@@ -29,6 +29,7 @@ import {
   extractFileAttachmentsFromFileList,
   extractFileAttachmentsFromUriList,
   getAttachmentDisplayName,
+  getPathName,
   getAttachmentPreviewSrcForAttachment,
   hasLocalAttachmentPath,
   isImageAttachment,
@@ -3026,7 +3027,7 @@ export default function CoworkView() {
 
   const handleAskUserSubmit = async () => {
     const answer = buildStructuredAskUserAnswer()
-    if (!answer.trim() && attachments.length === 0) return
+    if (!answer.trim() && attachments.length === 0 && activeProjectAttachments.length === 0) return
     setInputValue(answer)
     setDismissedAskUserQuestion(askUserQuestion)
     await submitPrompt(answer, attachments)
@@ -3403,7 +3404,7 @@ export default function CoworkView() {
                 type="button"
                 className="btn-approve"
                 onClick={() => void handleAskUserSubmit()}
-                disabled={uiLocked || (!askUserHasStructuredResponse && attachments.length === 0)}
+                disabled={uiLocked || (!askUserHasStructuredResponse && attachments.length === 0 && activeProjectAttachments.length === 0)}
               >
                 Antwort senden
               </button>
@@ -3431,6 +3432,33 @@ export default function CoworkView() {
 
         <form className="cowork-input" onSubmit={handleSend}>
           <div className="chat-input-main">
+            {activeProject && (
+              <div className="project-context-strip" aria-label="Projektkontext">
+                <div className="project-context-header">
+                  <span>Projekt: {activeProject.title}</span>
+                  <span>{activeProjectAttachments.length} aktiv</span>
+                </div>
+                {activeProject.resources.length > 0 && (
+                  <div className="project-context-resources">
+                    {activeProject.resources.map((resource) => (
+                      <label
+                        key={resource.id}
+                        className={`project-context-chip${resource.enabled ? '' : ' disabled'}`}
+                        title={resource.path}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={resource.enabled}
+                          onChange={(event) => setProjectResourceEnabled(activeProject.id, resource.id, event.currentTarget.checked)}
+                          disabled={uiLocked}
+                        />
+                        <span>{resource.kind === 'folder' ? 'Ordner' : 'Datei'}: {resource.label ?? getPathName(resource.path)}</span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
             {attachments.length > 0 && (
               <div className="attachment-list" aria-label="Verbundene Elemente">
                 {attachments.map((item) => (
