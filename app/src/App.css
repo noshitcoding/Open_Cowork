@@ -405,6 +405,7 @@ body {
 .badge-task { background: #e0f2fe; color: #0369a1; }
 .badge-chat { background: #dcfce7; color: #15803d; }
 .badge-session { background: #f3e8ff; color: #7e22ce; }
+.badge-project { background: #fef3c7; color: #92400e; }
 
 /* === Main Content === */
 .main-content {
@@ -1993,6 +1994,63 @@ button.compact-send-btn {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+.project-context-strip {
+  display: grid;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--border-color));
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--accent-light) 36%, var(--bg-white));
+}
+
+.project-context-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.project-context-resources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.project-context-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: min(340px, 48vw);
+  padding: 4px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  background: var(--bg-white);
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.project-context-chip input {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--accent);
+  flex-shrink: 0;
+}
+
+.project-context-chip span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-context-chip.disabled {
+  opacity: 0.58;
+  background: var(--bg-secondary);
 }
 
 .attachment-chip {
