@@ -44,6 +44,7 @@ import { appendWebSearchSources, mergeWebSearchSources, parseWebSearchSourcesFro
 // Ollama streaming is now handled by the engine
 import { MessageThinking, MessageVerbose } from './MessageThinking'
 import { HighlightedChatText } from './HighlightedChatText'
+import CrewLiveMonitor from './CrewLiveMonitor'
 import { writeAuditEvent } from '../utils/audit'
 import { persistInvoke } from '../stores/chatStore'
 import {
@@ -3225,7 +3226,7 @@ export default function CoworkView() {
               const displayedContent = resolveDisplayedAssistantContent(content, displayedThinkingContent)
               const canRegenerate = msg.role === 'assistant' && findPreviousUserMessage(msg.id) !== null
               return (
-                <div key={msg.id} className={`cowork-msg ${msg.role}`}>
+                <div key={msg.id} className={`cowork-msg ${msg.role}${msg.crewLive ? ' crew-live-message' : ''}`}>
                 <div className="msg-avatar">
                   {msg.role === 'user' ? '👤' : '✦'}
                 </div>
@@ -3234,9 +3235,13 @@ export default function CoworkView() {
                     {msg.role === 'user' ? 'Du' : 'Open_Cowork'}
                     {showTimestamps && <span className="msg-time">{formatTime(msg.timestamp)}</span>}
                   </div>
-                  <div className="msg-content">
-                    {displayedContent ? <HighlightedChatText content={displayedContent} /> : null}
-                  </div>
+                  {msg.crewLive ? (
+                    <CrewLiveMonitor live={msg.crewLive} />
+                  ) : (
+                    <div className="msg-content">
+                      {displayedContent ? <HighlightedChatText content={displayedContent} /> : null}
+                    </div>
+                  )}
                   <MessageThinking
                     content={displayedThinkingContent}
                     limitToRollingWindow={limitThinkingWindow}
