@@ -2538,6 +2538,327 @@ button.compact-send-btn {
   color: var(--text-secondary);
 }
 
+/* === Project View === */
+.project-view {
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+  background: var(--bg-primary);
+}
+
+.project-list-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  padding: 16px;
+  border-right: 1px solid var(--border-color);
+  background: var(--bg-white);
+}
+
+.project-list-header,
+.project-panel-header,
+.project-detail-header,
+.project-detail-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.project-list-header {
+  justify-content: space-between;
+}
+
+.project-list-header h1 {
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.project-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.project-icon-button.danger:hover {
+  border-color: var(--danger);
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 10%, var(--bg-white));
+}
+
+.project-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.project-list-item {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  padding: 10px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+  transition: all var(--transition);
+}
+
+.project-list-item:hover,
+.project-list-item.active {
+  border-color: var(--accent);
+  background: var(--accent-light);
+}
+
+.project-list-item-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.project-list-item-meta {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.project-detail {
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 20px;
+}
+
+.project-detail-header {
+  justify-content: space-between;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.project-title-editor {
+  display: grid;
+  gap: 6px;
+  min-width: min(420px, 100%);
+}
+
+.project-title-editor label {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.project-title-editor input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-white);
+  color: var(--text-primary);
+  font-size: 18px;
+  font-weight: 800;
+  outline: none;
+}
+
+.project-title-editor input:focus {
+  border-color: var(--accent);
+}
+
+.project-detail-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.project-drop-zone {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 48px;
+  margin-bottom: 14px;
+  border: 1px dashed var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.project-drop-zone.active {
+  border-color: var(--accent);
+  background: var(--accent-light);
+  color: var(--accent);
+}
+
+.project-detail-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(280px, 0.8fr);
+  gap: 14px;
+}
+
+.project-panel {
+  min-width: 0;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-white);
+  overflow: hidden;
+}
+
+.project-panel-wide {
+  grid-column: 1 / -1;
+}
+
+.project-panel-header {
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+}
+
+.project-panel-header h2 {
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.project-panel-header span {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.project-resource-list,
+.project-thread-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+}
+
+.project-thread-list.compact {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.project-resource-item,
+.project-thread-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+}
+
+.project-resource-item.disabled {
+  opacity: 0.62;
+}
+
+.project-resource-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+  cursor: pointer;
+}
+
+.project-resource-toggle input {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--accent);
+  flex-shrink: 0;
+}
+
+.project-resource-kind {
+  flex-shrink: 0;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-light);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.project-resource-name,
+.project-thread-main span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 700;
+}
+
+.project-resource-path {
+  max-width: 32%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-family: 'SF Mono', 'Consolas', monospace;
+  font-size: 11px;
+}
+
+.project-thread-main {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+}
+
+.project-thread-main small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.project-row-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-white);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.project-row-action:hover {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.project-empty-state {
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 14px;
+  color: var(--text-muted);
+}
+
+.project-empty-state h2 {
+  color: var(--text-primary);
+  font-size: 18px;
+}
+
 /* === Task View === */
 .task-view { padding: 24px; max-width: 800px; margin: 0 auto; }
 .task-view h1 { font-size: 22px; font-weight: 700; margin-bottom: 16px; }
