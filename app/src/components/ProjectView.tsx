@@ -3,7 +3,7 @@ import type { DragEvent, KeyboardEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { open } from '@tauri-apps/plugin-dialog'
 import {
-  FilePlus2,
+  FilePlus,
   FolderOpen,
   FolderPlus,
   MessageSquarePlus,
@@ -276,7 +276,7 @@ export default function ProjectView() {
                   Chat
                 </button>
                 <button type="button" className="btn-sm project-icon-button" onClick={handleAddFiles}>
-                  <FilePlus2 size={14} aria-hidden="true" />
+                  <FilePlus size={14} aria-hidden="true" />
                   Dateien
                 </button>
                 <button type="button" className="btn-sm project-icon-button" onClick={handleAddFolders}>
