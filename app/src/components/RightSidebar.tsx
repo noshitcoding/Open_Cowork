@@ -9,7 +9,7 @@ export function ProgressPanel({ task }: { task: Task | undefined }) {
     return (
       <div className="right-panel">
         <h3 className="right-panel-title">
-          <span className="panel-icon">P</span> Fortschritt
+          Fortschritt
         </h3>
         <p className="panel-empty">Kein aktiver Task</p>
       </div>
@@ -22,7 +22,7 @@ export function ProgressPanel({ task }: { task: Task | undefined }) {
   return (
     <div className="right-panel">
       <h3 className="right-panel-title">
-        <span className="panel-icon">P</span> Fortschritt
+        Fortschritt
       </h3>
       <div className="progress-bar-wrapper">
         <div className="progress-bar">
@@ -57,7 +57,7 @@ export function WorkingFolderPanel() {
   return (
     <div className="right-panel">
       <h3 className="right-panel-title">
-        <span className="panel-icon">D</span> Arbeitsordner
+        Arbeitsordner
       </h3>
       {workingFolder ? (
         <div className="folder-display">
@@ -79,7 +79,7 @@ export function OutputsPanel({ task }: { task: Task | undefined }) {
   return (
     <div className="right-panel">
       <h3 className="right-panel-title">
-        <span className="panel-icon">O</span> Ausgaben
+        Ausgaben
       </h3>
       {outputs.length === 0 ? (
         <p className="panel-empty">Noch keine Ausgaben</p>
@@ -111,7 +111,7 @@ export function ContextPanel() {
   return (
     <div className="right-panel">
       <h3 className="right-panel-title">
-        <span className="panel-icon">K</span> Kontext
+        Kontext
       </h3>
       <div className="context-items">
         <div className="context-item">
