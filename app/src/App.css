@@ -2977,6 +2977,20 @@ button.compact-send-btn {
   .session-title, .session-time, .session-delete { display: none; }
   .sidebar-section-title { display: none; }
   .right-sidebar { width: 220px; min-width: 220px; }
+  .project-view {
+    grid-template-columns: 1fr;
+  }
+  .project-list-panel {
+    border-right: none;
+    border-bottom: 1px solid var(--border-color);
+  }
+  .project-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  }
+  .project-detail-grid {
+    grid-template-columns: 1fr;
+  }
   .quick-actions-grid { grid-template-columns: repeat(2, 1fr); }
   .top-bar { gap: 12px; }
   .brand-name { display: none; }
@@ -3006,7 +3020,7 @@ button.compact-send-btn {
     order: 3;
     width: 100%;
     display: grid;
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
   }
 
   .top-tab {
@@ -3039,6 +3053,19 @@ button.compact-send-btn {
   }
 
   .right-sidebar { display: none; }
+  .project-detail {
+    padding: 14px 12px;
+  }
+  .project-resource-item,
+  .project-thread-item {
+    align-items: stretch;
+  }
+  .project-resource-path {
+    display: none;
+  }
+  .project-context-chip {
+    max-width: 100%;
+  }
   .quick-actions-grid { grid-template-columns: 1fr; }
   .welcome-screen { padding: 24px 12px; }
   .cowork-messages, .chat-log { padding: 14px 12px; }

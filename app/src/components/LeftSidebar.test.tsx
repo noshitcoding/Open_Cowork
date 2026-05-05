@@ -6,6 +6,7 @@ import { useChatStore } from '../stores/chatStore'
 import { useConfigStore } from '../stores/configStore'
 import { useCoworkStore } from '../stores/coworkStore'
 import { useEngineStore } from '../stores/engineStore'
+import { useProjectStore } from '../stores/projectStore'
 
 const navigateMock = vi.fn()
 
@@ -54,6 +55,11 @@ describe('LeftSidebar', () => {
       plugins: [
         { id: 'git', name: 'Git', domain: 'custom', enabled: true, skills: [] },
       ],
+    })
+
+    useProjectStore.setState({
+      projects: [],
+      activeProjectId: null,
     })
 
     useEngineStore.setState({
