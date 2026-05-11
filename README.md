@@ -32,17 +32,34 @@ Open_Cowork ist eine Windows-Desktop-Anwendung (Tauri + React + Rust) fuer agent
 
 ## Schnellstart
 
-1. Desktop-EXE bauen:
+1. One-Click-Installer lokal bauen:
 
 ```powershell
 cd app
 npm install
-npm run tauri build
+npm run installer
 ```
 
-2. Build-Artefakte finden:
+2. Fertige Setup-Datei finden:
 
-`app/src-tauri/target/release/bundle/`
+`dist-installers/Open-Cowork-Setup.exe`
+
+Der originale Tauri/NSIS-Build liegt weiterhin unter:
+
+`app/src-tauri/target/release/bundle/nsis/`
+
+## Installer-Releases
+
+Der Workflow `.github/workflows/windows-installer.yml` baut den Windows-Installer automatisch bei jedem Push nach `main` und stellt ihn als GitHub-Actions-Artifact bereit.
+
+Fuer einen downloadbaren GitHub-Release wie bei typischen Windows-Apps:
+
+```powershell
+git tag v0.1.1
+git push origin v0.1.1
+```
+
+Der Workflow erstellt dann ein GitHub Release und haengt die Setup-EXE direkt daran.
 
 ## Tests
 

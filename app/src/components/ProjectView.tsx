@@ -6,6 +6,7 @@ import {
   FilePlus,
   FolderOpen,
   FolderPlus,
+  Link2,
   MessageSquarePlus,
   Plus,
   Trash2,
@@ -57,6 +58,7 @@ export default function ProjectView() {
   const threads = useChatStore((s) => s.threads)
   const setActiveThread = useChatStore((s) => s.setActiveThread)
   const addThread = useChatStore((s) => s.addThread)
+  const deleteThread = useChatStore((s) => s.deleteThread)
   const setActiveMode = useUiStore((s) => s.setActiveMode)
   const ollama = useConfigStore((s) => s.ollama)
   const availableModels = useConfigStore((s) => s.availableModels)
@@ -69,6 +71,7 @@ export default function ProjectView() {
     activeProjectId,
     addProject,
     renameProject,
+    updateProjectInstructions,
     deleteProject,
     setActiveProject,
     addResources,
@@ -78,7 +81,10 @@ export default function ProjectView() {
     detachThread,
   } = useProjectStore()
   const [titleDraft, setTitleDraft] = useState('')
+  const [instructionsDraft, setInstructionsDraft] = useState('')
+  const [linkDraft, setLinkDraft] = useState('')
   const [dropActive, setDropActive] = useState(false)
+  const [deletePromptOpen, setDeletePromptOpen] = useState(false)
 
   const activeProject = useMemo(
     () => projects.find((project) => project.id === activeProjectId) ?? projects[0] ?? null,
@@ -118,7 +124,10 @@ export default function ProjectView() {
 
   useEffect(() => {
     setTitleDraft(activeProject?.title ?? '')
-  }, [activeProject?.id, activeProject?.title])
+    setInstructionsDraft(activeProject?.instructions ?? '')
+    setLinkDraft('')
+    setDeletePromptOpen(false)
+  }, [activeProject?.id, activeProject?.instructions, activeProject?.title])
 
   const handleCreateProject = () => {
     const id = addProject(`Projekt ${projects.length + 1}`)
@@ -128,6 +137,11 @@ export default function ProjectView() {
   const commitTitle = () => {
     if (!activeProject) return
     renameProject(activeProject.id, titleDraft)
+  }
+
+  const commitInstructions = () => {
+    if (!activeProject || instructionsDraft === activeProject.instructions) return
+    updateProjectInstructions(activeProject.id, instructionsDraft)
   }
 
   const handleTitleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
@@ -161,6 +175,14 @@ export default function ProjectView() {
     addResources(activeProject.id, paths.map((path) => ({ path, kind: 'folder' })))
   }
 
+  const handleAddLink = () => {
+    if (!activeProject) return
+    const url = linkDraft.trim()
+    if (!/^https?:\/\/\S+$/i.test(url)) return
+    addResources(activeProject.id, [{ path: url, kind: 'link', label: url }])
+    setLinkDraft('')
+  }
+
   const handleOpenThread = (threadId: string) => {
     setActiveMode('work')
     setActiveThread(threadId)
@@ -174,7 +196,17 @@ export default function ProjectView() {
     handleOpenThread(threadId)
   }
 
+  const handleDeleteProject = (deleteThreads: boolean) => {
+    if (!activeProject) return
+    const deletedThreadIds = deleteProject(activeProject.id, { deleteThreads })
+    if (deleteThreads) {
+      deletedThreadIds.forEach((threadId) => deleteThread(threadId))
+    }
+    setDeletePromptOpen(false)
+  }
+
   const handleThreadDragStart = (event: DragEvent, threadId: string) => {
+    event.stopPropagation()
     event.dataTransfer.setData(THREAD_DND_MIME, threadId)
     event.dataTransfer.setData('text/plain', `thread:${threadId}`)
     event.dataTransfer.effectAllowed = 'move'
@@ -197,8 +229,16 @@ export default function ProjectView() {
     }
 
     const fromFiles = extractFileAttachmentsFromFileList(event.dataTransfer.files)
-    const fromUriList = extractFileAttachmentsFromUriList(event.dataTransfer.getData('text/uri-list') || '')
-    const resources = [...fromFiles, ...fromUriList]
+    const rawUriList = event.dataTransfer.getData('text/uri-list') || ''
+    const fromUriList = extractFileAttachmentsFromUriList(rawUriList)
+    const droppedLinks = [
+      ...rawUriList.split(/\r?\n/),
+      event.dataTransfer.getData('text/plain') || '',
+    ]
+      .map((value) => value.trim())
+      .filter((value) => /^https?:\/\/\S+$/i.test(value))
+      .map((path) => ({ path, kind: 'link' as const, label: path }))
+    const resources = [...fromFiles, ...fromUriList, ...droppedLinks]
     if (resources.length > 0) {
       addResources(targetProjectId, resources.map((resource) => ({
         path: resource.path,
@@ -270,6 +310,17 @@ export default function ProjectView() {
                   onKeyDown={handleTitleKeyDown}
                 />
               </div>
+              <div className="project-instructions-editor">
+                <label htmlFor="project-instructions">Projektanweisungen</label>
+                <textarea
+                  id="project-instructions"
+                  value={instructionsDraft}
+                  rows={3}
+                  onChange={(event) => setInstructionsDraft(event.currentTarget.value)}
+                  onBlur={commitInstructions}
+                  placeholder="Ergaenzende Anweisungen fuer Chats in diesem Projekt..."
+                />
+              </div>
               <div className="project-detail-actions">
                 <button type="button" className="btn-sm project-icon-button" onClick={handleNewProjectChat}>
                   <MessageSquarePlus size={14} aria-hidden="true" />
@@ -286,13 +337,33 @@ export default function ProjectView() {
                 <button
                   type="button"
                   className="btn-sm project-icon-button danger"
-                  onClick={() => deleteProject(activeProject.id)}
+                  onClick={() => setDeletePromptOpen(true)}
                   title="Projekt loeschen"
                 >
                   <Trash2 size={14} aria-hidden="true" />
                 </button>
               </div>
             </header>
+
+            {deletePromptOpen && (
+              <div className="project-delete-panel" role="dialog" aria-label="Projekt loeschen">
+                <div>
+                  <strong>Projekt loeschen</strong>
+                  <p>Waehle, ob die zugeordneten Chats erhalten bleiben oder ebenfalls geloescht werden.</p>
+                </div>
+                <div className="project-delete-actions">
+                  <button type="button" className="btn-sm" onClick={() => handleDeleteProject(false)}>
+                    Nur Projekt loesen
+                  </button>
+                  <button type="button" className="btn-sm project-icon-button danger" onClick={() => handleDeleteProject(true)}>
+                    Projekt und Chats loeschen
+                  </button>
+                  <button type="button" className="btn-sm" onClick={() => setDeletePromptOpen(false)}>
+                    Abbrechen
+                  </button>
+                </div>
+              </div>
+            )}
 
             <section
               className={`project-drop-zone${dropActive ? ' active' : ''}`}
@@ -313,6 +384,23 @@ export default function ProjectView() {
                   <h2>Projektquellen</h2>
                   <span>{activeProject.resources.filter((resource) => resource.enabled).length} aktiv</span>
                 </div>
+                <div className="project-link-add">
+                  <Link2 size={15} aria-hidden="true" />
+                  <input
+                    value={linkDraft}
+                    onChange={(event) => setLinkDraft(event.currentTarget.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') {
+                        event.preventDefault()
+                        handleAddLink()
+                      }
+                    }}
+                    placeholder="https://..."
+                  />
+                  <button type="button" className="btn-sm" onClick={handleAddLink} disabled={!/^https?:\/\/\S+$/i.test(linkDraft.trim())}>
+                    Link
+                  </button>
+                </div>
                 <div className="project-resource-list">
                   {activeProject.resources.map((resource) => (
                     <div key={resource.id} className={`project-resource-item${resource.enabled ? '' : ' disabled'}`}>
@@ -322,7 +410,9 @@ export default function ProjectView() {
                           checked={resource.enabled}
                           onChange={(event) => setResourceEnabled(activeProject.id, resource.id, event.currentTarget.checked)}
                         />
-                        <span className="project-resource-kind">{resource.kind === 'folder' ? 'Ordner' : 'Datei'}</span>
+                        <span className="project-resource-kind">
+                          {resource.kind === 'folder' ? 'Ordner' : resource.kind === 'link' ? 'Link' : 'Datei'}
+                        </span>
                         <span className="project-resource-name" title={resource.path}>
                           {resource.label ?? getPathName(resource.path)}
                         </span>
@@ -357,7 +447,13 @@ export default function ProjectView() {
                       draggable
                       onDragStart={(event) => handleThreadDragStart(event, thread.id)}
                     >
-                      <button type="button" className="project-thread-main" onClick={() => handleOpenThread(thread.id)}>
+                      <button
+                        type="button"
+                        className="project-thread-main"
+                        draggable
+                        onDragStart={(event) => handleThreadDragStart(event, thread.id)}
+                        onClick={() => handleOpenThread(thread.id)}
+                      >
                         <span>{thread.title}</span>
                         <small>{thread.messages.filter((message) => message.role !== 'system').length} Nachrichten / {formatDate(thread.updatedAt)}</small>
                       </button>
@@ -392,7 +488,13 @@ export default function ProjectView() {
                         draggable
                         onDragStart={(event) => handleThreadDragStart(event, thread.id)}
                       >
-                        <button type="button" className="project-thread-main" onClick={() => handleOpenThread(thread.id)}>
+                        <button
+                          type="button"
+                          className="project-thread-main"
+                          draggable
+                          onDragStart={(event) => handleThreadDragStart(event, thread.id)}
+                          onClick={() => handleOpenThread(thread.id)}
+                        >
                           <span>{thread.title}</span>
                           <small>
                             {sourceProjectTitle ? `Aus ${sourceProjectTitle}` : 'Nicht in diesem Projekt'} / {formatDate(thread.updatedAt)}

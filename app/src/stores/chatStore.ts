@@ -4,6 +4,7 @@ import { hydrateStoredMessage, serializeChatMessageForStorage } from '../utils/s
 import type { ChatAttachment } from '../utils/chatAttachments'
 import { normalizeChatProviderSelection, type ChatProviderSelection } from '../utils/chatProvider'
 import type { PermissionMode } from '../engine/types/tool'
+import { useProjectStore } from './projectStore'
 
 export type ChatMessage = {
   id: string
@@ -91,6 +92,8 @@ export type ChatThread = {
   updatedAt: number
   providerSettings?: ChatProviderSelection
   permissionConfig?: PermissionConfig
+  runner?: 'crew' | 'model'
+  crewId?: string | null
 }
 
 type ChatState = {
@@ -100,7 +103,7 @@ type ChatState = {
   busy: boolean
   error: string | null
   loadFromDb: () => Promise<void>
-  addThread: (title: string, providerSettings?: ChatProviderSelection) => string
+  addThread: (title: string, providerSettings?: ChatProviderSelection, permissionConfig?: PermissionConfig, runner?: 'crew' | 'model', crewId?: string | null) => string
   hydrateThread: (thread: ChatThread) => void
   setActiveThread: (id: string | null) => void
   setThreadProviderSettings: (threadId: string, providerSettings?: ChatProviderSelection) => void
@@ -280,7 +283,7 @@ export const useChatStore = create<ChatState>()((set) => ({
     }
   },
 
-  addThread: (title: string, providerSettings?: ChatProviderSelection, permissionConfig?: PermissionConfig) => {
+  addThread: (title: string, providerSettings?: ChatProviderSelection, permissionConfig?: PermissionConfig, runner?: 'crew' | 'model', crewId?: string | null) => {
     const id = generateId()
     const now = Date.now()
     const normalizedProviderSettings = normalizeChatProviderSelection(providerSettings)
@@ -298,6 +301,8 @@ export const useChatStore = create<ChatState>()((set) => ({
       updatedAt: now,
       providerSettings: normalizedProviderSettings,
       permissionConfig,
+      runner,
+      crewId,
     }
     set((state) => ({
       threads: [thread, ...state.threads],
@@ -363,6 +368,8 @@ export const useChatStore = create<ChatState>()((set) => ({
       messages: Array.isArray(thread.messages) ? thread.messages : [],
       updatedAt: thread.updatedAt || Date.now(),
       providerSettings: normalizeChatProviderSelection(thread.providerSettings),
+      runner: thread.runner === 'crew' || thread.runner === 'model' ? thread.runner : undefined,
+      crewId: thread.crewId ?? undefined,
     }
     set((state) => {
       const remaining = state.threads.filter((item) => item.id !== normalized.id)
@@ -470,6 +477,7 @@ export const useChatStore = create<ChatState>()((set) => ({
       threads: state.threads.filter((t) => t.id !== id),
       activeThreadId: state.activeThreadId === id ? null : state.activeThreadId,
     }))
+    useProjectStore.getState().detachThreadFromAll(id)
     void persistInvoke('db_delete_thread', { id }, 'db_delete_thread')
   },
 

@@ -4,6 +4,7 @@ app/node_modules/
 app/dist/
 app/coverage/
 app/.vite/
+dist-installers/
 
 # Rust
 app/src-tauri/target/

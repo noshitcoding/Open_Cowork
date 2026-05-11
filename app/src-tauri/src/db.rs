@@ -8,6 +8,47 @@ pub struct Database {
     conn: Mutex<Connection>,
 }
 
+fn table_has_column(conn: &Connection, table: &str, column: &str) -> SqlResult<bool> {
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+    let columns = stmt.query_map([], |row| row.get::<_, String>(1))?;
+
+    for name in columns {
+        if name? == column {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
+fn add_column_if_missing(conn: &Connection, table: &str, column: &str, definition: &str) -> SqlResult<()> {
+    if !table_has_column(conn, table, column)? {
+        conn.execute(&format!("ALTER TABLE {table} ADD COLUMN {definition}"), [])?;
+    }
+
+    Ok(())
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectRow {
+    pub id: String,
+    pub title: String,
+    pub instructions: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectResourceRow {
+    pub id: String,
+    pub project_id: String,
+    pub kind: String,
+    pub path: String,
+    pub label: Option<String>,
+    pub enabled: bool,
+    pub added_at: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryEntryRow {
     pub id: String,
@@ -117,7 +158,10 @@ pub struct PersonalityRow {
     pub id: String,
     pub name: String,
     pub description: String,
+    pub role: String,
+    pub goal: String,
     pub system_prompt: String,
+    pub skills_markdown: String,
     pub temperature: Option<f64>,
     pub model_override: Option<String>,
     pub icon: Option<String>,
@@ -715,7 +759,10 @@ impl Database {
                     id TEXT PRIMARY KEY,
                     name TEXT NOT NULL UNIQUE,
                     description TEXT NOT NULL,
+                    role TEXT NOT NULL DEFAULT 'custom',
+                    goal TEXT NOT NULL DEFAULT '',
                     system_prompt TEXT NOT NULL,
+                    skills_markdown TEXT NOT NULL DEFAULT '',
                     temperature REAL,
                     model_override TEXT,
                     icon TEXT,
@@ -1079,7 +1126,266 @@ impl Database {
             )?;
         }
 
+        if version < 18 {
+            add_column_if_missing(&conn, "agent_personalities", "role", "role TEXT NOT NULL DEFAULT 'custom'")?;
+            add_column_if_missing(&conn, "agent_personalities", "goal", "goal TEXT NOT NULL DEFAULT ''")?;
+            add_column_if_missing(
+                &conn,
+                "agent_personalities",
+                "skills_markdown",
+                "skills_markdown TEXT NOT NULL DEFAULT ''",
+            )?;
+            conn.execute(
+                "UPDATE agent_personalities
+                 SET goal = description
+                 WHERE TRIM(COALESCE(goal, '')) = ''",
+                [],
+            )?;
+            conn.execute("UPDATE schema_version SET version = 18", [])?;
+        }
+
+        if version < 19 {
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS projects (
+                    id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    instructions TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS project_resources (
+                    id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL,
+                    kind TEXT NOT NULL CHECK(kind IN ('file', 'folder', 'link')),
+                    path TEXT NOT NULL,
+                    label TEXT,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    added_at TEXT NOT NULL,
+                    FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE,
+                    UNIQUE(project_id, kind, path)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_project_resources_project
+                    ON project_resources(project_id, added_at DESC);
+
+                CREATE TABLE IF NOT EXISTS project_threads (
+                    project_id TEXT NOT NULL,
+                    thread_id TEXT NOT NULL UNIQUE,
+                    added_at TEXT NOT NULL,
+                    PRIMARY KEY(project_id, thread_id),
+                    FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_project_threads_project
+                    ON project_threads(project_id, added_at DESC);
+
+                UPDATE schema_version SET version = 19;",
+            )?;
+        }
+
         Ok(())
+    }
+
+    // -- Projects --
+
+    pub fn upsert_project(
+        &self,
+        id: &str,
+        title: &str,
+        instructions: &str,
+        created_at: &str,
+        updated_at: &str,
+    ) -> SqlResult<()> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| rusqlite::Error::InvalidQuery)?;
+        conn.execute(
+            "INSERT INTO projects (id, title, instructions, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(id) DO UPDATE SET
+               title = excluded.title,
+               instructions = excluded.instructions,
+               updated_at = excluded.updated_at",
+            params![id, title, instructions, created_at, updated_at],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_projects(&self) -> SqlResult<Vec<ProjectRow>> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let mut stmt = conn.prepare(
+            "SELECT id, title, instructions, created_at, updated_at
+             FROM projects ORDER BY updated_at DESC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(ProjectRow {
+                id: row.get(0)?,
+                title: row.get(1)?,
+                instructions: row.get(2)?,
+                created_at: row.get(3)?,
+                updated_at: row.get(4)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    pub fn delete_project(&self, project_id: &str, delete_threads: bool) -> SqlResult<Vec<String>> {
+        let mut conn = self
+            .conn
+            .lock()
+            .map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let tx = conn.transaction()?;
+        let thread_ids = {
+            let mut stmt = tx.prepare(
+                "SELECT thread_id FROM project_threads WHERE project_id = ?1 ORDER BY added_at DESC",
+            )?;
+            let rows = stmt.query_map(params![project_id], |row| row.get::<_, String>(0))?;
+            rows.collect::<SqlResult<Vec<_>>>()?
+        };
+
+        tx.execute("DELETE FROM projects WHERE id = ?1", params![project_id])?;
+
+        if delete_threads {
+            for thread_id in &thread_ids {
+                tx.execute("DELETE FROM chat_threads WHERE id = ?1", params![thread_id])?;
+            }
+        }
+
+        tx.commit()?;
+        Ok(if delete_threads { thread_ids } else { Vec::new() })
+    }
+
+    pub fn upsert_project_resource(
+        &self,
+        id: &str,
+        project_id: &str,
+        kind: &str,
+        path: &str,
+        label: Option<&str>,
+        enabled: bool,
+        added_at: &str,
+    ) -> SqlResult<()> {
+        if !matches!(kind, "file" | "folder" | "link") {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| rusqlite::Error::InvalidQuery)?;
+        conn.execute(
+            "INSERT INTO project_resources (id, project_id, kind, path, label, enabled, added_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT(project_id, kind, path) DO UPDATE SET
+               label = excluded.label,
+               enabled = excluded.enabled",
+            params![id, project_id, kind, path, label, if enabled { 1 } else { 0 }, added_at],
+        )?;
+        conn.execute(
+            "UPDATE projects SET updated_at = datetime('now') WHERE id = ?1",
+            params![project_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_project_resources(&self) -> SqlResult<Vec<ProjectResourceRow>> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let mut stmt = conn.prepare(
+            "SELECT id, project_id, kind, path, label, enabled, added_at
+             FROM project_resources ORDER BY added_at DESC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(ProjectResourceRow {
+                id: row.get(0)?,
+                project_id: row.get(1)?,
+                kind: row.get(2)?,
+                path: row.get(3)?,
+                label: row.get(4)?,
+                enabled: row.get::<_, i64>(5)? != 0,
+                added_at: row.get(6)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    pub fn delete_project_resource(&self, resource_id: &str) -> SqlResult<()> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| rusqlite::Error::InvalidQuery)?;
+        conn.execute("DELETE FROM project_resources WHERE id = ?1", params![resource_id])?;
+        Ok(())
+    }
+
+    pub fn set_project_resource_enabled(&self, resource_id: &str, enabled: bool) -> SqlResult<()> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| rusqlite::Error::InvalidQuery)?;
+        conn.execute(
+            "UPDATE project_resources SET enabled = ?2 WHERE id = ?1",
+            params![resource_id, if enabled { 1 } else { 0 }],
+        )?;
+        Ok(())
+    }
+
+    pub fn attach_project_thread(&self, project_id: &str, thread_id: &str) -> SqlResult<()> {
+        let mut conn = self
+            .conn
+            .lock()
+            .map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let tx = conn.transaction()?;
+        tx.execute(
+            "DELETE FROM project_threads WHERE thread_id = ?1",
+            params![thread_id],
+        )?;
+        tx.execute(
+            "INSERT INTO project_threads (project_id, thread_id, added_at)
+             VALUES (?1, ?2, datetime('now'))",
+            params![project_id, thread_id],
+        )?;
+        tx.execute(
+            "UPDATE projects SET updated_at = datetime('now') WHERE id = ?1",
+            params![project_id],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn detach_project_thread(&self, project_id: &str, thread_id: &str) -> SqlResult<()> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| rusqlite::Error::InvalidQuery)?;
+        conn.execute(
+            "DELETE FROM project_threads WHERE project_id = ?1 AND thread_id = ?2",
+            params![project_id, thread_id],
+        )?;
+        conn.execute(
+            "UPDATE projects SET updated_at = datetime('now') WHERE id = ?1",
+            params![project_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_project_threads(&self) -> SqlResult<Vec<(String, String)>> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let mut stmt = conn.prepare(
+            "SELECT project_id, thread_id FROM project_threads ORDER BY added_at DESC",
+        )?;
+        let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        rows.collect()
     }
 
     // -- Chat Threads --
@@ -1151,11 +1457,28 @@ impl Database {
         Ok(())
     }
 
+    pub fn update_thread_permission_config(
+        &self,
+        id: &str,
+        permission_config_json: Option<&str>,
+    ) -> SqlResult<()> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| rusqlite::Error::InvalidQuery)?;
+        conn.execute(
+            "UPDATE chat_threads SET permission_config_json = ?2, updated_at = datetime('now') WHERE id = ?1",
+            params![id, permission_config_json],
+        )?;
+        Ok(())
+    }
+
     pub fn delete_thread(&self, id: &str) -> SqlResult<()> {
         let conn = self
             .conn
             .lock()
             .map_err(|_| rusqlite::Error::InvalidQuery)?;
+        conn.execute("DELETE FROM project_threads WHERE thread_id = ?1", params![id])?;
         conn.execute("DELETE FROM chat_threads WHERE id = ?1", params![id])?;
         Ok(())
     }
@@ -4106,7 +4429,10 @@ impl Database {
         id: &str,
         name: &str,
         description: &str,
+        role: &str,
+        goal: &str,
         system_prompt: &str,
+        skills_markdown: &str,
         temperature: Option<f64>,
         model_override: Option<&str>,
         icon: Option<&str>,
@@ -4120,17 +4446,33 @@ impl Database {
             conn.execute("UPDATE agent_personalities SET is_default = 0", [])?;
         }
         conn.execute(
-            "INSERT INTO agent_personalities (id, name, description, system_prompt, temperature, model_override, icon, is_default, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, datetime('now'), datetime('now'))
-             ON CONFLICT(name) DO UPDATE SET
+            "INSERT INTO agent_personalities (id, name, description, role, goal, system_prompt, skills_markdown, temperature, model_override, icon, is_default, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, datetime('now'), datetime('now'))
+             ON CONFLICT(id) DO UPDATE SET
+                name = excluded.name,
                 description = excluded.description,
+                role = excluded.role,
+                goal = excluded.goal,
                 system_prompt = excluded.system_prompt,
+                skills_markdown = excluded.skills_markdown,
                 temperature = excluded.temperature,
                 model_override = excluded.model_override,
                 icon = excluded.icon,
                 is_default = excluded.is_default,
                 updated_at = datetime('now')",
-            params![id, name, description, system_prompt, temperature, model_override, icon, is_default as i32],
+            params![
+                id,
+                name,
+                description,
+                role,
+                goal,
+                system_prompt,
+                skills_markdown,
+                temperature,
+                model_override,
+                icon,
+                is_default as i32
+            ],
         )?;
         Ok(())
     }
@@ -4141,22 +4483,25 @@ impl Database {
             .lock()
             .map_err(|_| rusqlite::Error::InvalidQuery)?;
         let mut stmt = conn.prepare(
-            "SELECT id, name, description, system_prompt, temperature, model_override, icon, is_default, created_at, updated_at
+            "SELECT id, name, description, role, goal, system_prompt, skills_markdown, temperature, model_override, icon, is_default, created_at, updated_at
              FROM agent_personalities ORDER BY name"
         )?;
         let rows = stmt.query_map([], |row| {
-            let is_default: i32 = row.get(7)?;
+            let is_default: i32 = row.get(10)?;
             Ok(PersonalityRow {
                 id: row.get(0)?,
                 name: row.get(1)?,
                 description: row.get(2)?,
-                system_prompt: row.get(3)?,
-                temperature: row.get(4)?,
-                model_override: row.get(5)?,
-                icon: row.get(6)?,
+                role: row.get(3)?,
+                goal: row.get(4)?,
+                system_prompt: row.get(5)?,
+                skills_markdown: row.get(6)?,
+                temperature: row.get(7)?,
+                model_override: row.get(8)?,
+                icon: row.get(9)?,
                 is_default: is_default != 0,
-                created_at: row.get(8)?,
-                updated_at: row.get(9)?,
+                created_at: row.get(11)?,
+                updated_at: row.get(12)?,
             })
         })?;
         rows.collect()
@@ -4554,6 +4899,72 @@ mod tests {
         db.delete_thread("t1").unwrap();
         let msgs = db.list_messages("t1").unwrap();
         assert_eq!(msgs.len(), 0);
+    }
+
+    #[test]
+    fn projects_resources_and_threads_round_trip() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_thread("t1", "Thread", "2025-01-01T00:00:00", None, None)
+            .unwrap();
+        db.upsert_project(
+            "p1",
+            "Kundenanalyse",
+            "Antworte knapp.",
+            "2026-05-11T09:00:00Z",
+            "2026-05-11T09:00:00Z",
+        )
+        .unwrap();
+        db.upsert_project_resource(
+            "r1",
+            "p1",
+            "file",
+            "C:/docs/spec.md",
+            None,
+            true,
+            "2026-05-11T09:01:00Z",
+        )
+        .unwrap();
+        db.upsert_project_resource(
+            "r2",
+            "p1",
+            "link",
+            "https://example.com",
+            Some("Example"),
+            false,
+            "2026-05-11T09:02:00Z",
+        )
+        .unwrap();
+        db.attach_project_thread("p1", "t1").unwrap();
+
+        let projects = db.list_projects().unwrap();
+        assert_eq!(projects.len(), 1);
+        assert_eq!(projects[0].instructions, "Antworte knapp.");
+
+        let resources = db.list_project_resources().unwrap();
+        assert_eq!(resources.len(), 2);
+        assert!(resources.iter().any(|resource| resource.kind == "link" && !resource.enabled));
+
+        let threads = db.list_project_threads().unwrap();
+        assert_eq!(threads, vec![("p1".to_string(), "t1".to_string())]);
+    }
+
+    #[test]
+    fn project_thread_assignment_is_exclusive_and_delete_can_remove_threads() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_thread("t1", "Thread", "2025-01-01T00:00:00", None, None)
+            .unwrap();
+        db.upsert_project("p1", "Alpha", "", "2026-05-11T09:00:00Z", "2026-05-11T09:00:00Z")
+            .unwrap();
+        db.upsert_project("p2", "Beta", "", "2026-05-11T09:00:00Z", "2026-05-11T09:00:00Z")
+            .unwrap();
+
+        db.attach_project_thread("p1", "t1").unwrap();
+        db.attach_project_thread("p2", "t1").unwrap();
+        assert_eq!(db.list_project_threads().unwrap(), vec![("p2".to_string(), "t1".to_string())]);
+
+        let deleted_threads = db.delete_project("p2", true).unwrap();
+        assert_eq!(deleted_threads, vec!["t1".to_string()]);
+        assert!(db.list_threads().unwrap().is_empty());
     }
 
     #[test]

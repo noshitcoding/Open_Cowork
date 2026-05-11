@@ -6,6 +6,7 @@ import type { LiveToolCall, LiveToolCallStatus } from '../stores/chatStore'
 import { CheckCircle2, Clock3, Loader2, ShieldAlert, Wrench, XCircle } from 'lucide-react'
 import { useConfigStore } from '../stores/configStore'
 import { useTaskStore } from '../stores/taskStore'
+import { useWorkTasksStore } from '../stores/workTasksStore'
 import { useLogStore } from '../stores/logStore'
 import { useCoworkStore, type ClaudePermissionMode } from '../stores/coworkStore'
 import { useMemoryStore } from '../stores/memoryStore'
@@ -18,8 +19,11 @@ import { useEngineStore } from '../stores/engineStore'
 import { useUiStore } from '../stores/uiStore'
 import {
   getEnabledProjectAttachments,
+  getEnabledProjectLinks,
   getProjectForThread,
   useProjectStore,
+  type Project,
+  type ProjectResource,
 } from '../stores/projectStore'
 import type { ContentBlock, ToolUIRequest } from '../engine'
 import type { ToolProgressData } from '../engine/types'
@@ -77,6 +81,49 @@ type WebFetchResponse = {
   title: string | null
   content: string
   truncated: boolean
+}
+
+export async function buildProjectLinkPromptContext(
+  links: ProjectResource[],
+): Promise<{ context: string; notice: string | null }> {
+  if (links.length === 0) return { context: '', notice: null }
+
+  const lines: string[] = ['Manuell abgerufene Projektlinks:']
+  const failures: string[] = []
+
+  for (const link of links) {
+    try {
+      const response = await safeInvoke<WebFetchResponse>('web_fetch_url', {
+        request: { url: link.path, maxChars: 4000 },
+      })
+      if (!response.ok) {
+        failures.push(`${link.label ?? link.path}: HTTP ${response.status}`)
+        continue
+      }
+      lines.push(`Quelle: ${link.label ?? response.title ?? link.path}`)
+      lines.push(`URL: ${response.url}`)
+      if (response.title) lines.push(`Titel: ${response.title}`)
+      lines.push(response.truncated ? `${response.content}\n[gekuerzt]` : response.content)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      failures.push(`${link.label ?? link.path}: ${message}`)
+    }
+  }
+
+  return {
+    context: lines.length > 1 ? lines.join('\n\n') : '',
+    notice: failures.length > 0
+      ? `Nicht alle Projektlinks konnten abgerufen werden: ${failures.join('; ')}`
+      : null,
+  }
+}
+
+export function buildProjectInstructionsPromptContext(
+  project: Pick<Project, 'title' | 'instructions'> | null | undefined,
+): string {
+  const instructions = project?.instructions.trim()
+  if (!project || !instructions) return ''
+  return `Projektanweisungen fuer "${project.title}":\n${instructions}`
 }
 
 type McpCallResponse = {
@@ -708,6 +755,7 @@ function LiveToolCalls({ calls }: { calls?: LiveToolCall[] }) {
 export default function CoworkView() {
   const [attachments, setAttachments] = useState<ChatAttachment[]>([])
   const [attachmentNotice, setAttachmentNotice] = useState<string | null>(null)
+  const [includeProjectLinks, setIncludeProjectLinks] = useState(false)
   const [dragOverInput, setDragOverInput] = useState(false)
   const [promptHistory, setPromptHistory] = useState<string[]>([])
   const [historyIndex, setHistoryIndex] = useState(-1)
@@ -788,6 +836,25 @@ export default function CoworkView() {
   const notifiedAskUserQuestionRef = useRef<string | null>(null)
   const emptyThreadBootstrapRef = useRef<string | null>(null)
   const activeMessages = Array.isArray(activeThread?.messages) ? activeThread.messages : []
+  const workTasks = useWorkTasksStore((s) => s.tasks)
+  const [collapsedMessageIds, setCollapsedMessageIds] = useState<Set<string>>(new Set())
+  const isTaskChat = useMemo(() => {
+    if (!activeThread?.id) return false
+    return workTasks.some((task) => task.threadId === activeThread.id)
+  }, [activeThread?.id, workTasks])
+
+  const toggleCollapse = (messageId: string) => {
+    setCollapsedMessageIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(messageId)) {
+        next.delete(messageId)
+      } else {
+        next.add(messageId)
+      }
+      return next
+    })
+  }
+
   const lastActiveMessage = activeMessages[activeMessages.length - 1]
   const activeProject = useMemo(
     () => getProjectForThread(projects, activeThreadId),
@@ -797,6 +864,15 @@ export default function CoworkView() {
     () => getEnabledProjectAttachments(activeProject),
     [activeProject],
   )
+  const activeProjectLinks = useMemo(
+    () => getEnabledProjectLinks(activeProject),
+    [activeProject],
+  )
+
+  useEffect(() => {
+    setIncludeProjectLinks(false)
+  }, [activeProject?.id])
+
   const providerContext = useMemo(
     () => ({
       ollama,
@@ -895,6 +971,36 @@ export default function CoworkView() {
       }),
     })
   }, [activeMessages, activeThreadId, currentToolUI, updateMessage])
+
+  // Automatische Titelgenerierung: Wenn der Thread noch "Neuer Chat" heißt und eine User-Nachricht hinzugefügt wird
+  useEffect(() => {
+    if (!activeThreadId || !activeThread) return
+    if (activeThread.title !== 'Neuer Chat') return
+
+    const userMessages = activeThread.messages.filter(m => m.role === 'user')
+    if (userMessages.length === 0) return // Keine User-Nachricht vorhanden
+
+    // Nur beim ersten Mal umbenennen (nach dem ersten User-Message)
+    // Prüfe ob der Titel noch "Neuer Chat" ist (d.h. noch nicht umbenannt wurde)
+    const firstUserMessage = userMessages[0]
+    const content = typeof firstUserMessage.content === 'string' ? firstUserMessage.content : ''
+    if (!content.trim()) return
+
+    const newTitle = content.length > 50 ? content.slice(0, 50) + '...' : content
+
+    // Titel über den store und DB aktualisieren
+    const updatedThreads = useChatStore.getState().threads.map(t =>
+      t.id === activeThreadId ? { ...t, title: newTitle, updatedAt: Date.now() } : t
+    )
+    useChatStore.setState({ threads: updatedThreads })
+
+    // Titel in der Datenbank aktualisieren
+    void persistInvoke('db_save_thread', {
+      id: activeThreadId,
+      title: newTitle,
+      createdAt: new Date(activeThread.createdAt).toISOString()
+    }, 'db_save_thread update title')
+  }, [activeThreadId, activeThread?.messages.length]) // Ausführen wenn Thread oder Nachrichtenanzahl sich ändert
 
   const enabledPluginSkills = useMemo<EnabledPluginSkill[]>(() => {
     return plugins
@@ -1146,7 +1252,9 @@ export default function CoworkView() {
     const hasDraftAttachments = Array.isArray(draftAttachments) && draftAttachments.length > 0
     const projectContextAttachments = activeProjectAttachments
     const hasProjectAttachments = projectContextAttachments.length > 0
-    if ((!text && !hasDraftAttachments && !hasProjectAttachments) || busy) return
+    const projectLinksToFetch = includeProjectLinks ? activeProjectLinks : []
+    const hasProjectLinksToFetch = projectLinksToFetch.length > 0
+    if ((!text && !hasDraftAttachments && !hasProjectAttachments && !hasProjectLinksToFetch) || busy) return
     const fallbackAttachmentPrompt = 'Bitte analysiere die angehaengten Dateien/Ordner und fuehre die Aufgabe aus.'
     const effectiveInput = text || fallbackAttachmentPrompt
     const replyingToAskUser = !!askUserQuestion
@@ -1167,23 +1275,6 @@ export default function CoworkView() {
     if (!threadId) {
       threadId = addThread(effectiveInput.slice(0, 50), createChatProviderSelection(providerState))
       setActiveThread(threadId)
-    }
-
-    // Automatische Titelgenerierung: Wenn der Thread noch "Neuer Chat" heißt und eine erste Nachricht gesendet wird
-    const currentThread = useChatStore.getState().threads.find(t => t.id === threadId)
-    if (currentThread && currentThread.title === 'Neuer Chat' && currentThread.messages.filter(m => m.role === 'user').length === 0) {
-      const newTitle = effectiveInput.length > 50 ? effectiveInput.slice(0, 50) + '...' : effectiveInput
-      // Titel über den store und DB aktualisieren
-      const updatedThreads = useChatStore.getState().threads.map(t => 
-        t.id === threadId ? { ...t, title: newTitle, updatedAt: Date.now() } : t
-      )
-      useChatStore.setState({ threads: updatedThreads })
-      // Titel in der Datenbank aktualisieren
-      void persistInvoke('db_save_thread', {
-        id: threadId,
-        title: newTitle,
-        createdAt: new Date(currentThread.createdAt).toISOString()
-      }, 'db_save_thread update title')
     }
 
     const slash = parseSlashCommand(text)
@@ -2431,7 +2522,9 @@ export default function CoworkView() {
       ? 'Maximal 25 Projekt- und Nachrichtenanhaenge pro Anfrage erreicht.'
       : null
     const attachmentBuild = await buildAttachmentPromptContext(mergedForSend.next, rawPrompt)
+    const projectLinkBuild = await buildProjectLinkPromptContext(projectLinksToFetch)
     const attachmentContext = attachmentBuild.context
+    const projectInstructionsContext = buildProjectInstructionsPromptContext(activeProject)
     const shouldRunInPlanMode = slash?.command === 'plan' || skillPlanMode || claudePlanMode
     const planWrappedPrompt = shouldRunInPlanMode
       ? `Erzeuge nur einen klaren, nummerierten Plan in Deutsch. Fuehre nichts aus.\n\nAufgabe:\n${rawPrompt}`
@@ -2442,7 +2535,12 @@ export default function CoworkView() {
       permissionMode: claudePermissionMode,
       enabledTools: enabledClaudeToolIds,
     })
-    const basePrompt = attachmentContext ? `${planWrappedPrompt}\n\n${attachmentContext}` : planWrappedPrompt
+    const basePrompt = [
+      planWrappedPrompt,
+      projectInstructionsContext,
+      projectLinkBuild.context,
+      attachmentContext,
+    ].filter((part) => part.trim().length > 0).join('\n\n')
     const promptWithAttachments = systemAddendum ? `${systemAddendum}\n\n${basePrompt}` : basePrompt
     const engineUserInput = await buildEngineUserInput(promptWithAttachments, mergedForSend.next)
     const userMessage = {
@@ -2482,7 +2580,10 @@ export default function CoworkView() {
     }
     setInputValue('')
     setAttachments([])
-    setAttachmentNotice(attachmentLimitNotice)
+    setIncludeProjectLinks(false)
+    setAttachmentNotice(
+      [attachmentLimitNotice, projectLinkBuild.notice].filter(Boolean).join(' ') || null,
+    )
     setBusy(true)
     setError(null)
 
@@ -3028,7 +3129,7 @@ export default function CoworkView() {
 
   const handleAskUserSubmit = async () => {
     const answer = buildStructuredAskUserAnswer()
-    if (!answer.trim() && attachments.length === 0 && activeProjectAttachments.length === 0) return
+    if (!answer.trim() && attachments.length === 0 && activeProjectAttachments.length === 0 && !(includeProjectLinks && activeProjectLinks.length > 0)) return
     setInputValue(answer)
     setDismissedAskUserQuestion(askUserQuestion)
     await submitPrompt(answer, attachments)
@@ -3225,6 +3326,21 @@ export default function CoworkView() {
               )
               const displayedContent = resolveDisplayedAssistantContent(content, displayedThinkingContent)
               const canRegenerate = msg.role === 'assistant' && findPreviousUserMessage(msg.id) !== null
+
+              // Check if this assistant message should be collapsed
+              const isCollapsed = msg.role === 'assistant' && (() => {
+                // Find the previous user message
+                for (let i = index - 1; i >= 0; i--) {
+                  if (visibleMessages[i].role === 'user') {
+                    return collapsedMessageIds.has(visibleMessages[i].id)
+                  }
+                }
+                return false
+              })()
+
+              // Check if we should show collapse button (after user message in task chat)
+              const showCollapseButton = msg.role === 'user' && isTaskChat
+
               return (
                 <div key={msg.id} className={`cowork-msg ${msg.role}${msg.crewLive ? ' crew-live-message' : ''}`}>
                 <div className="msg-avatar">
@@ -3234,27 +3350,58 @@ export default function CoworkView() {
                   <div className="msg-role">
                     {msg.role === 'user' ? 'Du' : 'Open_Cowork'}
                     {showTimestamps && <span className="msg-time">{formatTime(msg.timestamp)}</span>}
+                    {showCollapseButton && (
+                      <button
+                        type="button"
+                        className="btn-collapse-toggle"
+                        onClick={() => toggleCollapse(msg.id)}
+                        title={collapsedMessageIds.has(msg.id) ? 'Output anzeigen' : 'Output ausblenden'}
+                        style={{ marginLeft: 8, cursor: 'pointer', background: 'none', border: 'none', fontSize: 12 }}
+                      >
+                        {collapsedMessageIds.has(msg.id) ? '▶' : '▼'}
+                      </button>
+                    )}
                   </div>
                   {msg.crewLive ? (
                     <CrewLiveMonitor live={msg.crewLive} />
+                  ) : isCollapsed ? (
+                    <div
+                      className="msg-content-collapsed"
+                      onClick={() => {
+                        // Find the user message that controls this collapse
+                        for (let i = index - 1; i >= 0; i--) {
+                          if (visibleMessages[i].role === 'user') {
+                            toggleCollapse(visibleMessages[i].id)
+                            break
+                          }
+                        }
+                      }}
+                      style={{ cursor: 'pointer', color: 'var(--text-muted)', fontStyle: 'italic', padding: '8px 0' }}
+                    >
+                      Output ausgeblendet – klicken zum Anzeigen
+                    </div>
                   ) : (
                     <div className="msg-content">
                       {displayedContent ? <HighlightedChatText content={displayedContent} /> : null}
                     </div>
                   )}
-                  <MessageThinking
-                    content={displayedThinkingContent}
-                    limitToRollingWindow={limitThinkingWindow}
-                    streaming={msg.streaming}
-                  />
-                  <LiveToolCalls calls={msg.liveToolCalls} />
-                  {verboseMode && (
-                    <MessageVerbose
-                      content={msg.verboseContent}
-                      limitToRollingWindow={limitThinkingWindow}
-                    />
+                  {!isCollapsed && (
+                    <>
+                      <MessageThinking
+                        content={displayedThinkingContent}
+                        limitToRollingWindow={limitThinkingWindow}
+                        streaming={msg.streaming}
+                      />
+                      <LiveToolCalls calls={msg.liveToolCalls} />
+                      {verboseMode && (
+                        <MessageVerbose
+                          content={msg.verboseContent}
+                          limitToRollingWindow={limitThinkingWindow}
+                        />
+                      )}
+                    </>
                   )}
-                  {attachmentsForMessage.length > 0 && (
+                  {!isCollapsed && attachmentsForMessage.length > 0 && (
                     <>
                       {imageAttachments.length > 0 && (
                         <div className="message-attachment-previews">
@@ -3279,46 +3426,48 @@ export default function CoworkView() {
                       </div>
                     </>
                   )}
-                  {ollamaRequestPreview && (
+                  {!isCollapsed && ollamaRequestPreview && (
                     <details className="message-debug">
                       <summary>Ollama Request Preview</summary>
                       <pre>{ollamaRequestPreview}</pre>
                     </details>
                   )}
-                  {verboseMode && promptDebug && promptDebug !== content && (
+                  {!isCollapsed && verboseMode && promptDebug && promptDebug !== content && (
                     <details className="message-debug">
                       <summary>Verbose: interner Prompt</summary>
                       <pre>{promptDebug}</pre>
                     </details>
                   )}
-                  <div className="msg-actions">
-                    <button type="button" className="btn-msg-action" onClick={() => void navigator.clipboard.writeText(content)}>
-                      Kopieren
-                    </button>
-                    {msg.role === 'user' ? (
-                      <button
-                        type="button"
-                        className="btn-msg-action"
-                        onClick={() => applyPromptToInput(content, attachmentsForMessage)}
-                      >
-                        Wiederverwenden
+                  {!isCollapsed && (
+                    <div className="msg-actions">
+                      <button type="button" className="btn-msg-action" onClick={() => void navigator.clipboard.writeText(content)}>
+                        Kopieren
                       </button>
-                    ) : (
-                      <>
-                        <button type="button" className="btn-msg-action" onClick={() => applyPromptToInput(content)}>
-                          Als Prompt nutzen
-                        </button>
+                      {msg.role === 'user' ? (
                         <button
                           type="button"
                           className="btn-msg-action"
-                          onClick={() => void handleRegenerate(msg.id)}
-                          disabled={uiLocked || !canRegenerate}
+                          onClick={() => applyPromptToInput(content, attachmentsForMessage)}
                         >
-                          Neu generieren
+                          Wiederverwenden
                         </button>
-                      </>
-                    )}
-                  </div>
+                      ) : (
+                        <>
+                          <button type="button" className="btn-msg-action" onClick={() => applyPromptToInput(content)}>
+                            Als Prompt nutzen
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-msg-action"
+                            onClick={() => void handleRegenerate(msg.id)}
+                            disabled={uiLocked || !canRegenerate}
+                          >
+                            Neu generieren
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  )}
                 </div>
                 </div>
               )
@@ -3409,7 +3558,7 @@ export default function CoworkView() {
                 type="button"
                 className="btn-approve"
                 onClick={() => void handleAskUserSubmit()}
-                disabled={uiLocked || (!askUserHasStructuredResponse && attachments.length === 0 && activeProjectAttachments.length === 0)}
+                disabled={uiLocked || (!askUserHasStructuredResponse && attachments.length === 0 && activeProjectAttachments.length === 0 && !(includeProjectLinks && activeProjectLinks.length > 0))}
               >
                 Antwort senden
               </button>
@@ -3441,8 +3590,13 @@ export default function CoworkView() {
               <div className="project-context-strip" aria-label="Projektkontext">
                 <div className="project-context-header">
                   <span>Projekt: {activeProject.title}</span>
-                  <span>{activeProjectAttachments.length} aktiv</span>
+                  <span>{activeProjectAttachments.length} Quellen / {activeProjectLinks.length} Links aktiv</span>
                 </div>
+                {activeProject.instructions.trim() && (
+                  <div className="project-context-instructions">
+                    Projektanweisungen aktiv
+                  </div>
+                )}
                 {activeProject.resources.length > 0 && (
                   <div className="project-context-resources">
                     {activeProject.resources.map((resource) => (
@@ -3457,10 +3611,23 @@ export default function CoworkView() {
                           onChange={(event) => setProjectResourceEnabled(activeProject.id, resource.id, event.currentTarget.checked)}
                           disabled={uiLocked}
                         />
-                        <span>{resource.kind === 'folder' ? 'Ordner' : 'Datei'}: {resource.label ?? getPathName(resource.path)}</span>
+                        <span>
+                          {resource.kind === 'folder' ? 'Ordner' : resource.kind === 'link' ? 'Link' : 'Datei'}: {resource.label ?? getPathName(resource.path)}
+                        </span>
                       </label>
                     ))}
                   </div>
+                )}
+                {activeProjectLinks.length > 0 && (
+                  <label className="project-link-fetch-toggle">
+                    <input
+                      type="checkbox"
+                      checked={includeProjectLinks}
+                      onChange={(event) => setIncludeProjectLinks(event.currentTarget.checked)}
+                      disabled={uiLocked}
+                    />
+                    <span>Aktive Links fuer die naechste Nachricht abrufen</span>
+                  </label>
                 )}
               </div>
             )}

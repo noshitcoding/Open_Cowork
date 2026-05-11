@@ -13,6 +13,8 @@ import { useCrewStore } from './stores/crewStore'
 import { useCrewRuntimeStore } from './stores/crewRuntimeStore'
 import { useEngineStore } from './stores/engineStore'
 import { useWorkTasksStore } from './stores/workTasksStore'
+import { useProjectStore } from './stores/projectStore'
+import { handleCrewTaskMessage } from './engine/crew/crewHandler'
 import { writeAuditEvent } from './utils/audit'
 import { seedDefaultPersonalities, seedDefaultMemory } from './utils/defaultSeeds'
 import { startScheduledWorker, stopScheduledWorker } from './engine/scheduledWorker'
@@ -103,6 +105,7 @@ function AppRoutes() {
 function App() {
   const loadChatFromDb = useChatStore((s) => s.loadFromDb)
   const loadTasksFromDb = useTaskStore((s) => s.loadFromDb)
+  const loadProjectsFromDb = useProjectStore((s) => s.loadFromDb)
   const theme = useUiStore((s) => s.theme)
   const setTheme = useUiStore((s) => s.setTheme)
   const preferences = useConfigStore((s) => s.preferences)
@@ -116,6 +119,7 @@ function App() {
     const startedAt = performance.now()
     loadChatFromDb()
     loadTasksFromDb()
+    void loadProjectsFromDb()
     void loadScheduledTasks()
     void loadScheduledRuns(20)
     void safeInvoke<BackendPolicyState | null>('policy_get', undefined, null)
@@ -141,15 +145,24 @@ function App() {
     // Start scheduled tasks worker
     startScheduledWorker()
     return () => stopScheduledWorker()
-  }, [addLog, ensureCrewRuntimeReady, loadChatFromDb, loadScheduledRuns, loadScheduledTasks, loadTasksFromDb, setPolicySnapshot])
+  }, [addLog, ensureCrewRuntimeReady, loadChatFromDb, loadProjectsFromDb, loadScheduledRuns, loadScheduledTasks, loadTasksFromDb, setPolicySnapshot])
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
     document.body.dataset.theme = theme
     document.documentElement.style.fontSize = `${Math.max(85, Math.min(120, preferences.fontScale))}%`
     document.body.classList.toggle('compact-mode', preferences.compactMode)
+
+    // Register crew task message handler
+    useEngineStore.getState().setCrewTaskMessageHandler(handleCrewTaskMessage)
+    return () => {
+      useEngineStore.getState().setCrewTaskMessageHandler(null)
+    }
+  }, [theme, preferences.compactMode, preferences.fontScale])
+
+  useEffect(() => {
     void writeAuditEvent('ui', 'theme_applied', { theme })
-  }, [preferences.compactMode, preferences.fontScale, theme])
+  }, [theme])
 
   useEffect(() => {
     if (!preferences.syncThemeWithSystem) return
@@ -168,9 +181,12 @@ function App() {
       event.preventDefault()
       event.returnValue = ''
     }
-    window.addEventListener('beforeunload', beforeUnload)
+    if (!hasTauriRuntime()) {
+      window.addEventListener('beforeunload', beforeUnload)
+    }
 
     let unlistenClose: (() => void) | null = null
+    let closeListenerDisposed = false
     if (hasTauriRuntime()) {
       const appWindow = getCurrentWindow()
       let closePromptOpen = false
@@ -189,18 +205,24 @@ function App() {
         if (confirmed) {
           closeConfirmed = true
           try {
-            await appWindow.close()
+            // Force-close to avoid re-entrancy issues (close() emits closeRequested again).
+            await appWindow.destroy()
           } catch (error) {
             closeConfirmed = false
             console.warn('Closing the app window failed:', error)
           }
         }
       }).then((unlisten) => {
+        if (closeListenerDisposed) {
+          unlisten()
+          return
+        }
         unlistenClose = unlisten
       }).catch(() => {})
     }
 
     return () => {
+      closeListenerDisposed = true
       window.removeEventListener('beforeunload', beforeUnload)
       unlistenClose?.()
     }

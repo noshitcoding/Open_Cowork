@@ -5,7 +5,8 @@ import { useNavigate } from 'react-router-dom'
 import { useChatStore, type CrewLiveEntry, type CrewLiveEntryCategory, type CrewLiveState, type CrewLiveStatus } from '../stores/chatStore'
 import { useConfigStore } from '../stores/configStore'
 import { useCoworkStore, type ScheduledTask } from '../stores/coworkStore'
-import { useCrewStore, type Crew, type CrewProviderKind } from '../stores/crewStore'
+import { resolveCrewAgentsWithProfiles, useCrewStore, type Crew, type CrewPersonalityProfile, type CrewProviderKind } from '../stores/crewStore'
+import { usePersonalityStore } from '../stores/personalityStore'
 import { useTaskTemplatesStore } from '../stores/taskTemplatesStore'
 import { useUiStore } from '../stores/uiStore'
 import { useWorkTasksStore, type WorkTask, type WorkTaskRunner } from '../stores/workTasksStore'
@@ -29,7 +30,7 @@ type CrewScheduleSnapshotMetadata = {
   definitionSavedAt?: string | null
 }
 
-type CrewExecutionLog = {
+export type CrewExecutionLog = {
   id: string
   crewId: string
   agentId: string
@@ -39,23 +40,16 @@ type CrewExecutionLog = {
   timestamp: number
 }
 
-type CrewExecutionLogEvent = {
+export type CrewExecutionLogEvent = {
   streamId?: string | null
   runId?: string | null
   log: CrewExecutionLog
 }
 
-type CrewTaskExecutionResponse = {
-  taskId: string
-  agentId: string
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'canceled'
-  output: string | null
-}
-
-type CrewExecutionResponse = {
+export type CrewExecutionResponse = {
   crewId: string
   status: 'idle' | 'running' | 'completed' | 'failed' | 'canceled'
-  taskResults: CrewTaskExecutionResponse[]
+  taskResults: Array<{ taskId: string; agentId: string; status: string; output: string | null }>
   logs: CrewExecutionLog[]
   error: string | null
 }
@@ -65,7 +59,7 @@ type CrewResolvedProviderConfigs = {
   openRouter: { baseUrl: string; model: string; apiKey: string; timeoutMs: number } | undefined
 }
 
-const CREW_LIVE_MAX_ENTRIES = 150
+const CREW_LIVE_MAX_ENTRIES = 50000
 const CREW_AGENT_COLORS = [
   '#2563eb',
   '#059669',
@@ -94,7 +88,7 @@ function resolveDefaultAgentId(crew: Crew): string | null {
   return crew.agents[0]?.id ?? null
 }
 
-function resolveCrewRuntimeConfig(crew: Crew, fallbackConfig: { baseUrl: string; model: string; timeoutMs: number }) {
+export function resolveCrewRuntimeConfig(crew: Crew, fallbackConfig: { baseUrl: string; model: string; timeoutMs: number }) {
   if (!crew.runtimeConfig.enabled) {
     return fallbackConfig
   }
@@ -107,7 +101,7 @@ function resolveCrewRuntimeConfig(crew: Crew, fallbackConfig: { baseUrl: string;
   }
 }
 
-function resolveExternalProviderConfig(
+export function resolveExternalProviderConfig(
   config: { enabled: boolean; baseUrl: string; model: string; apiKey: string; timeoutMs: number },
   fallbackConfig: { baseUrl?: string; model?: string; apiKey?: string } | undefined,
   fallbackBaseUrl: string,
@@ -124,7 +118,7 @@ function resolveExternalProviderConfig(
   }
 }
 
-function applyCrewDefaultModel(
+export function applyCrewDefaultModel(
   crew: Crew,
   config: { baseUrl: string; model: string; timeoutMs: number },
   providerConfigs: CrewResolvedProviderConfigs,
@@ -165,7 +159,7 @@ function applyCrewDefaultModel(
   return { config, providerConfigs }
 }
 
-function buildWorkTaskCrewGuidelines(crew: Crew, task: WorkTask): string {
+export function buildWorkTaskCrewGuidelines(crew: Crew, task: WorkTask): string {
   const workTaskContext = [
     `Work-Task-Auftrag: ${deriveTaskName(task)}`,
     task.prompt.trim(),
@@ -178,7 +172,7 @@ function buildWorkTaskCrewGuidelines(crew: Crew, task: WorkTask): string {
   ].filter(Boolean).join('\n\n')
 }
 
-function buildCrewRuntimeTasks(crew: Crew, task: WorkTask, enabledAgentIds: Set<string>) {
+export function buildCrewRuntimeTasks(crew: Crew, task: WorkTask, enabledAgentIds: Set<string>) {
   const crewTasks = crew.tasks ?? []
   const runnableCrewTasks = crewTasks.filter((crewTask) => enabledAgentIds.has(crewTask.agentId))
 
@@ -434,7 +428,7 @@ function deriveCrewLiveAgentId(log: CrewExecutionLog, detail: string): string {
   return log.agentId || 'runtime'
 }
 
-function createCrewLiveEntry(log: CrewExecutionLog): CrewLiveEntry | null {
+export function createCrewLiveEntry(log: CrewExecutionLog): CrewLiveEntry | null {
   const detail = cleanCrewLogDetail(log)
   if (!detail && (log.action === 'runtime_stdout' || log.action === 'runtime_stderr')) {
     return null
@@ -471,7 +465,7 @@ function shouldMergeCrewLiveEntries(previous: CrewLiveEntry | undefined, next: C
   return previous.detail.length < 12000
 }
 
-function appendCrewLiveEntry(state: CrewLiveState, entry: CrewLiveEntry): CrewLiveState {
+export function appendCrewLiveEntry(state: CrewLiveState, entry: CrewLiveEntry): CrewLiveState {
   const agentColors = assignCrewAgentColor(entry.agentId, state.agentColors)
   const entries = [...state.entries]
   const previous = entries[entries.length - 1]
@@ -494,7 +488,7 @@ function appendCrewLiveEntry(state: CrewLiveState, entry: CrewLiveEntry): CrewLi
   }
 }
 
-function buildCrewLiveMessageContent(state: CrewLiveState): string {
+export function buildCrewLiveMessageContent(state: CrewLiveState): string {
   const latest = state.entries[state.entries.length - 1]
   return [
     'Crew Live Monitor',
@@ -586,6 +580,8 @@ function readCrewScheduleSnapshotMetadata(snapshotJson: string | null | undefine
 export default function TasksView() {
   const navigate = useNavigate()
   const crews = useCrewStore((s) => s.crews)
+  const personalities = usePersonalityStore((s) => s.personalities)
+  const loadPersonalities = usePersonalityStore((s) => s.loadPersonalities)
   const { tasks, addTask, updateTask, removeTask, upsertMany } = useWorkTasksStore()
   const addThread = useChatStore((s) => s.addThread)
   const activeThreadId = useChatStore((s) => s.activeThreadId)
@@ -611,6 +607,22 @@ export default function TasksView() {
   const defaultLlmProfileIds = useConfigStore((s) => s.defaultLlmProfileIds)
   const llmProfiles = useConfigStore((s) => s.llmProfiles)
 
+  const personalityProfiles = useMemo<CrewPersonalityProfile[]>(() => (
+    personalities.map((personality) => ({
+      id: personality.id,
+      name: personality.name,
+      description: personality.description,
+      role: personality.role,
+      goal: personality.goal || personality.description,
+      systemPrompt: personality.system_prompt,
+      skillsMarkdown: personality.skills_markdown,
+      modelOverride: personality.model_override,
+      temperature: personality.temperature,
+      icon: personality.icon,
+      isDefault: personality.is_default,
+    }))
+  ), [personalities])
+
   const [newTitle, setNewTitle] = useState('')
   const [newPrompt, setNewPrompt] = useState('')
   const [newExpectedOutput, setNewExpectedOutput] = useState('')
@@ -630,6 +642,10 @@ export default function TasksView() {
   useEffect(() => {
     void loadScheduledTasks()
   }, [loadScheduledTasks])
+
+  useEffect(() => {
+    void loadPersonalities()
+  }, [loadPersonalities])
 
   useEffect(() => {
     if (newRunner !== 'crew') return
@@ -716,7 +732,13 @@ export default function TasksView() {
     }
 
     const previousActiveThreadId = activeThreadId
-    const threadId = addThread(deriveTaskName(task))
+    const threadId = addThread(
+      deriveTaskName(task),
+      undefined,
+      undefined,
+      task.runner,
+      task.runner === 'crew' ? task.crewId : null,
+    )
     addChatMessage(threadId, {
       role: 'system',
       content: buildTaskThreadSummary(task),
@@ -985,7 +1007,8 @@ export default function TasksView() {
         throw new Error('Crew nicht gefunden (evtl. geloescht).')
       }
 
-      const enabledAgents = crew.agents.filter((agent) => agent.enabled)
+      const resolvedCrewAgents = resolveCrewAgentsWithProfiles(crew.agents, personalityProfiles)
+      const enabledAgents = resolvedCrewAgents.filter((agent) => agent.enabled)
       if (enabledAgents.length === 0) {
         throw new Error('Keine aktiven Crew-Mitglieder vorhanden.')
       }

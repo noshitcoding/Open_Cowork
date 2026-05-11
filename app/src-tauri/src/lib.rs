@@ -547,6 +547,58 @@ struct MessageRow {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+struct ProjectResourceRecord {
+    id: String,
+    project_id: String,
+    kind: String,
+    path: String,
+    label: Option<String>,
+    enabled: bool,
+    added_at: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectRecord {
+    id: String,
+    title: String,
+    instructions: String,
+    resources: Vec<ProjectResourceRecord>,
+    thread_ids: Vec<String>,
+    created_at: String,
+    updated_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectUpsertRequest {
+    id: String,
+    title: String,
+    instructions: Option<String>,
+    created_at: Option<String>,
+    updated_at: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectResourceUpsertRequest {
+    id: String,
+    project_id: String,
+    kind: String,
+    path: String,
+    label: Option<String>,
+    enabled: Option<bool>,
+    added_at: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectDeleteResponse {
+    deleted_thread_ids: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct DeletedMessagesResponse {
     deleted_count: usize,
 }
@@ -4279,6 +4331,150 @@ fn exec_command(
 // -- Persistence commands ---------------------------------------------------
 
 #[tauri::command]
+fn project_list(state: tauri::State<'_, Arc<Database>>) -> Result<Vec<ProjectRecord>, String> {
+    let projects = state.list_projects().map_err(|e| e.to_string())?;
+    let resources = state.list_project_resources().map_err(|e| e.to_string())?;
+    let threads = state.list_project_threads().map_err(|e| e.to_string())?;
+
+    let mut resources_by_project: HashMap<String, Vec<ProjectResourceRecord>> = HashMap::new();
+    for resource in resources {
+        resources_by_project
+            .entry(resource.project_id.clone())
+            .or_default()
+            .push(ProjectResourceRecord {
+                id: resource.id,
+                project_id: resource.project_id,
+                kind: resource.kind,
+                path: resource.path,
+                label: resource.label,
+                enabled: resource.enabled,
+                added_at: resource.added_at,
+            });
+    }
+
+    let mut threads_by_project: HashMap<String, Vec<String>> = HashMap::new();
+    for (project_id, thread_id) in threads {
+        threads_by_project.entry(project_id).or_default().push(thread_id);
+    }
+
+    Ok(projects
+        .into_iter()
+        .map(|project| ProjectRecord {
+            id: project.id.clone(),
+            title: project.title,
+            instructions: project.instructions,
+            resources: resources_by_project.remove(&project.id).unwrap_or_default(),
+            thread_ids: threads_by_project.remove(&project.id).unwrap_or_default(),
+            created_at: project.created_at,
+            updated_at: project.updated_at,
+        })
+        .collect())
+}
+
+#[tauri::command]
+fn project_upsert(
+    state: tauri::State<'_, Arc<Database>>,
+    request: ProjectUpsertRequest,
+) -> Result<(), String> {
+    let title = request.title.trim();
+    if title.is_empty() {
+        return Err("Projektname darf nicht leer sein".to_string());
+    }
+
+    let now = chrono::Utc::now().to_rfc3339();
+    let created_at = request.created_at.as_deref().unwrap_or(&now);
+    let updated_at = request.updated_at.as_deref().unwrap_or(&now);
+    state
+        .upsert_project(
+            request.id.trim(),
+            title,
+            request.instructions.as_deref().unwrap_or("").trim(),
+            created_at,
+            updated_at,
+        )
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn project_delete(
+    state: tauri::State<'_, Arc<Database>>,
+    project_id: String,
+    delete_threads: Option<bool>,
+) -> Result<ProjectDeleteResponse, String> {
+    let deleted_thread_ids = state
+        .delete_project(project_id.trim(), delete_threads.unwrap_or(false))
+        .map_err(|e| e.to_string())?;
+    Ok(ProjectDeleteResponse { deleted_thread_ids })
+}
+
+#[tauri::command]
+fn project_resource_upsert(
+    state: tauri::State<'_, Arc<Database>>,
+    request: ProjectResourceUpsertRequest,
+) -> Result<(), String> {
+    let path = request.path.trim();
+    if path.is_empty() {
+        return Err("Quelle darf nicht leer sein".to_string());
+    }
+
+    let now = chrono::Utc::now().to_rfc3339();
+    state
+        .upsert_project_resource(
+            request.id.trim(),
+            request.project_id.trim(),
+            request.kind.trim(),
+            path,
+            request.label.as_deref().map(str::trim).filter(|label| !label.is_empty()),
+            request.enabled.unwrap_or(true),
+            request.added_at.as_deref().unwrap_or(&now),
+        )
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn project_resource_delete(
+    state: tauri::State<'_, Arc<Database>>,
+    resource_id: String,
+) -> Result<(), String> {
+    state
+        .delete_project_resource(resource_id.trim())
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn project_resource_set_enabled(
+    state: tauri::State<'_, Arc<Database>>,
+    resource_id: String,
+    enabled: bool,
+) -> Result<(), String> {
+    state
+        .set_project_resource_enabled(resource_id.trim(), enabled)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn project_attach_thread(
+    state: tauri::State<'_, Arc<Database>>,
+    project_id: String,
+    thread_id: String,
+) -> Result<(), String> {
+    state
+        .attach_project_thread(project_id.trim(), thread_id.trim())
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn project_detach_thread(
+    state: tauri::State<'_, Arc<Database>>,
+    project_id: String,
+    thread_id: String,
+) -> Result<(), String> {
+    state
+        .detach_project_thread(project_id.trim(), thread_id.trim())
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn db_save_thread(
     state: tauri::State<'_, Arc<Database>>,
     id: String,
@@ -4324,6 +4520,17 @@ fn db_update_thread_provider_settings(
 ) -> Result<(), String> {
     state
         .update_thread_provider_settings(&id, provider_settings_json.as_deref())
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn db_update_thread_permission_config(
+    state: tauri::State<'_, Arc<Database>>,
+    id: String,
+    permission_config_json: Option<String>,
+) -> Result<(), String> {
+    state
+        .update_thread_permission_config(&id, permission_config_json.as_deref())
         .map_err(|e| e.to_string())
 }
 
@@ -8376,18 +8583,28 @@ fn personality_upsert(
     id: String,
     name: String,
     description: String,
+    role: Option<String>,
+    goal: Option<String>,
     system_prompt: String,
+    skills_markdown: Option<String>,
     temperature: Option<f64>,
     model_override: Option<String>,
     icon: Option<String>,
     is_default: Option<bool>,
 ) -> Result<(), String> {
+    let resolved_goal = goal
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(description.as_str());
     state
         .upsert_personality(
             &id,
             &name,
             &description,
+            role.as_deref().unwrap_or("custom"),
+            resolved_goal,
             &system_prompt,
+            skills_markdown.as_deref().unwrap_or(""),
             temperature,
             model_override.as_deref(),
             icon.as_deref(),
@@ -8662,9 +8879,18 @@ pub fn run() {
             web_fetch_url,
             web_search,
             exec_command,
+            project_list,
+            project_upsert,
+            project_delete,
+            project_resource_upsert,
+            project_resource_delete,
+            project_resource_set_enabled,
+            project_attach_thread,
+            project_detach_thread,
             db_save_thread,
             db_list_threads,
             db_update_thread_provider_settings,
+            db_update_thread_permission_config,
             db_delete_thread,
             db_save_message,
             db_update_message_content,

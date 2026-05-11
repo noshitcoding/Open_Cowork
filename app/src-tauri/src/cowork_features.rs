@@ -1220,6 +1220,7 @@ mod tests {
         let paragraphs = vec![
             "Slide 1: Titel\nErste Zeile\nZweite Zeile".to_string(),
             "Slide 2: Agenda\nPunkt A\nPunkt B".to_string(),
+            "Slide 3: Abschluss\nNaechste Schritte".to_string(),
         ];
         let bullets = vec!["Bullet Extra".to_string()];
         write_pptx(&tmp, Some("Haupttitel"), &paragraphs, &bullets).unwrap();

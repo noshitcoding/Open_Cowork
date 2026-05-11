@@ -5,7 +5,8 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { invoke } from '@tauri-apps/api/core'
-import type { EngineBackend, EngineConfig, EngineEvent, QueryEngine } from '../engine/core/queryEngine'
+import type { EngineBackend, EngineConfig, QueryEngine } from '../engine/core/queryEngine'
+import type { EngineEvent } from '../engine/core/queryEngine'
 import { getAllCommands, registerBuiltinCommands } from '../engine/commands/registry'
 import { listOllamaModels, checkOllamaConnection } from '../engine/api/ollamaClient'
 import { buildSystemPromptWithMemory } from '../engine/memory/memorySystem'
@@ -36,6 +37,7 @@ import {
   type SessionSummary,
 } from '../engine/services/sessionPersistence'
 import { useConfigStore } from './configStore'
+import { useChatStore } from './chatStore'
 import { parsePersistedSessionMessage } from '../utils/sessionThreads'
 import { getChatProviderState, normalizeChatProvider, type ChatProviderKind, type ChatProviderSelection } from '../utils/chatProvider'
 import type { PermissionMode } from '../engine/types/tool'
@@ -126,18 +128,18 @@ export type ContextWarning = {
   estimatedTokens: number
 }
 
-type ChatHistorySeedMessage = {
+export type ChatHistorySeedMessage = {
   role: 'user' | 'assistant' | 'system'
   content: string | ContentBlock[]
   debugContent?: string
 }
 
-type ConversationHistorySeed = {
+export type ConversationHistorySeed = {
   threadId: string | null
   messages: ChatHistorySeedMessage[]
 }
 
-type EngineUserInput = string | ContentBlock[]
+export type EngineUserInput = string | ContentBlock[]
 
 function extractUserInputText(userInput: EngineUserInput): string {
   if (typeof userInput === 'string') {
@@ -223,7 +225,33 @@ export type EngineStoreState = {
   clearCurrentToolUI: () => void
   clearMessages: () => void
   clearError: () => void
-
+  // ── Crew Task Message Handler ─────────────────────────────────────
+  crewTaskMessageHandler: ((
+    params: {
+      userInput: EngineUserInput
+      cwd: string
+      onEvent?: (event: EngineEvent) => void
+      historySeed?: ConversationHistorySeed
+      providerSelection?: ChatProviderSelection
+      permissionConfig?: { mode: PermissionMode; allowedDirectories: string[] }
+      crewId: string | null
+      threadId: string
+      runId: string
+    },
+  ) => Promise<void>) | null
+  setCrewTaskMessageHandler: (handler: ((
+    params: {
+      userInput: EngineUserInput
+      cwd: string
+      onEvent?: (event: EngineEvent) => void
+      historySeed?: ConversationHistorySeed
+      providerSelection?: ChatProviderSelection
+      permissionConfig?: { mode: PermissionMode; allowedDirectories: string[] }
+      crewId: string | null
+      threadId: string
+      runId: string
+    },
+  ) => Promise<void>) | null) => void
   // ── New Actions (CC features) ──────────────────────────────────────────
   forceCompact: () => Promise<void>
   getContextSnapshot: () => ContextSnapshot | null
@@ -415,7 +443,9 @@ export const useEngineStore = create<EngineStoreState>()(
       },
 
       _engine: null,
-
+      // ── Crew Task Message Handler ──────────────────────────────────
+      crewTaskMessageHandler: null,
+      setCrewTaskMessageHandler: (handler) => set({ crewTaskMessageHandler: handler }),
       // ── Config ───────────────────────────────────────────────────────────
       setActiveProvider: (provider) => set({ activeProvider: normalizeChatProvider(provider) }),
       setConfig: (patch) => set((s) => ({ config: { ...s.config, ...patch } })),
@@ -463,6 +493,37 @@ export const useEngineStore = create<EngineStoreState>()(
               } else {
                 throw new Error('Die Engine verarbeitet bereits eine andere Anfrage.')
               }
+            }
+
+            // Check if active thread is a crew task
+            const chatState = useChatStore.getState()
+            const activeThread = chatState.threads.find(t => t.id === chatState.activeThreadId)
+            const isCrewTask = activeThread?.runner === 'crew' && activeThread?.crewId
+
+            // If this is a crew task, delegate to crew handler
+            if (isCrewTask && get().crewTaskMessageHandler) {
+              const runId = crypto.randomUUID()
+              set({
+                status: 'streaming',
+                streamingText: '',
+                thinkingText: '',
+                error: null,
+                activeTools: [],
+                currentToolUI: null,
+                currentRunId: runId,
+              })
+              
+              return get().crewTaskMessageHandler!({
+                userInput,
+                cwd,
+                onEvent,
+                historySeed,
+                providerSelection,
+                permissionConfig,
+                crewId: activeThread!.crewId!,
+                threadId: activeThread!.id,
+                runId,
+              })
             }
 
             const runId = crypto.randomUUID()

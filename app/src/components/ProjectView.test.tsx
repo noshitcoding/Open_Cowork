@@ -1,0 +1,105 @@
+import { fireEvent, render, screen } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import ProjectView from './ProjectView'
+import { useChatStore } from '../stores/chatStore'
+import { useProjectStore } from '../stores/projectStore'
+
+const navigateMock = vi.fn()
+
+vi.mock('@tauri-apps/plugin-dialog', () => ({
+  open: vi.fn(),
+}))
+
+vi.mock('react-router-dom', async () => {
+  const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom')
+  return {
+    ...actual,
+    useNavigate: () => navigateMock,
+  }
+})
+
+function renderProjectView() {
+  return render(
+    <MemoryRouter>
+      <ProjectView />
+    </MemoryRouter>,
+  )
+}
+
+describe('ProjectView', () => {
+  beforeEach(() => {
+    navigateMock.mockReset()
+
+    useChatStore.setState({
+      threads: [
+        {
+          id: 'thread-1',
+          title: 'Projektchat',
+          messages: [],
+          createdAt: 100,
+          updatedAt: 100,
+        },
+      ],
+      activeThreadId: 'thread-1',
+      pendingApproval: [],
+      busy: false,
+      error: null,
+    })
+
+    useProjectStore.setState({
+      projects: [
+        {
+          id: 'project-1',
+          title: 'Alpha',
+          instructions: 'Nutze kurze Antworten.',
+          resources: [],
+          threadIds: ['thread-1'],
+          createdAt: 100,
+          updatedAt: 100,
+        },
+      ],
+      activeProjectId: 'project-1',
+    })
+  })
+
+  it('edits project instructions', () => {
+    renderProjectView()
+
+    const textarea = screen.getByLabelText('Projektanweisungen')
+    fireEvent.change(textarea, { target: { value: 'Arbeite strikt im Projektkontext.' } })
+    fireEvent.blur(textarea)
+
+    expect(useProjectStore.getState().projects[0].instructions).toBe('Arbeite strikt im Projektkontext.')
+  })
+
+  it('adds link sources as project resources', () => {
+    renderProjectView()
+
+    fireEvent.change(screen.getByPlaceholderText('https://...'), {
+      target: { value: 'https://example.com/spec' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Link' }))
+
+    expect(screen.getAllByText('https://example.com/spec').length).toBeGreaterThan(0)
+    expect(useProjectStore.getState().projects[0].resources).toEqual([
+      expect.objectContaining({
+        kind: 'link',
+        path: 'https://example.com/spec',
+        enabled: true,
+      }),
+    ])
+  })
+
+  it('can delete a project together with its chats', () => {
+    renderProjectView()
+
+    fireEvent.click(screen.getByTitle('Projekt loeschen'))
+    expect(screen.getByRole('dialog', { name: 'Projekt loeschen' })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Projekt und Chats loeschen' }))
+
+    expect(useProjectStore.getState().projects).toEqual([])
+    expect(useChatStore.getState().threads).toEqual([])
+  })
+})

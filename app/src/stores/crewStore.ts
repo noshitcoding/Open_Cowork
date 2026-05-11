@@ -2,7 +2,6 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { OllamaConfig } from './configStore'
 import { safeInvoke } from '../utils/safeInvoke'
-import { DEFAULT_PERSONALITIES } from '../utils/defaultSeeds'
 
 export type AgentRole = 'researcher' | 'writer' | 'reviewer' | 'planner' | 'executor' | 'analyst' | 'custom'
 export type CrewProcess = 'sequential' | 'parallel' | 'hierarchical'
@@ -105,7 +104,14 @@ export type CrewPersonalityProfile = {
   id: string
   name: string
   description: string
+  role: AgentRole
+  goal: string
+  systemPrompt: string
+  skillsMarkdown: string
   modelOverride: string | null
+  temperature?: number | null
+  icon?: string | null
+  isDefault?: boolean
 }
 
 type CrewTaskExecutionResponse = {
@@ -141,6 +147,8 @@ type CrewState = {
   removeAgent: (id: string) => void
   loadAgents: () => void
   syncAgentsFromPersonalityProfiles: (profiles: CrewPersonalityProfile[]) => void
+  migrateAgentsToPersonalityProfiles: (profiles: CrewPersonalityProfile[]) => Promise<boolean>
+  unlinkPersonalityProfile: (profile: CrewPersonalityProfile) => void
 
   addTask: (crewId: string, task: CrewTask) => void
   updateTask: (crewId: string, taskId: string, patch: Partial<CrewTask>) => void
@@ -286,7 +294,6 @@ const DEFAULT_CREW_PROVIDER_PROFILES: CrewProviderProfiles = {
 const DEFAULT_CREW_OUTPUT_MODE: CrewOutputMode = 'standard'
 const DEFAULT_CREW_PROVIDER: CrewProviderKind = 'ollama'
 const DEFAULT_CREW_GOVERNANCE_MODE: CrewGovernanceMode = 'allow-all'
-const DEFAULT_PERSONALITY_IDS = new Set(DEFAULT_PERSONALITIES.map((entry) => entry.id))
 const PERSONALITY_AGENT_ID_PREFIX = 'agent-personality-'
 
 function isCrewAwaitingApproval(message: string): boolean {
@@ -298,25 +305,70 @@ function createPersonalityCrewAgentId(personalityId: string): string {
 }
 
 function isSyncablePersonalityProfile(profile: CrewPersonalityProfile): boolean {
-  return profile.name.trim().length > 0 && !DEFAULT_PERSONALITY_IDS.has(profile.id)
+  return profile.name.trim().length > 0
 }
 
 function isSamePersonalityAgent(agent: CrewAgent, personalityId: string): boolean {
   return agent.personalityId === personalityId || agent.id === createPersonalityCrewAgentId(personalityId)
 }
 
+function slugifyProfileName(value: string): string {
+  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'agent'
+}
+
+function buildAgentProfileSignature(agent: CrewAgent): string {
+  return JSON.stringify({
+    name: agent.name.trim(),
+    role: agent.role,
+    goal: agent.goal.trim(),
+    systemPrompt: agent.backstory.trim(),
+    skillsMarkdown: agent.skillsMarkdown.trim(),
+    modelOverride: agent.modelOverride?.trim() || null,
+  })
+}
+
+function createUniqueProfileName(baseName: string, existingNames: Set<string>): string {
+  const base = baseName.trim() || 'Persoenlichkeit'
+  let candidate = base
+  let index = 2
+
+  while (existingNames.has(candidate.toLowerCase())) {
+    candidate = `${base} (${index})`
+    index += 1
+  }
+
+  existingNames.add(candidate.toLowerCase())
+  return candidate
+}
+
+function buildPersonalityProfileFromAgent(agent: CrewAgent, id: string, name: string): CrewPersonalityProfile {
+  return {
+    id,
+    name,
+    description: agent.goal,
+    role: agent.role,
+    goal: agent.goal,
+    systemPrompt: agent.backstory,
+    skillsMarkdown: agent.skillsMarkdown,
+    modelOverride: agent.modelOverride?.trim() || null,
+    temperature: null,
+    icon: null,
+    isDefault: false,
+  }
+}
+
 function buildCrewAgentFromPersonality(profile: CrewPersonalityProfile): CrewAgent {
   const trimmedName = profile.name.trim()
-  const trimmedDescription = profile.description.trim()
+  const trimmedGoal = (profile.goal || profile.description).trim()
   const trimmedModelOverride = profile.modelOverride?.trim() || null
 
   return {
     id: createPersonalityCrewAgentId(profile.id),
     name: trimmedName,
-    role: 'custom',
-    goal: trimmedDescription || `Arbeite im Stil von ${trimmedName}.`,
-    backstory: '',
-    skillsMarkdown: '',
+    role: profile.role ?? 'custom',
+    goal: trimmedGoal || `Arbeite im Stil von ${trimmedName}.`,
+    backstory: profile.systemPrompt,
+    skillsMarkdown: profile.skillsMarkdown,
     personalityId: profile.id,
     modelOverride: trimmedModelOverride,
     providerKind: 'ollama',
@@ -326,6 +378,89 @@ function buildCrewAgentFromPersonality(profile: CrewPersonalityProfile): CrewAge
     allowDelegation: true,
     verbose: true,
     maxIterations: 8,
+  }
+}
+
+export function resolveCrewAgentWithProfile(agent: CrewAgent, profiles: CrewPersonalityProfile[]): CrewAgent {
+  if (!agent.personalityId) {
+    return cloneCrewAgent(agent)
+  }
+
+  const profile = profiles.find((entry) => entry.id === agent.personalityId)
+  if (!profile) {
+    return cloneCrewAgent(agent)
+  }
+
+  return {
+    ...agent,
+    name: profile.name,
+    role: profile.role ?? 'custom',
+    goal: profile.goal || profile.description || `Arbeite im Stil von ${profile.name}.`,
+    backstory: profile.systemPrompt,
+    skillsMarkdown: profile.skillsMarkdown,
+    modelOverride: profile.modelOverride?.trim() || null,
+    tools: [...agent.tools],
+    mcpServerNames: [...agent.mcpServerNames],
+  }
+}
+
+export function resolveCrewAgentsWithProfiles(agents: CrewAgent[], profiles: CrewPersonalityProfile[]): CrewAgent[] {
+  return agents.map((agent) => resolveCrewAgentWithProfile(agent, profiles))
+}
+
+function personalityRowsToCrewProfiles(rows: Array<{
+  id: string
+  name: string
+  description?: string
+  role?: AgentRole
+  goal?: string
+  system_prompt?: string
+  skills_markdown?: string
+  model_override?: string | null
+  temperature?: number | null
+  icon?: string | null
+  is_default?: boolean
+}>): CrewPersonalityProfile[] {
+  return rows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    description: row.description ?? row.goal ?? '',
+    role: row.role ?? 'custom',
+    goal: row.goal ?? row.description ?? '',
+    systemPrompt: row.system_prompt ?? '',
+    skillsMarkdown: row.skills_markdown ?? '',
+    modelOverride: row.model_override ?? null,
+    temperature: row.temperature ?? null,
+    icon: row.icon ?? null,
+    isDefault: row.is_default ?? false,
+  }))
+}
+
+async function loadPersonalityProfilesForRuntime(): Promise<CrewPersonalityProfile[]> {
+  try {
+    const { usePersonalityStore } = await import('./personalityStore')
+    const store = usePersonalityStore.getState()
+    if (store.personalities.length === 0) {
+      await store.loadPersonalities()
+    }
+    return personalityRowsToCrewProfiles(usePersonalityStore.getState().personalities)
+  } catch {
+    return []
+  }
+}
+
+function applyPersonalityProfileToAgent(agent: CrewAgent, profile: CrewPersonalityProfile): CrewAgent {
+  return {
+    ...resolveCrewAgentWithProfile(agent, [profile]),
+    id: agent.id || createPersonalityCrewAgentId(profile.id),
+    personalityId: profile.id,
+    providerKind: agent.providerKind,
+    enabled: agent.enabled,
+    allowDelegation: agent.allowDelegation,
+    verbose: agent.verbose,
+    maxIterations: agent.maxIterations,
+    tools: [...agent.tools],
+    mcpServerNames: [...agent.mcpServerNames],
   }
 }
 
@@ -552,7 +687,10 @@ export const useCrewStore = create<CrewState>()(
           let agentsChanged = state.agents.length === 0
 
           for (const agent of syncedAgents) {
-            if (nextAgents.some((existingAgent) => isSamePersonalityAgent(existingAgent, agent.personalityId ?? ''))) {
+            const existingIndex = nextAgents.findIndex((existingAgent) => isSamePersonalityAgent(existingAgent, agent.personalityId ?? ''))
+            if (existingIndex >= 0) {
+              nextAgents[existingIndex] = applyPersonalityProfileToAgent(nextAgents[existingIndex], syncableProfiles.find((profile) => profile.id === agent.personalityId)!)
+              agentsChanged = true
               continue
             }
 
@@ -562,18 +700,37 @@ export const useCrewStore = create<CrewState>()(
 
           let crewsChanged = false
           const nextCrews = state.crews.map((crew) => {
+            let crewAgentsChanged = false
+            let nextCrewAgents = crew.agents.map((agent) => {
+              if (!agent.personalityId) {
+                return cloneCrewAgent(agent)
+              }
+
+              const profile = syncableProfiles.find((entry) => entry.id === agent.personalityId)
+              if (!profile) {
+                return cloneCrewAgent(agent)
+              }
+
+              crewAgentsChanged = true
+              return applyPersonalityProfileToAgent(agent, profile)
+            })
             const missingAgents = syncedAgents.filter(
-              (agent) => !crew.agents.some((existingAgent) => isSamePersonalityAgent(existingAgent, agent.personalityId ?? '')),
+              (agent) => !nextCrewAgents.some((existingAgent) => isSamePersonalityAgent(existingAgent, agent.personalityId ?? '')),
             )
 
-            if (missingAgents.length === 0) {
+            if (missingAgents.length > 0) {
+              crewAgentsChanged = true
+              nextCrewAgents = [...nextCrewAgents, ...missingAgents.map(cloneCrewAgent)]
+            }
+
+            if (!crewAgentsChanged) {
               return crew
             }
 
             crewsChanged = true
             return {
               ...crew,
-              agents: dedupeCrewAgents([...crew.agents, ...missingAgents.map(cloneCrewAgent)]),
+              agents: dedupeCrewAgents(nextCrewAgents),
               updatedAt: Date.now(),
             }
           })
@@ -585,6 +742,127 @@ export const useCrewStore = create<CrewState>()(
           return {
             agents: dedupeCrewAgents(nextAgents),
             crews: nextCrews,
+          }
+        }),
+
+      migrateAgentsToPersonalityProfiles: async (profiles) => {
+        const state = get()
+        const profileById = new Map(profiles.map((profile) => [profile.id, profile]))
+        const existingNames = new Set(profiles.map((profile) => profile.name.trim().toLowerCase()))
+        const usedProfileIds = new Set(profiles.map((profile) => profile.id))
+        const draftsBySignature = new Map<string, CrewPersonalityProfile>()
+        const profileIdBySignature = new Map<string, string>()
+        const allAgents = [
+          ...state.agents,
+          ...state.crews.flatMap((crew) => crew.agents),
+        ]
+
+        for (const agent of allAgents) {
+          if (agent.personalityId && profileById.has(agent.personalityId)) {
+            continue
+          }
+
+          const signature = buildAgentProfileSignature(agent)
+          if (profileIdBySignature.has(signature)) {
+            continue
+          }
+
+          const baseId = agent.personalityId
+            ?? `pers-migrated-${slugifyProfileName(agent.name)}-${draftsBySignature.size + 1}`
+          let id = baseId
+          let suffix = 2
+          while (usedProfileIds.has(id)) {
+            id = `${baseId}-${suffix}`
+            suffix += 1
+          }
+          usedProfileIds.add(id)
+          const name = createUniqueProfileName(agent.name, existingNames)
+          const profile = buildPersonalityProfileFromAgent(agent, id, name)
+          draftsBySignature.set(signature, profile)
+          profileIdBySignature.set(signature, profile.id)
+        }
+
+        if (draftsBySignature.size === 0) {
+          return false
+        }
+
+        const drafts = Array.from(draftsBySignature.values())
+        try {
+          for (const profile of drafts) {
+            await safeInvoke('personality_upsert', {
+              id: profile.id,
+              name: profile.name,
+              description: profile.description,
+              role: profile.role,
+              goal: profile.goal,
+              systemPrompt: profile.systemPrompt,
+              skillsMarkdown: profile.skillsMarkdown,
+              temperature: profile.temperature ?? null,
+              modelOverride: profile.modelOverride,
+              icon: profile.icon ?? null,
+              isDefault: profile.isDefault ?? false,
+            }, undefined)
+          }
+        } catch {
+          return false
+        }
+
+        const allProfiles = [...profiles, ...drafts]
+        set((current) => {
+          const migrateAgent = (agent: CrewAgent): CrewAgent => {
+            if (agent.personalityId && profileById.has(agent.personalityId)) {
+              return cloneCrewAgent(agent)
+            }
+
+            const profileId = profileIdBySignature.get(buildAgentProfileSignature(agent)) ?? agent.personalityId
+            const profile = profileId ? allProfiles.find((entry) => entry.id === profileId) : undefined
+            if (!profile) {
+              return cloneCrewAgent(agent)
+            }
+
+            return applyPersonalityProfileToAgent(
+              {
+                ...agent,
+                personalityId: profile.id,
+              },
+              profile,
+            )
+          }
+
+          return {
+            agents: dedupeCrewAgents(current.agents.map(migrateAgent)),
+            crews: current.crews.map((crew) => ({
+              ...crew,
+              agents: dedupeCrewAgents(crew.agents.map(migrateAgent)),
+              updatedAt: Date.now(),
+            })),
+          }
+        })
+
+        return true
+      },
+
+      unlinkPersonalityProfile: (profile) =>
+        set((state) => {
+          const toSnapshot = (agent: CrewAgent): CrewAgent => {
+            if (!isSamePersonalityAgent(agent, profile.id)) {
+              return cloneCrewAgent(agent)
+            }
+
+            const snapshot = applyPersonalityProfileToAgent(agent, profile)
+            return {
+              ...snapshot,
+              personalityId: null,
+            }
+          }
+
+          return {
+            agents: state.agents.map(toSnapshot),
+            crews: state.crews.map((crew) => ({
+              ...crew,
+              agents: crew.agents.map(toSnapshot),
+              updatedAt: Date.now(),
+            })),
           }
         }),
 
@@ -679,7 +957,9 @@ export const useCrewStore = create<CrewState>()(
           }
         }
 
-        const enabledAgents = crew.agents.filter((agent) => agent.enabled)
+        const personalityProfiles = await loadPersonalityProfilesForRuntime()
+        const resolvedCrewAgents = resolveCrewAgentsWithProfiles(crew.agents, personalityProfiles)
+        const enabledAgents = resolvedCrewAgents.filter((agent) => agent.enabled)
         const enabledAgentIds = new Set(enabledAgents.map((agent) => agent.id))
         const runnableTasks = crew.tasks.filter((task) => enabledAgentIds.has(task.agentId))
         const blockedTasks = crew.tasks.filter((task) => !enabledAgentIds.has(task.agentId))

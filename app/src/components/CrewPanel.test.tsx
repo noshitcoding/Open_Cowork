@@ -220,7 +220,10 @@ describe('CrewPanel', () => {
           id: 'personality-product-owner',
           name: 'Product Owner',
           description: 'Priorisiert Anforderungen und strukturiert den Arbeitsfokus.',
+          role: 'planner',
+          goal: 'Priorisiert Anforderungen und strukturiert den Arbeitsfokus.',
           system_prompt: 'Arbeite wie ein Product Owner.',
+          skills_markdown: '# Product Owner\n- Priorisierung\n- Anforderungen',
           temperature: null,
           model_override: 'qwen3:14b',
           icon: 'PO',
@@ -242,7 +245,10 @@ describe('CrewPanel', () => {
     expect(syncedAgent).toMatchObject({
       id: 'agent-personality-personality-product-owner',
       name: 'Product Owner',
-      role: 'custom',
+      role: 'planner',
+      goal: 'Priorisiert Anforderungen und strukturiert den Arbeitsfokus.',
+      backstory: 'Arbeite wie ein Product Owner.',
+      skillsMarkdown: '# Product Owner\n- Priorisierung\n- Anforderungen',
       modelOverride: 'qwen3:14b',
     })
   })
