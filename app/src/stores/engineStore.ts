@@ -5,44 +5,92 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { invoke } from '@tauri-apps/api/core'
+import type { EngineBackend, EngineConfig, QueryEngine } from '../engine/core/queryEngine'
+import type { EngineEvent } from '../engine/core/queryEngine'
+import { getAllCommands, registerBuiltinCommands } from '../engine/commands/registry'
+import { listOllamaModels, checkOllamaConnection } from '../engine/api/ollamaClient'
+import { buildSystemPromptWithMemory } from '../engine/memory/memorySystem'
+import type { ContextSnapshot } from '../engine/services/contextManager'
 import {
-  QueryEngine,
-  type EngineBackend,
-  type EngineConfig,
-  type EngineEvent,
-  type Message,
-  type ContentBlock,
-  type AppState,
-  type TokenUsage,
-  type ApprovalResult,
-  type ToolUIRequest,
-  type ContextSnapshot,
-  type SessionRecord,
-  type SessionSummary,
   createAssistantMessage,
   createInitialAppState,
   createSystemMessage,
   createUserMessage,
   EMPTY_USAGE,
-  registerBuiltinCommands,
-  getAllCommands,
-  DEFAULT_SYSTEM_PROMPT,
-  DEFAULT_AGENTS,
-  listOllamaModels,
-  checkOllamaConnection,
+  extractTextContent,
+  type AgentDefinition,
+  type ApprovalResult,
+  type AppState,
+  type ContentBlock,
+  type Message,
+  type TokenUsage,
+  type ToolUIRequest,
+} from '../engine/types'
+import {
   autoSaveSession,
   createSession,
+  deleteSession,
   generateSessionTitle,
   loadSession,
   listSessions,
-  deleteSession,
-  buildSystemPromptWithMemory,
-  extractTextContent,
-} from '../engine'
+  type SessionRecord,
+  type SessionSummary,
+} from '../engine/services/sessionPersistence'
 import { useConfigStore } from './configStore'
+import { useChatStore } from './chatStore'
 import { parsePersistedSessionMessage } from '../utils/sessionThreads'
 import { getChatProviderState, normalizeChatProvider, type ChatProviderKind, type ChatProviderSelection } from '../utils/chatProvider'
 import type { PermissionMode } from '../engine/types/tool'
+
+const DEFAULT_SYSTEM_PROMPT = `Du bist ein hilfreicher KI-Assistent in einer Desktop-Anwendung (Open Cowork). Du hast Zugriff auf verschiedene Tools um Dateien zu lesen, zu schreiben, zu suchen, Shell-Befehle auszufuehren, und mehr.
+
+Wichtige Regeln:
+1. Fuehre Aenderungen direkt aus statt nur Vorschlaege zu machen, es sei denn der Plan-Modus ist aktiv.
+2. Lies Dateien bevor du sie aenderst, um den Kontext zu verstehen.
+3. Nutze Tools haeufig — lese, suche, und verifiziere.
+4. Gib klare, praezise Antworten.
+5. Bei Unsicherheit: frage den Benutzer mit dem AskUser-Tool.
+  Wenn das Ziel jedoch klar ist (z. B. Dateien sortieren/strukturieren), fuehre es selbststaendig aus und frage nur bei fehlenden kritischen Angaben oder bei destruktiven Schritten.
+6. Erstelle keine Dateien, die nicht benoetigt werden.
+7. Teste Aenderungen wenn moeglich (Build, Tests etc.).
+8. Fuer Dateiorganisation und Strukturarbeit nutze dedizierte Datei-Tools wie ListDir, CreateDirectory, MovePath und CopyPath statt nur Shell-Befehle zu beschreiben.
+
+Du arbeitest in einem Windows-Umfeld mit PowerShell.`
+
+const DEFAULT_AGENTS: AgentDefinition[] = [
+  {
+    id: 'coder',
+    name: 'Coder',
+    description: 'Spezialisiert auf Code-Implementierung und Debugging.',
+    type: 'coding',
+    tools: ['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep'],
+    maxTurns: 15,
+  },
+  {
+    id: 'researcher',
+    name: 'Researcher',
+    description: 'Spezialisiert auf Recherche und Analyse.',
+    type: 'research',
+    tools: ['Read', 'Glob', 'Grep', 'WebFetch', 'WebSearch', 'MemoryRead'],
+    maxTurns: 10,
+  },
+  {
+    id: 'reviewer',
+    name: 'Reviewer',
+    description: 'Spezialisiert auf Code-Review und Qualitaetssicherung.',
+    type: 'review',
+    tools: ['Read', 'Glob', 'Grep', 'Bash'],
+    maxTurns: 8,
+  },
+  {
+    id: 'planner',
+    name: 'Planner',
+    description: 'Spezialisiert auf Projektplanung und Aufgabenzerlegung.',
+    type: 'planning',
+    tools: ['Read', 'Glob', 'TaskCreate', 'TaskList', 'MemoryRead', 'MemoryWrite'],
+    maxTurns: 5,
+  },
+]
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -80,18 +128,18 @@ export type ContextWarning = {
   estimatedTokens: number
 }
 
-type ChatHistorySeedMessage = {
+export type ChatHistorySeedMessage = {
   role: 'user' | 'assistant' | 'system'
-  content: string
+  content: string | ContentBlock[]
   debugContent?: string
 }
 
-type ConversationHistorySeed = {
+export type ConversationHistorySeed = {
   threadId: string | null
   messages: ChatHistorySeedMessage[]
 }
 
-type EngineUserInput = string | ContentBlock[]
+export type EngineUserInput = string | ContentBlock[]
 
 function extractUserInputText(userInput: EngineUserInput): string {
   if (typeof userInput === 'string') {
@@ -115,6 +163,22 @@ function extractUserInputText(userInput: EngineUserInput): string {
   }
 
   return text
+}
+
+function extractSeedMessageText(message: ChatHistorySeedMessage): string {
+  if (typeof message.content === 'string') {
+    return message.content.trim()
+  }
+
+  return extractTextContent({
+    type: message.role,
+    uuid: 'seed-message',
+    content: message.content,
+    timestamp: 0,
+    ...(message.role === 'assistant'
+      ? { model: 'seed', usage: { ...EMPTY_USAGE }, stopReason: 'end_turn' as const }
+      : {}),
+  } as Message).trim()
 }
 
 export type EngineStoreState = {
@@ -161,7 +225,33 @@ export type EngineStoreState = {
   clearCurrentToolUI: () => void
   clearMessages: () => void
   clearError: () => void
-
+  // ── Crew Task Message Handler ─────────────────────────────────────
+  crewTaskMessageHandler: ((
+    params: {
+      userInput: EngineUserInput
+      cwd: string
+      onEvent?: (event: EngineEvent) => void
+      historySeed?: ConversationHistorySeed
+      providerSelection?: ChatProviderSelection
+      permissionConfig?: { mode: PermissionMode; allowedDirectories: string[] }
+      crewId: string | null
+      threadId: string
+      runId: string
+    },
+  ) => Promise<void>) | null
+  setCrewTaskMessageHandler: (handler: ((
+    params: {
+      userInput: EngineUserInput
+      cwd: string
+      onEvent?: (event: EngineEvent) => void
+      historySeed?: ConversationHistorySeed
+      providerSelection?: ChatProviderSelection
+      permissionConfig?: { mode: PermissionMode; allowedDirectories: string[] }
+      crewId: string | null
+      threadId: string
+      runId: string
+    },
+  ) => Promise<void>) | null) => void
   // ── New Actions (CC features) ──────────────────────────────────────────
   forceCompact: () => Promise<void>
   getContextSnapshot: () => ContextSnapshot | null
@@ -173,7 +263,7 @@ export type EngineStoreState = {
 
   // ── Internal ───────────────────────────────────────────────────────────
   _engine: QueryEngine | null
-  _initEngine: (cwd: string, providerSelection?: ChatProviderSelection, permissionConfig?: { mode: PermissionMode; allowedDirectories: string[] }) => QueryEngine
+  _initEngine: (cwd: string, providerSelection?: ChatProviderSelection, permissionConfig?: { mode: PermissionMode; allowedDirectories: string[] }) => Promise<QueryEngine>
 }
 
 // ── Store ──────────────────────────────────────────────────────────────────
@@ -195,18 +285,43 @@ function mapChatHistorySeedToEngineMessages(
   model: string,
 ): Message[] {
   return seedMessages.reduce<Message[]>((acc, message) => {
-    const structuredMessage = parsePersistedSessionMessage(
-      (message.debugContent?.trim() || message.content.trim()),
-    )
+    // Try to parse structured content from debugContent or content
+    const textContent = extractSeedMessageText(message)
+    const rawContent = message.debugContent?.trim() || textContent
+    const structuredMessage = parsePersistedSessionMessage(rawContent)
 
     if (structuredMessage) {
       acc.push(structuredMessage)
       return acc
     }
 
+    // Try to parse content as JSON array (structured content blocks)
+    if (typeof message.content === 'string' && message.content.trim().startsWith('[')) {
+      try {
+        const parsedContent = JSON.parse(message.content.trim())
+        if (Array.isArray(parsedContent) && parsedContent.length > 0) {
+          const isValidContentBlock = parsedContent.every(
+            (block: unknown) => typeof block === 'object' && block !== null && 'type' in block,
+          )
+          if (isValidContentBlock) {
+            const assistantMsg = createAssistantMessage(
+              parsedContent as ContentBlock[],
+              model,
+              { ...EMPTY_USAGE },
+              'end_turn',
+            )
+            acc.push(assistantMsg)
+            return acc
+          }
+        }
+      } catch {
+        // Not valid JSON array, fall through to text handling
+      }
+    }
+
     const preferredContent = message.role === 'user'
-      ? (message.debugContent?.trim() || message.content.trim())
-      : message.content.trim()
+      ? (message.debugContent?.trim() || textContent)
+      : textContent
 
     if (!preferredContent) return acc
 
@@ -328,15 +443,19 @@ export const useEngineStore = create<EngineStoreState>()(
       },
 
       _engine: null,
-
+      // ── Crew Task Message Handler ──────────────────────────────────
+      crewTaskMessageHandler: null,
+      setCrewTaskMessageHandler: (handler) => set({ crewTaskMessageHandler: handler }),
       // ── Config ───────────────────────────────────────────────────────────
       setActiveProvider: (provider) => set({ activeProvider: normalizeChatProvider(provider) }),
       setConfig: (patch) => set((s) => ({ config: { ...s.config, ...patch } })),
       setApiKey: (apiKey) => set((s) => ({ config: { ...s.config, apiKey } })),
 
       // ── Init Engine ──────────────────────────────────────────────────────
-      _initEngine: (cwd: string, providerSelection?: ChatProviderSelection, permissionConfig?: { mode: PermissionMode; allowedDirectories: string[] }): QueryEngine => {
+      _initEngine: async (cwd: string, providerSelection?: ChatProviderSelection, permissionConfig?: { mode: PermissionMode; allowedDirectories: string[] }): Promise<QueryEngine> => {
         ensureCommandsRegistered()
+
+        const { QueryEngine } = await import('../engine/core/queryEngine')
 
         const { config, activeProvider, currentRunId, currentSessionId } = get()
         const providerState = getChatProviderState(useConfigStore.getState(), activeProvider, providerSelection)
@@ -376,6 +495,37 @@ export const useEngineStore = create<EngineStoreState>()(
               }
             }
 
+            // Check if active thread is a crew task
+            const chatState = useChatStore.getState()
+            const activeThread = chatState.threads.find(t => t.id === chatState.activeThreadId)
+            const isCrewTask = activeThread?.runner === 'crew' && activeThread?.crewId
+
+            // If this is a crew task, delegate to crew handler
+            if (isCrewTask && get().crewTaskMessageHandler) {
+              const runId = crypto.randomUUID()
+              set({
+                status: 'streaming',
+                streamingText: '',
+                thinkingText: '',
+                error: null,
+                activeTools: [],
+                currentToolUI: null,
+                currentRunId: runId,
+              })
+              
+              return get().crewTaskMessageHandler!({
+                userInput,
+                cwd,
+                onEvent,
+                historySeed,
+                providerSelection,
+                permissionConfig,
+                crewId: activeThread!.crewId!,
+                threadId: activeThread!.id,
+                runId,
+              })
+            }
+
             const runId = crypto.randomUUID()
             set({
               status: 'streaming',
@@ -394,7 +544,7 @@ export const useEngineStore = create<EngineStoreState>()(
             const provider = getResolvedProvider(providerState.provider)
             let engine = state._engine
             if (!engine) {
-              engine = state._initEngine(cwd, providerSelection, permissionConfig)
+              engine = await state._initEngine(cwd, providerSelection, permissionConfig)
             } else {
               engine.updateConfig(buildChatEngineConfig(
                 provider,
@@ -558,6 +708,11 @@ export const useEngineStore = create<EngineStoreState>()(
                     break
 
                   case 'error':
+                    // Treat user-initiated abort as a clean stop, not an error
+                    if (event.error === 'Abgebrochen.') {
+                      set({ status: 'idle', currentRunId: null })
+                      break
+                    }
                     void invoke('engine_run_update', {
                       request: {
                         id: runId,

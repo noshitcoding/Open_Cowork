@@ -4,6 +4,20 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+#[cfg(target_os = "windows")]
+fn suppress_command_window(command: &mut Command) {
+    command.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg(not(target_os = "windows"))]
+fn suppress_command_window(_command: &mut Command) {}
+
 // ── Types ───────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -69,20 +83,35 @@ pub struct ClaudeCodeToolInfo {
 pub fn get_claude_code_commands() -> Vec<ClaudeCodeCommandInfo> {
     let commands = vec![
         // Session Management
-        ("clear", "Kontext loeschen und neue Session starten", "session"),
-        ("compact", "Konversation komprimieren (Token sparen)", "session"),
+        (
+            "clear",
+            "Kontext loeschen und neue Session starten",
+            "session",
+        ),
+        (
+            "compact",
+            "Konversation komprimieren (Token sparen)",
+            "session",
+        ),
         ("resume", "Vorherige Session fortsetzen", "session"),
         ("recap", "Zusammenfassung der aktuellen Session", "session"),
         ("exit", "Session beenden", "session"),
-        ("cost", "Aktuelle Kosten und Token-Verbrauch anzeigen", "session"),
+        (
+            "cost",
+            "Aktuelle Kosten und Token-Verbrauch anzeigen",
+            "session",
+        ),
         ("stats", "Session-Statistiken anzeigen", "session"),
         ("status", "Status der aktuellen Session", "session"),
         ("export", "Session exportieren", "session"),
-
         // Configuration
         ("config", "Konfiguration anzeigen und aendern", "config"),
         ("model", "Modell wechseln (z.B. opus, sonnet)", "config"),
-        ("memory", "Projektgedaechtnis (CLAUDE.md) bearbeiten", "config"),
+        (
+            "memory",
+            "Projektgedaechtnis (CLAUDE.md) bearbeiten",
+            "config",
+        ),
         ("permissions", "Berechtigungen verwalten", "config"),
         ("init", "Projekt initialisieren (.claude/ Ordner)", "config"),
         ("login", "API-Authentifizierung", "config"),
@@ -90,7 +119,6 @@ pub fn get_claude_code_commands() -> Vec<ClaudeCodeCommandInfo> {
         ("theme", "Farbschema aendern", "config"),
         ("color", "Farbeinstellungen", "config"),
         ("keybindings", "Tastenkuerzel anzeigen", "config"),
-
         // Code & Files
         ("diff", "Aenderungen als Diff anzeigen", "code"),
         ("review", "Code-Review durchfuehren", "code"),
@@ -98,20 +126,29 @@ pub fn get_claude_code_commands() -> Vec<ClaudeCodeCommandInfo> {
         ("autofix-pr", "PR automatisch reparieren", "code"),
         ("branch", "Git Branch erstellen/wechseln", "code"),
         ("commit", "Aenderungen committen", "code"),
-
         // Planning & Execution
-        ("plan", "Detaillierten Plan erstellen (ultraplan)", "planning"),
-        ("ultraplan", "Umfassenden Plan mit Analyse erstellen", "planning"),
-        ("ultrareview", "Tiefgehenden Review durchfuehren", "planning"),
+        (
+            "plan",
+            "Detaillierten Plan erstellen (ultraplan)",
+            "planning",
+        ),
+        (
+            "ultraplan",
+            "Umfassenden Plan mit Analyse erstellen",
+            "planning",
+        ),
+        (
+            "ultrareview",
+            "Tiefgehenden Review durchfuehren",
+            "planning",
+        ),
         ("simplify", "Code vereinfachen", "planning"),
-
         // Agent & Tasks
         ("agents", "Sub-Agenten verwalten", "agents"),
         ("tasks", "Aktive Tasks anzeigen und verwalten", "agents"),
         ("batch", "Batch-Operationen ausfuehren", "agents"),
         ("loop", "Schleife fuer wiederkehrende Aufgaben", "agents"),
         ("schedule", "Aufgabe zeitgesteuert ausfuehren", "agents"),
-
         // Tools & Extensions
         ("mcp", "MCP-Server verwalten", "tools"),
         ("skills", "Skills durchsuchen und ausfuehren", "tools"),
@@ -120,26 +157,31 @@ pub fn get_claude_code_commands() -> Vec<ClaudeCodeCommandInfo> {
         ("chrome", "Chrome-Integration", "tools"),
         ("desktop", "Desktop-Interaktion", "tools"),
         ("voice", "Spracheingabe", "tools"),
-
         // IDE & Bridge
         ("ide", "IDE-Integration verwalten", "bridge"),
         ("bridge", "Bridge-Verbindung verwalten", "bridge"),
         ("remote-env", "Remote-Umgebung konfigurieren", "bridge"),
         ("remote-control", "Fernsteuerung", "bridge"),
-
         // Debugging
         ("debug", "Debug-Modus aktivieren", "debug"),
         ("doctor", "System-Diagnose ausfuehren", "debug"),
         ("feedback", "Feedback senden", "debug"),
-
         // Advanced
         ("context", "Kontext anzeigen und bearbeiten", "advanced"),
         ("focus", "Fokus auf bestimmte Dateien/Ordner", "advanced"),
         ("add-dir", "Verzeichnis zum Kontext hinzufuegen", "advanced"),
         ("sandbox", "Sandbox-Umgebung nutzen", "advanced"),
-        ("effort", "Aufwand-Level einstellen (low/medium/high)", "advanced"),
+        (
+            "effort",
+            "Aufwand-Level einstellen (low/medium/high)",
+            "advanced",
+        ),
         ("fast", "Schnellmodus (weniger Denkzeit)", "advanced"),
-        ("rewind", "Zu einem frueheren Zustand zurueckspringen", "advanced"),
+        (
+            "rewind",
+            "Zu einem frueheren Zustand zurueckspringen",
+            "advanced",
+        ),
         ("insights", "Erkenntnisse und Muster anzeigen", "advanced"),
         ("release-notes", "Release Notes generieren", "advanced"),
     ];
@@ -157,25 +199,101 @@ pub fn get_claude_code_commands() -> Vec<ClaudeCodeCommandInfo> {
 /// All known Claude Code tools
 pub fn get_claude_code_tools() -> Vec<ClaudeCodeToolInfo> {
     vec![
-        ClaudeCodeToolInfo { name: "bash".into(), description: "Shell-Befehle ausfuehren".into(), category: "execution".into() },
-        ClaudeCodeToolInfo { name: "read".into(), description: "Dateien lesen".into(), category: "file".into() },
-        ClaudeCodeToolInfo { name: "write".into(), description: "Dateien schreiben".into(), category: "file".into() },
-        ClaudeCodeToolInfo { name: "edit".into(), description: "Dateien editieren (Diff-basiert)".into(), category: "file".into() },
-        ClaudeCodeToolInfo { name: "glob".into(), description: "Dateien per Muster suchen".into(), category: "file".into() },
-        ClaudeCodeToolInfo { name: "grep".into(), description: "Textsuche in Dateien".into(), category: "file".into() },
-        ClaudeCodeToolInfo { name: "ls".into(), description: "Verzeichnis auflisten".into(), category: "file".into() },
-        ClaudeCodeToolInfo { name: "agent".into(), description: "Sub-Agent starten".into(), category: "agents".into() },
-        ClaudeCodeToolInfo { name: "skill".into(), description: "Skill ausfuehren".into(), category: "agents".into() },
-        ClaudeCodeToolInfo { name: "task_create".into(), description: "Aufgabe erstellen".into(), category: "agents".into() },
-        ClaudeCodeToolInfo { name: "task_stop".into(), description: "Aufgabe stoppen".into(), category: "agents".into() },
-        ClaudeCodeToolInfo { name: "web_search".into(), description: "Web-Suche durchfuehren".into(), category: "web".into() },
-        ClaudeCodeToolInfo { name: "web_fetch".into(), description: "URL abrufen".into(), category: "web".into() },
-        ClaudeCodeToolInfo { name: "mcp_tool".into(), description: "MCP-Tool aufrufen".into(), category: "mcp".into() },
-        ClaudeCodeToolInfo { name: "mcp_resource".into(), description: "MCP-Ressource lesen".into(), category: "mcp".into() },
-        ClaudeCodeToolInfo { name: "lsp".into(), description: "Language Server Anfrage".into(), category: "code".into() },
-        ClaudeCodeToolInfo { name: "notebook_edit".into(), description: "Jupyter Notebook bearbeiten".into(), category: "code".into() },
-        ClaudeCodeToolInfo { name: "config_tool".into(), description: "Konfiguration aendern".into(), category: "config".into() },
-        ClaudeCodeToolInfo { name: "plan_mode".into(), description: "Plan-Modus umschalten".into(), category: "planning".into() },
+        ClaudeCodeToolInfo {
+            name: "bash".into(),
+            description: "Shell-Befehle ausfuehren".into(),
+            category: "execution".into(),
+        },
+        ClaudeCodeToolInfo {
+            name: "read".into(),
+            description: "Dateien lesen".into(),
+            category: "file".into(),
+        },
+        ClaudeCodeToolInfo {
+            name: "write".into(),
+            description: "Dateien schreiben".into(),
+            category: "file".into(),
+        },
+        ClaudeCodeToolInfo {
+            name: "edit".into(),
+            description: "Dateien editieren (Diff-basiert)".into(),
+            category: "file".into(),
+        },
+        ClaudeCodeToolInfo {
+            name: "glob".into(),
+            description: "Dateien per Muster suchen".into(),
+            category: "file".into(),
+        },
+        ClaudeCodeToolInfo {
+            name: "grep".into(),
+            description: "Textsuche in Dateien".into(),
+            category: "file".into(),
+        },
+        ClaudeCodeToolInfo {
+            name: "ls".into(),
+            description: "Verzeichnis auflisten".into(),
+            category: "file".into(),
+        },
+        ClaudeCodeToolInfo {
+            name: "agent".into(),
+            description: "Sub-Agent starten".into(),
+            category: "agents".into(),
+        },
+        ClaudeCodeToolInfo {
+            name: "skill".into(),
+            description: "Skill ausfuehren".into(),
+            category: "agents".into(),
+        },
+        ClaudeCodeToolInfo {
+            name: "task_create".into(),
+            description: "Aufgabe erstellen".into(),
+            category: "agents".into(),
+        },
+        ClaudeCodeToolInfo {
+            name: "task_stop".into(),
+            description: "Aufgabe stoppen".into(),
+            category: "agents".into(),
+        },
+        ClaudeCodeToolInfo {
+            name: "web_search".into(),
+            description: "Web-Suche durchfuehren".into(),
+            category: "web".into(),
+        },
+        ClaudeCodeToolInfo {
+            name: "web_fetch".into(),
+            description: "URL abrufen".into(),
+            category: "web".into(),
+        },
+        ClaudeCodeToolInfo {
+            name: "mcp_tool".into(),
+            description: "MCP-Tool aufrufen".into(),
+            category: "mcp".into(),
+        },
+        ClaudeCodeToolInfo {
+            name: "mcp_resource".into(),
+            description: "MCP-Ressource lesen".into(),
+            category: "mcp".into(),
+        },
+        ClaudeCodeToolInfo {
+            name: "lsp".into(),
+            description: "Language Server Anfrage".into(),
+            category: "code".into(),
+        },
+        ClaudeCodeToolInfo {
+            name: "notebook_edit".into(),
+            description: "Jupyter Notebook bearbeiten".into(),
+            category: "code".into(),
+        },
+        ClaudeCodeToolInfo {
+            name: "config_tool".into(),
+            description: "Konfiguration aendern".into(),
+            category: "config".into(),
+        },
+        ClaudeCodeToolInfo {
+            name: "plan_mode".into(),
+            description: "Plan-Modus umschalten".into(),
+            category: "planning".into(),
+        },
     ]
 }
 
@@ -209,10 +327,12 @@ impl ClaudeCodeBridge {
 
         let bun_path = resolve_bun_path(&config.bun_path)?;
         let cc_path = resolve_claude_code_path(&config.claude_code_path)?;
-        let work_dir = config
-            .working_dir
-            .clone()
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default().to_string_lossy().to_string());
+        let work_dir = config.working_dir.clone().unwrap_or_else(|| {
+            std::env::current_dir()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string()
+        });
 
         let session_id = uuid::Uuid::new_v4().to_string();
 
@@ -228,6 +348,7 @@ impl ClaudeCodeBridge {
         if let Some(ref key) = config.api_key {
             cmd.env("ANTHROPIC_API_KEY", key);
         }
+        suppress_command_window(&mut cmd);
 
         let child = cmd.spawn().map_err(|e| {
             format!(
@@ -293,10 +414,12 @@ impl ClaudeCodeBridge {
     ) -> Result<ClaudeCodeResponse, String> {
         let bun_path = resolve_bun_path(&config.bun_path)?;
         let cc_path = resolve_claude_code_path(&config.claude_code_path)?;
-        let work_dir = config
-            .working_dir
-            .clone()
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default().to_string_lossy().to_string());
+        let work_dir = config.working_dir.clone().unwrap_or_else(|| {
+            std::env::current_dir()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string()
+        });
 
         let session_id = uuid::Uuid::new_v4().to_string();
         let start = std::time::Instant::now();
@@ -323,6 +446,7 @@ impl ClaudeCodeBridge {
             cmd.arg("--max-turns");
             cmd.arg(max_turns.to_string());
         }
+        suppress_command_window(&mut cmd);
 
         let output = cmd
             .output()
@@ -372,10 +496,12 @@ impl ClaudeCodeBridge {
     {
         let bun_path = resolve_bun_path(&config.bun_path)?;
         let cc_path = resolve_claude_code_path(&config.claude_code_path)?;
-        let work_dir = config
-            .working_dir
-            .clone()
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default().to_string_lossy().to_string());
+        let work_dir = config.working_dir.clone().unwrap_or_else(|| {
+            std::env::current_dir()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string()
+        });
 
         let start = std::time::Instant::now();
         let sid = session_id.to_string();
@@ -402,6 +528,7 @@ impl ClaudeCodeBridge {
             cmd.arg("--max-turns");
             cmd.arg(max_turns.to_string());
         }
+        suppress_command_window(&mut cmd);
 
         let mut child = cmd
             .spawn()
@@ -490,7 +617,11 @@ impl ClaudeCodeBridge {
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 fn resolve_bun_path(configured: &str) -> Result<String, String> {
-    let path = if configured.is_empty() { "bun" } else { configured };
+    let path = if configured.is_empty() {
+        "bun"
+    } else {
+        configured
+    };
     Ok(path.to_string())
 }
 

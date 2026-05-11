@@ -4,6 +4,7 @@ import CrewPanel from './CrewPanel'
 import { safeInvoke } from '../utils/safeInvoke'
 import { useConfigStore } from '../stores/configStore'
 import { useCrewStore, type CrewAgent } from '../stores/crewStore'
+import { usePersonalityStore } from '../stores/personalityStore'
 
 vi.mock('../utils/safeInvoke', () => ({
   safeInvoke: vi.fn(),
@@ -86,7 +87,10 @@ describe('CrewPanel', () => {
           id: 'crew-1',
           name: 'Test Crew',
           description: '',
+          executionSubject: 'workspace-user',
           executionGuidelines: '',
+          knowledgeFocus: '',
+          governanceMode: 'allow-all',
           outputMode: 'standard',
           stopOnFailure: false,
           retryCount: 0,
@@ -138,9 +142,20 @@ describe('CrewPanel', () => {
       activeCrewId: 'crew-1',
       loading: false,
     })
+
+    usePersonalityStore.setState({
+      personalities: [],
+      activeId: null,
+      loading: false,
+      error: null,
+      loadPersonalities: vi.fn().mockResolvedValue(undefined),
+      upsertPersonality: vi.fn().mockResolvedValue(undefined),
+      deletePersonality: vi.fn().mockResolvedValue(undefined),
+      setActive: vi.fn(),
+    })
   })
 
-  it('preserves custom member overrides when changing the crew provider', async () => {
+  it('syncs member providers to the crew provider when changing the crew provider', async () => {
     await act(async () => {
       render(<CrewPanel />)
     })
@@ -160,8 +175,81 @@ describe('CrewPanel', () => {
     expect(crew.defaultProvider).toBe('openai-compatible')
     expect(crew.defaultModel).toBe('')
     expect(defaultAgent?.providerKind).toBe('openai-compatible')
-    expect(customAgent?.providerKind).toBe('ollama')
-    expect(customAgent?.modelOverride).toBe('llama3.1:70b')
-    expect(screen.getByText('Mitglieder mit eigenem Provider/Modell bleiben beim Umschalten unverändert.')).toBeInTheDocument()
+    expect(customAgent?.providerKind).toBe('openai-compatible')
+    expect(screen.getByText('Der Crew-Provider gilt fuer alle Mitglieder. Pro Mitglied ist nur noch das Modell ueberschreibbar.')).toBeInTheDocument()
+  })
+
+  it('can grant a tool to all crew members from the crew-level access panel', async () => {
+    await act(async () => {
+      render(<CrewPanel />)
+    })
+
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText('Task delegieren'))
+    })
+
+    const crew = useCrewStore.getState().crews[0]
+    expect(crew.agents.every((agent) => agent.tools.includes('delegate_task'))).toBe(true)
+    expect(crew.agents.every((agent) => agent.allowDelegation)).toBe(true)
+  })
+
+  it('can grant an MCP server to all crew members from the crew-level access panel', async () => {
+    useConfigStore.setState({
+      mcpServers: [
+        { name: 'workspace-mcp', command: 'node', args: 'server.js', env: {} },
+      ],
+    })
+
+    await act(async () => {
+      render(<CrewPanel />)
+    })
+
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText('workspace-mcp'))
+    })
+
+    const crew = useCrewStore.getState().crews[0]
+    expect(crew.agents.every((agent) => agent.mcpServerNames.includes('workspace-mcp'))).toBe(true)
+  })
+
+  it('adds newly created custom personalities to existing crew members automatically', async () => {
+    usePersonalityStore.setState((state) => ({
+      ...state,
+      personalities: [
+        {
+          id: 'personality-product-owner',
+          name: 'Product Owner',
+          description: 'Priorisiert Anforderungen und strukturiert den Arbeitsfokus.',
+          role: 'planner',
+          goal: 'Priorisiert Anforderungen und strukturiert den Arbeitsfokus.',
+          system_prompt: 'Arbeite wie ein Product Owner.',
+          skills_markdown: '# Product Owner\n- Priorisierung\n- Anforderungen',
+          temperature: null,
+          model_override: 'qwen3:14b',
+          icon: 'PO',
+          is_default: false,
+          created_at: '2026-05-04T00:00:00.000Z',
+          updated_at: '2026-05-04T00:00:00.000Z',
+        },
+      ],
+    }))
+
+    await act(async () => {
+      render(<CrewPanel />)
+    })
+
+    const crew = useCrewStore.getState().crews[0]
+    const syncedAgent = crew.agents.find((agent) => agent.personalityId === 'personality-product-owner')
+
+    expect(crew.agents).toHaveLength(3)
+    expect(syncedAgent).toMatchObject({
+      id: 'agent-personality-personality-product-owner',
+      name: 'Product Owner',
+      role: 'planner',
+      goal: 'Priorisiert Anforderungen und strukturiert den Arbeitsfokus.',
+      backstory: 'Arbeite wie ein Product Owner.',
+      skillsMarkdown: '# Product Owner\n- Priorisierung\n- Anforderungen',
+      modelOverride: 'qwen3:14b',
+    })
   })
 })

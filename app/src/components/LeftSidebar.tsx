@@ -1,13 +1,34 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import type { DragEvent, PointerEvent as ReactPointerEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { SessionSummary } from '../engine'
 import { useChatStore } from '../stores/chatStore'
 import { useUiStore } from '../stores/uiStore'
 import { useConfigStore } from '../stores/configStore'
-import { useCoworkStore } from '../stores/coworkStore'
 import { useEngineStore } from '../stores/engineStore'
+import { useTaskStore } from '../stores/taskStore'
 import { useWorkTasksStore, type WorkTask } from '../stores/workTasksStore'
+import { useProjectStore } from '../stores/projectStore'
 import { createChatProviderSelection, getChatProviderState } from '../utils/chatProvider'
+import { ContextPanel, OutputsPanel, ProgressPanel, WorkingFolderPanel } from './RightSidebar'
+
+const THREAD_DND_MIME = 'application/open-cowork-thread-id'
+const POINTER_DRAG_THRESHOLD = 5
+
+type PointerThreadDrag = {
+  threadId: string
+  title: string
+  pointerId: number
+  startX: number
+  startY: number
+  x: number
+  y: number
+  active: boolean
+}
+
+type ThreadDropTarget =
+  | { type: 'project'; projectId: string }
+  | { type: 'chats' }
 
 function isAbsolutePath(path: string): boolean {
   const trimmed = path.trim()
@@ -20,7 +41,7 @@ function getTaskSidebarTitle(task: WorkTask): string {
 
   const prompt = task.prompt.trim().replace(/\s+/g, ' ')
   if (!prompt) return task.id
-  return prompt.length > 36 ? `${prompt.slice(0, 36)}…` : prompt
+  return prompt.length > 36 ? `${prompt.slice(0, 36)}...` : prompt
 }
 
 function buildTaskSidebarSummary(task: WorkTask): string {
@@ -32,15 +53,23 @@ function buildTaskSidebarSummary(task: WorkTask): string {
   ].filter(Boolean).join('\n')
 }
 
-type SidebarFilter = 'all' | 'task' | 'chat' | 'session'
+function readDraggedThreadId(event: DragEvent): string {
+  const typed = event.dataTransfer.getData(THREAD_DND_MIME).trim()
+  if (typed) return typed
 
-interface SidebarItem {
-  id: string
-  type: SidebarFilter
-  title: string
-  status?: string
-  onClick: () => void
-  onDelete?: () => void
+  const plain = event.dataTransfer.getData('text/plain').trim()
+  return plain.startsWith('thread:') ? plain.slice('thread:'.length).trim() : plain
+}
+
+function getThreadDropTarget(clientX: number, clientY: number): ThreadDropTarget | null {
+  const element = document.elementFromPoint(clientX, clientY)
+  const dropElement = element?.closest('[data-sidebar-project-id], [data-sidebar-chats-drop-zone="true"]') as HTMLElement | null
+  if (!dropElement) return null
+
+  const projectId = dropElement.dataset.sidebarProjectId
+  if (projectId) return { type: 'project', projectId }
+  if (dropElement.dataset.sidebarChatsDropZone === 'true') return { type: 'chats' }
+  return null
 }
 
 export default function LeftSidebar() {
@@ -55,27 +84,40 @@ export default function LeftSidebar() {
   } = useChatStore()
   const setActiveMode = useUiStore((s) => s.setActiveMode)
   const setWorkingFolder = useUiStore((s) => s.setWorkingFolder)
-  const mcpServer = useConfigStore((s) => s.mcpServer)
   const ollama = useConfigStore((s) => s.ollama)
   const availableModels = useConfigStore((s) => s.availableModels)
   const llmProfiles = useConfigStore((s) => s.llmProfiles)
   const defaultLlmProfileIds = useConfigStore((s) => s.defaultLlmProfileIds)
   const llmProfileModels = useConfigStore((s) => s.llmProfileModels)
-  const connectors = useCoworkStore((s) => s.connectors)
-  const plugins = useCoworkStore((s) => s.plugins)
   const workTasks = useWorkTasksStore((s) => s.tasks)
   const updateWorkTask = useWorkTasksStore((s) => s.updateTask)
+  const tasks = useTaskStore((s) => s.tasks)
+  const activeTaskId = useTaskStore((s) => s.activeTaskId)
   const activeProvider = useEngineStore((s) => s.activeProvider)
   const getSessions = useEngineStore((s) => s.getSessions)
   const loadSessionById = useEngineStore((s) => s.loadSessionById)
   const currentSessionId = useEngineStore((s) => s.currentSessionId)
   const deleteSessionById = useEngineStore((s) => s.deleteSessionById)
+  const {
+    projects,
+    activeProjectId,
+    addProject,
+    setActiveProject,
+    attachThread,
+    detachThreadFromAll,
+  } = useProjectStore()
   const [persistedSessions, setPersistedSessions] = useState<SessionSummary[]>([])
   const [loadingSessions, setLoadingSessions] = useState(false)
-  const [filter, setFilter] = useState<SidebarFilter>('all')
+  const [collapsedProjectIds, setCollapsedProjectIds] = useState<Set<string>>(new Set())
+  const [chatsCollapsed, setChatsCollapsed] = useState(false)
+  const [tasksCollapsed, setTasksCollapsed] = useState(false)
+  const [sessionsCollapsed, setSessionsCollapsed] = useState(false)
+  const [dropProjectId, setDropProjectId] = useState<string | null>(null)
+  const [chatsDropActive, setChatsDropActive] = useState(false)
+  const [pointerDrag, setPointerDrag] = useState<PointerThreadDrag | null>(null)
+  const pointerDragRef = useRef<PointerThreadDrag | null>(null)
+  const suppressThreadClickRef = useRef<string | null>(null)
 
-  const enabledConnectors = connectors.filter((entry) => entry.enabled).length
-  const enabledPlugins = plugins.filter((entry) => entry.enabled).length
   const activeThread = useMemo(
     () => threads.find((thread) => thread.id === activeThreadId),
     [activeThreadId, threads],
@@ -90,6 +132,7 @@ export default function LeftSidebar() {
     }, activeProvider, activeThread?.providerSettings),
     [activeProvider, activeThread?.providerSettings, availableModels, defaultLlmProfileIds, llmProfileModels, llmProfiles, ollama],
   )
+  const activeTask = tasks.find((task) => task.id === activeTaskId)
 
   useEffect(() => {
     let cancelled = false
@@ -108,23 +151,114 @@ export default function LeftSidebar() {
   }, [getSessions, currentSessionId])
 
   const threadIds = useMemo(() => new Set(threads.map((thread) => thread.id)), [threads])
+  const threadById = useMemo(() => new Map(threads.map((thread) => [thread.id, thread])), [threads])
   const taskThreadIds = useMemo(
     () => new Set(workTasks.map((task) => task.threadId).filter((threadId): threadId is string => typeof threadId === 'string' && threadId.trim().length > 0)),
     [workTasks],
   )
-  const historyThreads = useMemo(
-    () => threads.filter((thread) => !taskThreadIds.has(thread.id)),
-    [taskThreadIds, threads],
+  const projectThreadIds = useMemo(
+    () => new Set(projects.flatMap((project) => project.threadIds)),
+    [projects],
+  )
+  const unassignedThreads = useMemo(
+    () => threads.filter((thread) => !taskThreadIds.has(thread.id) && !projectThreadIds.has(thread.id)),
+    [projectThreadIds, taskThreadIds, threads],
   )
 
-  const handleNewTask = () => {
+  useEffect(() => {
+    if (!pointerDrag) return undefined
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const current = pointerDragRef.current
+      if (!current || event.pointerId !== current.pointerId) return
+
+      const distance = Math.hypot(event.clientX - current.startX, event.clientY - current.startY)
+      const active = current.active || distance >= POINTER_DRAG_THRESHOLD
+      const next = {
+        ...current,
+        x: event.clientX,
+        y: event.clientY,
+        active,
+      }
+      pointerDragRef.current = next
+      setPointerDrag(next)
+
+      if (!active) return
+      event.preventDefault()
+      const target = getThreadDropTarget(event.clientX, event.clientY)
+      setDropProjectId(target?.type === 'project' ? target.projectId : null)
+      setChatsDropActive(target?.type === 'chats')
+    }
+
+    const finishPointerDrag = (event: PointerEvent) => {
+      const current = pointerDragRef.current
+      if (!current || event.pointerId !== current.pointerId) return
+
+      if (current.active && threadIds.has(current.threadId)) {
+        suppressThreadClickRef.current = current.threadId
+        const target = getThreadDropTarget(event.clientX, event.clientY)
+        if (target?.type === 'project') {
+          moveThreadToProject(target.projectId, current.threadId)
+        } else if (target?.type === 'chats') {
+          detachThreadFromAll(current.threadId)
+        }
+      }
+
+      pointerDragRef.current = null
+      setPointerDrag(null)
+      clearThreadDropState()
+    }
+
+    const cancelPointerDrag = () => {
+      pointerDragRef.current = null
+      setPointerDrag(null)
+      clearThreadDropState()
+    }
+
+    window.addEventListener('pointermove', handlePointerMove, { passive: false })
+    window.addEventListener('pointerup', finishPointerDrag)
+    window.addEventListener('pointercancel', cancelPointerDrag)
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove)
+      window.removeEventListener('pointerup', finishPointerDrag)
+      window.removeEventListener('pointercancel', cancelPointerDrag)
+    }
+  }, [detachThreadFromAll, pointerDrag, threadIds])
+
+  const handleNewChat = (projectId?: string) => {
     const threadId = addThread('Neuer Chat', createChatProviderSelection(providerState))
+    if (projectId) {
+      attachThread(projectId, threadId)
+      setActiveProject(projectId)
+    }
     setActiveMode('work')
     setActiveThread(threadId)
     navigate('/')
   }
 
+  const handleNewProject = () => {
+    const projectId = addProject(`Projekt ${projects.length + 1}`)
+    setActiveProject(projectId)
+    navigate('/projects')
+  }
+
+  const handleOpenProjects = () => {
+    if (!activeProjectId && projects[0]) {
+      setActiveProject(projects[0].id)
+    }
+    navigate('/projects')
+  }
+
+  const handleOpenProject = (projectId: string) => {
+    setActiveProject(projectId)
+    navigate('/projects')
+  }
+
   const handleOpenThread = (threadId: string) => {
+    if (suppressThreadClickRef.current === threadId) {
+      suppressThreadClickRef.current = null
+      return
+    }
     setActiveMode('work')
     setActiveThread(threadId)
     navigate('/')
@@ -164,154 +298,296 @@ export default function LeftSidebar() {
     navigate('/')
   }
 
-  const items: SidebarItem[] = useMemo(() => {
-    const result: SidebarItem[] = []
-
-    workTasks.forEach((task) => {
-      result.push({
-        id: `task-${task.id}`,
-        type: 'task',
-        title: `${getTaskSidebarTitle(task)} · ${task.status}`,
-        status: task.status,
-        onClick: () => handleOpenTaskThread(task),
-      })
+  const toggleProjectCollapsed = (projectId: string) => {
+    setCollapsedProjectIds((current) => {
+      const next = new Set(current)
+      if (next.has(projectId)) {
+        next.delete(projectId)
+      } else {
+        next.add(projectId)
+      }
+      return next
     })
+  }
 
-    historyThreads.forEach((t) => {
-      result.push({
-        id: `chat-${t.id}`,
-        type: 'chat',
-        title: t.title,
-        onClick: () => handleOpenThread(t.id),
-        onDelete: () => deleteThread(t.id),
-      })
+  const clearThreadDropState = () => {
+    setDropProjectId(null)
+    setChatsDropActive(false)
+  }
+
+  const moveThreadToProject = (projectId: string, threadId: string) => {
+    attachThread(projectId, threadId)
+    setActiveProject(projectId)
+    setCollapsedProjectIds((current) => {
+      if (!current.has(projectId)) return current
+      const next = new Set(current)
+      next.delete(projectId)
+      return next
     })
+  }
 
-    persistedSessions.forEach((session) => {
-      result.push({
-        id: `session-${session.id}`,
-        type: 'session',
-        title: session.title,
-        onClick: () => void handleOpenSession(session.id),
-        onDelete: () => void deleteSessionById(session.id),
-      })
-    })
+  const handleThreadDragStart = (event: DragEvent, threadId: string) => {
+    event.stopPropagation()
+    event.dataTransfer.setData(THREAD_DND_MIME, threadId)
+    event.dataTransfer.setData('text/plain', `thread:${threadId}`)
+    event.dataTransfer.effectAllowed = 'move'
+  }
 
-    return result
-  }, [workTasks, historyThreads, persistedSessions, threadIds])
+  const handleThreadPointerDown = (
+    event: ReactPointerEvent<HTMLElement>,
+    threadId: string,
+    title: string,
+  ) => {
+    if (event.button !== 0) return
+    const target = event.target
+    if (target instanceof HTMLElement && target.closest('.sidebar-row-action')) return
 
-  const filteredItems = useMemo(() => {
-    if (filter === 'all') return items
-    return items.filter((item) => item.type === filter)
-  }, [items, filter])
-
-  const isActive = (item: SidebarItem): boolean => {
-    if (item.type === 'chat') {
-      return item.id.replace('chat-', '') === activeThreadId
+    const next = {
+      threadId,
+      title,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      x: event.clientX,
+      y: event.clientY,
+      active: false,
     }
-    if (item.type === 'task') {
-      const task = workTasks.find((t) => `task-${t.id}` === item.id)
-      return task?.threadId === activeThreadId
+    pointerDragRef.current = next
+    setPointerDrag(next)
+  }
+
+  const handleThreadDrop = (event: DragEvent, onDropThread: (threadId: string) => void) => {
+    event.preventDefault()
+    event.stopPropagation()
+    const threadId = readDraggedThreadId(event)
+    if (threadId && threadIds.has(threadId)) {
+      onDropThread(threadId)
     }
-    if (item.type === 'session') {
-      return item.id.replace('session-', '') === currentSessionId
-    }
-    return false
+    clearThreadDropState()
+  }
+
+  const handleProjectDragOver = (event: DragEvent, projectId: string) => {
+    event.preventDefault()
+    event.stopPropagation()
+    event.dataTransfer.dropEffect = 'move'
+    setDropProjectId(projectId)
+    setChatsDropActive(false)
+  }
+
+  const handleProjectDragLeave = (event: DragEvent, projectId: string) => {
+    const relatedTarget = event.relatedTarget
+    if (relatedTarget instanceof Node && event.currentTarget.contains(relatedTarget)) return
+    setDropProjectId((current) => (current === projectId ? null : current))
+  }
+
+  const handleChatsDragOver = (event: DragEvent) => {
+    event.preventDefault()
+    event.stopPropagation()
+    event.dataTransfer.dropEffect = 'move'
+    setChatsDropActive(true)
+    setDropProjectId(null)
+  }
+
+  const handleChatsDragLeave = (event: DragEvent) => {
+    const relatedTarget = event.relatedTarget
+    if (relatedTarget instanceof Node && event.currentTarget.contains(relatedTarget)) return
+    setChatsDropActive(false)
   }
 
   return (
     <aside className="left-sidebar">
-      <button type="button" className="btn-new-task" onClick={handleNewTask}>
+      <button type="button" className="btn-new-task" onClick={() => handleNewChat()}>
         + Neuer Chat
       </button>
+      <button type="button" className="btn-new-task" onClick={handleNewProject}>
+        + Neues Projekt
+      </button>
+      <button type="button" className="btn-sm" style={{ width: '100%', marginBottom: 6 }} onClick={handleOpenProjects}>
+        Projekte verwalten
+      </button>
+      <button type="button" className="btn-sm" style={{ width: '100%', marginBottom: 12 }} onClick={() => navigate('/crew')}>
+        Crew Studio
+      </button>
 
-      {/* Context Panel */}
-      <div className="sidebar-section">
-        <h3 className="sidebar-section-title">🔗 Kontext</h3>
-        <div className="context-items">
-          <div className="context-item">
-            <span className="context-label">Modell</span>
-            <span className="context-value" title={`${providerState.label}: ${providerState.model}`}>
-              {providerState.model || providerState.label}
-            </span>
-          </div>
-          <div className="context-item">
-            <span className="context-label">MCP Server</span>
-            <span className="context-value" title={mcpServer.name}>{mcpServer.name}</span>
-          </div>
-          <div className="context-item">
-            <span className="context-label">Connectors</span>
-            <span className="context-value">{enabledConnectors} aktiv</span>
-          </div>
-          <div className="context-item">
-            <span className="context-label">Plugins</span>
-            <span className="context-value">{enabledPlugins} aktiv</span>
-          </div>
-        </div>
+      <div className="sidebar-status-panels">
+        <ProgressPanel task={activeTask} />
+        <WorkingFolderPanel />
+        <OutputsPanel task={activeTask} />
+        <ContextPanel />
       </div>
 
-      {/* Unified History */}
       <div className="sidebar-section">
-        <div className="sidebar-filter-bar">
-          {(['all', 'task', 'chat', 'session'] as SidebarFilter[]).map((f) => (
-            <button
-              key={f}
-              type="button"
-              className={`sidebar-filter-btn${filter === f ? ' active' : ''}`}
-              onClick={() => setFilter(f)}
-            >
-              {f === 'all' && 'Alle'}
-              {f === 'task' && 'Tasks'}
-              {f === 'chat' && 'Chats'}
-              {f === 'session' && 'Sessions'}
-            </button>
-          ))}
-        </div>
-        <div className="session-list">
-          {filteredItems.map((item) => (
-            <div
-              key={item.id}
-              className={`session-item${isActive(item) ? ' active' : ''}`}
-            >
-              <button
-                type="button"
-                className="session-select"
-                onClick={item.onClick}
+        <div className="sidebar-group">
+          <div className="sidebar-group-title">
+            <span>Projekte</span>
+            <button type="button" onClick={handleNewProject} title="Neues Projekt">+</button>
+          </div>
+          {projects.map((project) => {
+            const projectThreads = project.threadIds
+              .map((threadId) => threadById.get(threadId))
+              .filter((thread): thread is NonNullable<typeof thread> => Boolean(thread))
+            const collapsed = collapsedProjectIds.has(project.id)
+            const active = activeProjectId === project.id
+            return (
+              <div
+                key={project.id}
+                className={`sidebar-project${active ? ' active' : ''}${dropProjectId === project.id ? ' drop-active' : ''}`}
+                data-sidebar-project-id={project.id}
+                onDragOver={(event) => handleProjectDragOver(event, project.id)}
+                onDragLeave={(event) => handleProjectDragLeave(event, project.id)}
+                onDrop={(event) => handleThreadDrop(event, (threadId) => moveThreadToProject(project.id, threadId))}
               >
-                <span className="session-icon">
-                  {item.type === 'task' && '🧩'}
-                  {item.type === 'chat' && '💬'}
-                  {item.type === 'session' && '🗂'}
-                </span>
-                <span className="session-title">{item.title}</span>
-                <span className={`session-badge badge-${item.type}`}>
-                  {item.type === 'task' && 'Task'}
-                  {item.type === 'chat' && 'Chat'}
-                  {item.type === 'session' && 'Session'}
-                </span>
-              </button>
-              {item.onDelete && (
-                <button
-                  type="button"
-                  className="session-delete"
-                  onClick={(e) => { e.stopPropagation(); item.onDelete!() }}
-                  title="Löschen"
+                <div className="sidebar-project-header">
+                  <button type="button" className="sidebar-project-main" onClick={() => handleOpenProject(project.id)}>
+                    <span className="sidebar-project-caret" onClick={(event) => { event.stopPropagation(); toggleProjectCollapsed(project.id) }}>
+                      {collapsed ? '>' : 'v'}
+                    </span>
+                    <span className="sidebar-project-name">{project.title}</span>
+                    <span className="sidebar-project-count">{projectThreads.length}</span>
+                  </button>
+                  <button type="button" className="sidebar-row-action" onClick={() => handleNewChat(project.id)} title="Chat im Projekt starten">
+                    +
+                  </button>
+                </div>
+                {!collapsed && (
+                  <div className="sidebar-thread-list">
+                    {projectThreads.map((thread) => (
+                      <div
+                        key={thread.id}
+                        className={`sidebar-thread-row thread-draggable${thread.id === activeThreadId ? ' active' : ''}`}
+                        onDragStart={(event) => handleThreadDragStart(event, thread.id)}
+                        onDragEnd={clearThreadDropState}
+                        onPointerDown={(event) => handleThreadPointerDown(event, thread.id, thread.title)}
+                        title="Chat in ein anderes Projekt ziehen"
+                      >
+                        <button
+                          type="button"
+                          className="sidebar-row-main"
+                          onDragStart={(event) => handleThreadDragStart(event, thread.id)}
+                          onDragEnd={clearThreadDropState}
+                          onClick={() => handleOpenThread(thread.id)}
+                        >
+                          {thread.title}
+                        </button>
+                      </div>
+                    ))}
+                    {projectThreads.length === 0 && <p className="hint-text">Keine Chats</p>}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+          {projects.length === 0 && <p className="hint-text">Keine Projekte</p>}
+        </div>
+
+        <div
+          className={`sidebar-group${chatsDropActive ? ' drop-active' : ''}`}
+          data-sidebar-chats-drop-zone="true"
+          onDragOver={handleChatsDragOver}
+          onDragLeave={handleChatsDragLeave}
+          onDrop={(event) => handleThreadDrop(event, detachThreadFromAll)}
+        >
+          <button
+            type="button"
+            className="sidebar-group-toggle"
+            onClick={() => setChatsCollapsed((value) => !value)}
+          >
+            <span>{chatsCollapsed ? '>' : 'v'} Chats</span>
+            <span>{unassignedThreads.length}</span>
+          </button>
+          {!chatsCollapsed && (
+            <div className="sidebar-thread-list">
+              {unassignedThreads.map((thread) => (
+                <div
+                  key={thread.id}
+                  className={`sidebar-thread-row thread-draggable${thread.id === activeThreadId ? ' active' : ''}`}
+                  onDragStart={(event) => handleThreadDragStart(event, thread.id)}
+                  onDragEnd={clearThreadDropState}
+                  onPointerDown={(event) => handleThreadPointerDown(event, thread.id, thread.title)}
+                  title="Chat in ein Projekt ziehen"
                 >
-                  ×
-                </button>
-              )}
+                  <button
+                    type="button"
+                    className="sidebar-row-main"
+                    onDragStart={(event) => handleThreadDragStart(event, thread.id)}
+                    onDragEnd={clearThreadDropState}
+                    onClick={() => handleOpenThread(thread.id)}
+                  >
+                    {thread.title}
+                  </button>
+                  <button
+                    type="button"
+                    className="sidebar-row-action"
+                    draggable={false}
+                    onClick={(event) => { event.stopPropagation(); deleteThread(thread.id) }}
+                    title="Loeschen"
+                  >
+                    x
+                  </button>
+                </div>
+              ))}
+              {unassignedThreads.length === 0 && <p className="hint-text">Keine projektlosen Chats</p>}
             </div>
-          ))}
-          {loadingSessions && (
-            <p className="hint-text">Wird geladen...</p>
           )}
-          {!loadingSessions && filteredItems.length === 0 && (
-            <p className="hint-text">
-              {filter === 'all' ? 'Noch keine Einträge' : `Keine ${filter === 'task' ? 'Tasks' : filter === 'chat' ? 'Chats' : 'Sessions'}`}
-            </p>
+        </div>
+
+        <div className="sidebar-group">
+          <button type="button" className="sidebar-group-toggle" onClick={() => setTasksCollapsed((value) => !value)}>
+            <span>{tasksCollapsed ? '>' : 'v'} Tasks</span>
+            <span>{workTasks.length}</span>
+          </button>
+          {!tasksCollapsed && (
+            <div className="sidebar-thread-list">
+              {workTasks.map((task) => (
+                <div key={task.id} className={`sidebar-thread-row${task.threadId === activeThreadId ? ' active' : ''}`}>
+                  <button type="button" className="sidebar-row-main" onClick={() => handleOpenTaskThread(task)}>
+                    {getTaskSidebarTitle(task)} - {task.status}
+                  </button>
+                </div>
+              ))}
+              {workTasks.length === 0 && <p className="hint-text">Keine Tasks</p>}
+            </div>
+          )}
+        </div>
+
+        <div className="sidebar-group">
+          <button type="button" className="sidebar-group-toggle" onClick={() => setSessionsCollapsed((value) => !value)}>
+            <span>{sessionsCollapsed ? '>' : 'v'} Sessions</span>
+            <span>{persistedSessions.length}</span>
+          </button>
+          {!sessionsCollapsed && (
+            <div className="sidebar-thread-list">
+              {persistedSessions.map((session) => (
+                <div key={session.id} className={`sidebar-thread-row${session.id === currentSessionId ? ' active' : ''}`}>
+                  <button type="button" className="sidebar-row-main" onClick={() => void handleOpenSession(session.id)}>
+                    {session.title}
+                  </button>
+                  <button
+                    type="button"
+                    className="sidebar-row-action"
+                    onClick={(event) => { event.stopPropagation(); void deleteSessionById(session.id) }}
+                    title="Loeschen"
+                  >
+                    x
+                  </button>
+                </div>
+              ))}
+              {loadingSessions && <p className="hint-text">Wird geladen...</p>}
+              {!loadingSessions && persistedSessions.length === 0 && <p className="hint-text">Keine Sessions</p>}
+            </div>
           )}
         </div>
       </div>
+      {pointerDrag?.active && (
+        <div
+          className="sidebar-drag-preview"
+          style={{
+            transform: `translate3d(${pointerDrag.x + 12}px, ${pointerDrag.y + 10}px, 0)`,
+          }}
+        >
+          {pointerDrag.title}
+        </div>
+      )}
     </aside>
   )
 }

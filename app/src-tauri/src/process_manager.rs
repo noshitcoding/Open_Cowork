@@ -3,6 +3,20 @@ use serde::{Deserialize, Serialize};
 
 use std::sync::Arc;
 
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+#[cfg(target_os = "windows")]
+fn suppress_command_window(command: &mut std::process::Command) {
+    command.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg(not(target_os = "windows"))]
+fn suppress_command_window(_command: &mut std::process::Command) {}
+
 // ── Request types ───────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -75,10 +89,7 @@ pub fn detect_admin_requirement(command: &str) -> bool {
 }
 
 /// Start a background process. If it requires admin, it must be approved first.
-pub fn start_process(
-    db: &Arc<Database>,
-    request: &ProcessStartRequest,
-) -> ProcessStartResult {
+pub fn start_process(db: &Arc<Database>, request: &ProcessStartRequest) -> ProcessStartResult {
     let id = uuid::Uuid::new_v4().to_string();
     let needs_admin = request.requires_admin || detect_admin_requirement(&request.command);
 
@@ -167,9 +178,10 @@ pub fn stop_process(db: &Arc<Database>, process_id: &str) -> Result<(), String> 
     if let Some(pid) = proc.pid {
         #[cfg(target_os = "windows")]
         {
-            let _ = std::process::Command::new("taskkill")
-                .args(["/PID", &pid.to_string(), "/F"])
-                .output();
+            let mut command = std::process::Command::new("taskkill");
+            command.args(["/PID", &pid.to_string(), "/F"]);
+            suppress_command_window(&mut command);
+            let _ = command.output();
         }
         #[cfg(not(target_os = "windows"))]
         {
@@ -203,11 +215,7 @@ pub fn list_process_statuses(db: &Arc<Database>) -> Result<Vec<ProcessStatusResu
 
 // ── Internal ────────────────────────────────────────────────────────────────
 
-fn spawn_local_process(
-    db: &Arc<Database>,
-    process_id: &str,
-    command: &str,
-) -> ProcessStartResult {
+fn spawn_local_process(db: &Arc<Database>, process_id: &str, command: &str) -> ProcessStartResult {
     let mut cmd = if cfg!(target_os = "windows") {
         let mut c = std::process::Command::new("powershell");
         c.args(["-NoProfile", "-NonInteractive", "-Command", command]);
@@ -220,6 +228,7 @@ fn spawn_local_process(
 
     cmd.stdout(std::process::Stdio::null());
     cmd.stderr(std::process::Stdio::null());
+    suppress_command_window(&mut cmd);
 
     match cmd.spawn() {
         Ok(child) => {

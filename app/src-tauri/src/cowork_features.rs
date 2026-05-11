@@ -106,7 +106,10 @@ pub struct ArtifactVersionExportInput {
     pub metadata: Value,
 }
 
-pub async fn run_sub_agents(request: SubAgentRequest, canonical_paths: Vec<PathBuf>) -> SubAgentRunResponse {
+pub async fn run_sub_agents(
+    request: SubAgentRequest,
+    canonical_paths: Vec<PathBuf>,
+) -> SubAgentRunResponse {
     let started = Instant::now();
     let parallelism = request.parallelism.unwrap_or(4).clamp(1, 12);
     let mut results = Vec::new();
@@ -115,7 +118,9 @@ pub async fn run_sub_agents(request: SubAgentRequest, canonical_paths: Vec<PathB
         let mut handles = Vec::new();
         for path in chunk {
             let path_for_worker = path.clone();
-            handles.push(tauri::async_runtime::spawn_blocking(move || analyze_single_path(path_for_worker)));
+            handles.push(tauri::async_runtime::spawn_blocking(move || {
+                analyze_single_path(path_for_worker)
+            }));
         }
 
         for handle in handles {
@@ -151,8 +156,9 @@ fn analyze_single_path(path: PathBuf) -> SubAgentItemResult {
     let started = Instant::now();
     let path_display = path.display().to_string();
 
-    let text_result = artifact_pipeline::extract_text_for_llm(path.as_path())
-        .or_else(|_| artifact_pipeline::parse_artifact(path.as_path()).map(|parsed| parsed.preview));
+    let text_result = artifact_pipeline::extract_text_for_llm(path.as_path()).or_else(|_| {
+        artifact_pipeline::parse_artifact(path.as_path()).map(|parsed| parsed.preview)
+    });
 
     match text_result {
         Ok(text) => {
@@ -181,7 +187,11 @@ fn analyze_single_path(path: PathBuf) -> SubAgentItemResult {
     }
 }
 
-pub fn generate_pro_outputs(request: ProOutputRequest, csv_path: &Path, output_dir: &Path) -> Result<ProOutputResponse, String> {
+pub fn generate_pro_outputs(
+    request: ProOutputRequest,
+    csv_path: &Path,
+    output_dir: &Path,
+) -> Result<ProOutputResponse, String> {
     fs::create_dir_all(output_dir).map_err(|err| err.to_string())?;
 
     let (headers, rows) = parse_csv(csv_path)?;
@@ -196,7 +206,13 @@ pub fn generate_pro_outputs(request: ProOutputRequest, csv_path: &Path, output_d
     write_xlsx(&xlsx_path, &headers, &rows, &totals)?;
     write_docx(&docx_path, &headers, rows.len(), &totals)?;
     write_pptx_report(&pptx_path, rows.len(), headers.len(), &totals)?;
-    write_simple_pdf(&pdf_path, "Cowork Ergebnisreport", rows.len(), headers.len(), &totals)?;
+    write_simple_pdf(
+        &pdf_path,
+        "Cowork Ergebnisreport",
+        rows.len(),
+        headers.len(),
+        &totals,
+    )?;
 
     Ok(ProOutputResponse {
         csv_path: csv_path.display().to_string(),
@@ -214,7 +230,9 @@ pub fn generate_pro_outputs(request: ProOutputRequest, csv_path: &Path, output_d
     })
 }
 
-pub fn generate_office_workflow(mut request: OfficeWorkflowRequest) -> Result<OfficeWorkflowResponse, String> {
+pub fn generate_office_workflow(
+    mut request: OfficeWorkflowRequest,
+) -> Result<OfficeWorkflowResponse, String> {
     let format = request.format.trim().to_lowercase();
     if format != "docx" && format != "pptx" {
         return Err("unsupported office format (allowed: docx, pptx)".to_string());
@@ -236,7 +254,10 @@ pub fn generate_office_workflow(mut request: OfficeWorkflowRequest) -> Result<Of
     }
 
     if let Some(title) = request.title.clone() {
-        request.transforms.entry("title".to_string()).or_insert(title);
+        request
+            .transforms
+            .entry("title".to_string())
+            .or_insert(title);
     }
     if !request.paragraphs.is_empty() {
         request
@@ -273,7 +294,12 @@ pub fn generate_office_workflow(mut request: OfficeWorkflowRequest) -> Result<Of
         if format == "docx" {
             write_docx(&output_path, &headers, row_count, &totals)?;
         } else {
-            write_pptx(&output_path, request.title.as_deref(), &request.paragraphs, &request.bullets)?;
+            write_pptx(
+                &output_path,
+                request.title.as_deref(),
+                &request.paragraphs,
+                &request.bullets,
+            )?;
         }
 
         generated.push(OfficeWorkflowArtifact {
@@ -284,10 +310,9 @@ pub fn generate_office_workflow(mut request: OfficeWorkflowRequest) -> Result<Of
     }
 
     if mode != "native" {
-        let template_path = request
-            .template_path
-            .as_deref()
-            .ok_or_else(|| "templatePath ist fuer mode=template oder mode=parallel erforderlich".to_string())?;
+        let template_path = request.template_path.as_deref().ok_or_else(|| {
+            "templatePath ist fuer mode=template oder mode=parallel erforderlich".to_string()
+        })?;
         let template_output = if mode == "template" {
             output_path.clone()
         } else {
@@ -425,7 +450,10 @@ fn apply_office_template_transform(
     transforms: &HashMap<String, String>,
 ) -> Result<usize, String> {
     if !template_path.exists() {
-        return Err(format!("template file not found: {}", template_path.display()));
+        return Err(format!(
+            "template file not found: {}",
+            template_path.display()
+        ));
     }
 
     let template_file = fs::File::open(template_path).map_err(|err| err.to_string())?;
@@ -449,7 +477,9 @@ fn apply_office_template_transform(
         }
 
         let mut bytes = Vec::new();
-        entry.read_to_end(&mut bytes).map_err(|err| err.to_string())?;
+        entry
+            .read_to_end(&mut bytes)
+            .map_err(|err| err.to_string())?;
 
         if should_transform_entry(format, &entry_name) {
             if let Ok(text) = String::from_utf8(bytes.clone()) {
@@ -478,7 +508,10 @@ pub fn export_artifact_version_native(
 ) -> Result<(), String> {
     let field_rows = build_artifact_field_rows(input);
     let headers = vec!["Feld".to_string(), "Wert".to_string()];
-    let totals = vec![("source_size_bytes".to_string(), input.source_size_bytes as f64)];
+    let totals = vec![(
+        "source_size_bytes".to_string(),
+        input.source_size_bytes as f64,
+    )];
 
     match export_format {
         "xlsx" => write_xlsx(target_path, &headers, &field_rows, &totals),
@@ -491,10 +524,15 @@ pub fn export_artifact_version_native(
         "pdf" => {
             let title = format!(
                 "Artefakt Export {} ({})",
-                input.artifact_version_id,
-                input.source_format
+                input.artifact_version_id, input.source_format
             );
-            write_simple_pdf(target_path, &title, field_rows.len(), headers.len(), &totals)
+            write_simple_pdf(
+                target_path,
+                &title,
+                field_rows.len(),
+                headers.len(),
+                &totals,
+            )
         }
         _ => Err("unsupported native format".to_string()),
     }
@@ -502,22 +540,31 @@ pub fn export_artifact_version_native(
 
 fn build_artifact_field_rows(input: &ArtifactVersionExportInput) -> Vec<Vec<String>> {
     let mut rows = vec![
-        vec!["artifact_version_id".to_string(), input.artifact_version_id.clone()],
-        vec!["run_id".to_string(), input.run_id.clone().unwrap_or_else(|| "-".to_string())],
-        vec!["label".to_string(), input.label.clone().unwrap_or_else(|| "-".to_string())],
+        vec![
+            "artifact_version_id".to_string(),
+            input.artifact_version_id.clone(),
+        ],
+        vec![
+            "run_id".to_string(),
+            input.run_id.clone().unwrap_or_else(|| "-".to_string()),
+        ],
+        vec![
+            "label".to_string(),
+            input.label.clone().unwrap_or_else(|| "-".to_string()),
+        ],
         vec!["source_path".to_string(), input.source_path.clone()],
         vec!["source_format".to_string(), input.source_format.clone()],
-        vec!["source_size_bytes".to_string(), input.source_size_bytes.to_string()],
+        vec![
+            "source_size_bytes".to_string(),
+            input.source_size_bytes.to_string(),
+        ],
         vec!["summary".to_string(), input.summary.clone()],
         vec!["preview".to_string(), input.preview.clone()],
     ];
 
     if let Some(metadata_map) = input.metadata.as_object() {
         for (key, value) in metadata_map {
-            rows.push(vec![
-                format!("metadata.{}", key),
-                value.to_string(),
-            ]);
+            rows.push(vec![format!("metadata.{}", key), value.to_string()]);
         }
     }
 
@@ -527,9 +574,20 @@ fn build_artifact_field_rows(input: &ArtifactVersionExportInput) -> Vec<Vec<Stri
 fn sanitize_base_name(input: &str) -> String {
     let sanitized: String = input
         .chars()
-        .map(|ch| if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' { ch } else { '_' })
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch
+            } else {
+                '_'
+            }
+        })
         .collect();
-    sanitized.trim_matches('_').to_string().chars().take(48).collect()
+    sanitized
+        .trim_matches('_')
+        .to_string()
+        .chars()
+        .take(48)
+        .collect()
 }
 
 fn parse_csv(path: &Path) -> Result<(Vec<String>, Vec<Vec<String>>), String> {
@@ -573,12 +631,18 @@ fn compute_numeric_totals(headers: &[String], rows: &[Vec<String>]) -> Vec<(Stri
     totals
 }
 
-fn write_xlsx(path: &Path, headers: &[String], rows: &[Vec<String>], totals: &[(String, f64)]) -> Result<(), String> {
+fn write_xlsx(
+    path: &Path,
+    headers: &[String],
+    rows: &[Vec<String>],
+    totals: &[(String, f64)],
+) -> Result<(), String> {
     let file = fs::File::create(path).map_err(|err| err.to_string())?;
     let mut zip = zip::ZipWriter::new(file);
     let options: FileOptions<'_, ()> = FileOptions::default();
 
-    zip.start_file("[Content_Types].xml", options).map_err(|err| err.to_string())?;
+    zip.start_file("[Content_Types].xml", options)
+        .map_err(|err| err.to_string())?;
     zip.write_all(br#"<?xml version=\"1.0\" encoding=\"UTF-8\"?>
 <Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">
   <Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>
@@ -588,18 +652,24 @@ fn write_xlsx(path: &Path, headers: &[String], rows: &[Vec<String>], totals: &[(
   <Override PartName=\"/xl/styles.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml\"/>
 </Types>"#).map_err(|err| err.to_string())?;
 
-    zip.add_directory("_rels", options).map_err(|err| err.to_string())?;
-    zip.start_file("_rels/.rels", options).map_err(|err| err.to_string())?;
+    zip.add_directory("_rels", options)
+        .map_err(|err| err.to_string())?;
+    zip.start_file("_rels/.rels", options)
+        .map_err(|err| err.to_string())?;
     zip.write_all(br#"<?xml version=\"1.0\" encoding=\"UTF-8\"?>
 <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">
   <Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"xl/workbook.xml\"/>
 </Relationships>"#).map_err(|err| err.to_string())?;
 
-    zip.add_directory("xl", options).map_err(|err| err.to_string())?;
-    zip.add_directory("xl/_rels", options).map_err(|err| err.to_string())?;
-    zip.add_directory("xl/worksheets", options).map_err(|err| err.to_string())?;
+    zip.add_directory("xl", options)
+        .map_err(|err| err.to_string())?;
+    zip.add_directory("xl/_rels", options)
+        .map_err(|err| err.to_string())?;
+    zip.add_directory("xl/worksheets", options)
+        .map_err(|err| err.to_string())?;
 
-    zip.start_file("xl/workbook.xml", options).map_err(|err| err.to_string())?;
+    zip.start_file("xl/workbook.xml", options)
+        .map_err(|err| err.to_string())?;
     zip.write_all(br#"<?xml version=\"1.0\" encoding=\"UTF-8\"?>
 <workbook xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
   <sheets>
@@ -607,14 +677,16 @@ fn write_xlsx(path: &Path, headers: &[String], rows: &[Vec<String>], totals: &[(
   </sheets>
 </workbook>"#).map_err(|err| err.to_string())?;
 
-    zip.start_file("xl/_rels/workbook.xml.rels", options).map_err(|err| err.to_string())?;
+    zip.start_file("xl/_rels/workbook.xml.rels", options)
+        .map_err(|err| err.to_string())?;
     zip.write_all(br#"<?xml version=\"1.0\" encoding=\"UTF-8\"?>
 <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">
   <Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet1.xml\"/>
   <Relationship Id=\"rId2\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles\" Target=\"styles.xml\"/>
 </Relationships>"#).map_err(|err| err.to_string())?;
 
-    zip.start_file("xl/styles.xml", options).map_err(|err| err.to_string())?;
+    zip.start_file("xl/styles.xml", options)
+        .map_err(|err| err.to_string())?;
     zip.write_all(br#"<?xml version=\"1.0\" encoding=\"UTF-8\"?>
 <styleSheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">
   <fonts count=\"1\"><font><sz val=\"11\"/><name val=\"Calibri\"/></font></fonts>
@@ -675,19 +747,27 @@ fn write_xlsx(path: &Path, headers: &[String], rows: &[Vec<String>], totals: &[(
     }
 
     sheet.push_str("</sheetData></worksheet>");
-    zip.start_file("xl/worksheets/sheet1.xml", options).map_err(|err| err.to_string())?;
-    zip.write_all(sheet.as_bytes()).map_err(|err| err.to_string())?;
+    zip.start_file("xl/worksheets/sheet1.xml", options)
+        .map_err(|err| err.to_string())?;
+    zip.write_all(sheet.as_bytes())
+        .map_err(|err| err.to_string())?;
 
     zip.finish().map_err(|err| err.to_string())?;
     Ok(())
 }
 
-fn write_docx(path: &Path, headers: &[String], row_count: usize, totals: &[(String, f64)]) -> Result<(), String> {
+fn write_docx(
+    path: &Path,
+    headers: &[String],
+    row_count: usize,
+    totals: &[(String, f64)],
+) -> Result<(), String> {
     let file = fs::File::create(path).map_err(|err| err.to_string())?;
     let mut zip = zip::ZipWriter::new(file);
     let options: FileOptions<'_, ()> = FileOptions::default();
 
-    zip.start_file("[Content_Types].xml", options).map_err(|err| err.to_string())?;
+    zip.start_file("[Content_Types].xml", options)
+        .map_err(|err| err.to_string())?;
     zip.write_all(br#"<?xml version=\"1.0\" encoding=\"UTF-8\"?>
 <Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">
   <Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>
@@ -695,14 +775,17 @@ fn write_docx(path: &Path, headers: &[String], row_count: usize, totals: &[(Stri
   <Override PartName=\"/word/document.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/>
 </Types>"#).map_err(|err| err.to_string())?;
 
-    zip.add_directory("_rels", options).map_err(|err| err.to_string())?;
-    zip.start_file("_rels/.rels", options).map_err(|err| err.to_string())?;
+    zip.add_directory("_rels", options)
+        .map_err(|err| err.to_string())?;
+    zip.start_file("_rels/.rels", options)
+        .map_err(|err| err.to_string())?;
     zip.write_all(br#"<?xml version=\"1.0\" encoding=\"UTF-8\"?>
 <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">
   <Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"word/document.xml\"/>
 </Relationships>"#).map_err(|err| err.to_string())?;
 
-    zip.add_directory("word", options).map_err(|err| err.to_string())?;
+    zip.add_directory("word", options)
+        .map_err(|err| err.to_string())?;
     let mut document = String::new();
     document.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
     document.push_str("<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body>");
@@ -731,19 +814,27 @@ fn write_docx(path: &Path, headers: &[String], row_count: usize, totals: &[(Stri
     }
 
     document.push_str("<w:sectPr/></w:body></w:document>");
-    zip.start_file("word/document.xml", options).map_err(|err| err.to_string())?;
-    zip.write_all(document.as_bytes()).map_err(|err| err.to_string())?;
+    zip.start_file("word/document.xml", options)
+        .map_err(|err| err.to_string())?;
+    zip.write_all(document.as_bytes())
+        .map_err(|err| err.to_string())?;
 
     zip.finish().map_err(|err| err.to_string())?;
     Ok(())
 }
 
-fn write_pptx_report(path: &Path, row_count: usize, col_count: usize, totals: &[(String, f64)]) -> Result<(), String> {
+fn write_pptx_report(
+    path: &Path,
+    row_count: usize,
+    col_count: usize,
+    totals: &[(String, f64)],
+) -> Result<(), String> {
     let file = fs::File::create(path).map_err(|err| err.to_string())?;
     let mut zip = zip::ZipWriter::new(file);
     let options: FileOptions<'_, ()> = FileOptions::default();
 
-    zip.start_file("[Content_Types].xml", options).map_err(|err| err.to_string())?;
+    zip.start_file("[Content_Types].xml", options)
+        .map_err(|err| err.to_string())?;
     zip.write_all(br#"<?xml version=\"1.0\" encoding=\"UTF-8\"?>
 <Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">
   <Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>
@@ -752,19 +843,26 @@ fn write_pptx_report(path: &Path, row_count: usize, col_count: usize, totals: &[
   <Override PartName=\"/ppt/slides/slide1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.presentationml.slide+xml\"/>
 </Types>"#).map_err(|err| err.to_string())?;
 
-    zip.add_directory("_rels", options).map_err(|err| err.to_string())?;
-    zip.start_file("_rels/.rels", options).map_err(|err| err.to_string())?;
+    zip.add_directory("_rels", options)
+        .map_err(|err| err.to_string())?;
+    zip.start_file("_rels/.rels", options)
+        .map_err(|err| err.to_string())?;
     zip.write_all(br#"<?xml version=\"1.0\" encoding=\"UTF-8\"?>
 <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">
   <Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"ppt/presentation.xml\"/>
 </Relationships>"#).map_err(|err| err.to_string())?;
 
-    zip.add_directory("ppt", options).map_err(|err| err.to_string())?;
-    zip.add_directory("ppt/_rels", options).map_err(|err| err.to_string())?;
-    zip.add_directory("ppt/slides", options).map_err(|err| err.to_string())?;
-    zip.add_directory("ppt/slides/_rels", options).map_err(|err| err.to_string())?;
+    zip.add_directory("ppt", options)
+        .map_err(|err| err.to_string())?;
+    zip.add_directory("ppt/_rels", options)
+        .map_err(|err| err.to_string())?;
+    zip.add_directory("ppt/slides", options)
+        .map_err(|err| err.to_string())?;
+    zip.add_directory("ppt/slides/_rels", options)
+        .map_err(|err| err.to_string())?;
 
-    zip.start_file("ppt/presentation.xml", options).map_err(|err| err.to_string())?;
+    zip.start_file("ppt/presentation.xml", options)
+        .map_err(|err| err.to_string())?;
     zip.write_all(br#"<?xml version=\"1.0\" encoding=\"UTF-8\"?>
 <p:presentation xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" xmlns:p=\"http://schemas.openxmlformats.org/presentationml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
   <p:sldIdLst><p:sldId id=\"256\" r:id=\"rId1\"/></p:sldIdLst>
@@ -772,7 +870,8 @@ fn write_pptx_report(path: &Path, row_count: usize, col_count: usize, totals: &[
   <p:notesSz cx=\"6858000\" cy=\"9144000\"/>
 </p:presentation>"#).map_err(|err| err.to_string())?;
 
-    zip.start_file("ppt/_rels/presentation.xml.rels", options).map_err(|err| err.to_string())?;
+    zip.start_file("ppt/_rels/presentation.xml.rels", options)
+        .map_err(|err| err.to_string())?;
     zip.write_all(br#"<?xml version=\"1.0\" encoding=\"UTF-8\"?>
 <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">
   <Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide\" Target=\"slides/slide1.xml\"/>
@@ -786,7 +885,8 @@ fn write_pptx_report(path: &Path, row_count: usize, col_count: usize, totals: &[
         slide_text.push_str(&format!(" | {}: {:.2}", name, value));
     }
 
-    zip.start_file("ppt/slides/slide1.xml", options).map_err(|err| err.to_string())?;
+    zip.start_file("ppt/slides/slide1.xml", options)
+        .map_err(|err| err.to_string())?;
     let slide_xml = format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>
 <p:sld xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" xmlns:p=\"http://schemas.openxmlformats.org/presentationml/2006/main\">
@@ -805,9 +905,11 @@ fn write_pptx_report(path: &Path, row_count: usize, col_count: usize, totals: &[
 </p:sld>",
         xml_escape(&slide_text)
     );
-    zip.write_all(slide_xml.as_bytes()).map_err(|err| err.to_string())?;
+    zip.write_all(slide_xml.as_bytes())
+        .map_err(|err| err.to_string())?;
 
-    zip.start_file("ppt/slides/_rels/slide1.xml.rels", options).map_err(|err| err.to_string())?;
+    zip.start_file("ppt/slides/_rels/slide1.xml.rels", options)
+        .map_err(|err| err.to_string())?;
     zip.write_all(br#"<?xml version=\"1.0\" encoding=\"UTF-8\"?>
 <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"></Relationships>"#).map_err(|err| err.to_string())?;
 
@@ -859,12 +961,15 @@ fn write_pptx(
     let slide_count = slides.len();
 
     // [Content_Types].xml
-    zip.start_file("[Content_Types].xml", options).map_err(|err| err.to_string())?;
-    let mut content_types = String::from(r#"<?xml version="1.0" encoding="UTF-8"?>
+    zip.start_file("[Content_Types].xml", options)
+        .map_err(|err| err.to_string())?;
+    let mut content_types = String::from(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
   <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
   <Default Extension="xml" ContentType="application/xml"/>
-  <Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>"#);
+  <Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>"#,
+    );
     for i in 1..=slide_count {
         content_types.push_str(&format!(
             r#"<Override PartName="/ppt/slides/slide{}.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>"#,
@@ -872,40 +977,56 @@ fn write_pptx(
         ));
     }
     content_types.push_str("</Types>");
-    zip.write_all(content_types.as_bytes()).map_err(|err| err.to_string())?;
+    zip.write_all(content_types.as_bytes())
+        .map_err(|err| err.to_string())?;
 
     // _rels/.rels
-    zip.add_directory("_rels", options).map_err(|err| err.to_string())?;
-    zip.start_file("_rels/.rels", options).map_err(|err| err.to_string())?;
+    zip.add_directory("_rels", options)
+        .map_err(|err| err.to_string())?;
+    zip.start_file("_rels/.rels", options)
+        .map_err(|err| err.to_string())?;
     zip.write_all(br#"<?xml version="1.0" encoding="UTF-8"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
   <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="ppt/presentation.xml"/>
 </Relationships>"#).map_err(|err| err.to_string())?;
 
     // ppt directories
-    zip.add_directory("ppt", options).map_err(|err| err.to_string())?;
-    zip.add_directory("ppt/_rels", options).map_err(|err| err.to_string())?;
-    zip.add_directory("ppt/slides", options).map_err(|err| err.to_string())?;
-    zip.add_directory("ppt/slides/_rels", options).map_err(|err| err.to_string())?;
+    zip.add_directory("ppt", options)
+        .map_err(|err| err.to_string())?;
+    zip.add_directory("ppt/_rels", options)
+        .map_err(|err| err.to_string())?;
+    zip.add_directory("ppt/slides", options)
+        .map_err(|err| err.to_string())?;
+    zip.add_directory("ppt/slides/_rels", options)
+        .map_err(|err| err.to_string())?;
 
     // ppt/presentation.xml
-    zip.start_file("ppt/presentation.xml", options).map_err(|err| err.to_string())?;
-    let mut presentation = String::from(r#"<?xml version="1.0" encoding="UTF-8"?>
+    zip.start_file("ppt/presentation.xml", options)
+        .map_err(|err| err.to_string())?;
+    let mut presentation = String::from(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
 <p:presentation xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
-  <p:sldIdLst>"#);
+  <p:sldIdLst>"#,
+    );
     for i in 1..=slide_count {
         presentation.push_str(&format!(r#"<p:sldId id="{}" r:id="rId{}"/>"#, 255 + i, i));
     }
-    presentation.push_str(r#"</p:sldIdLst>
+    presentation.push_str(
+        r#"</p:sldIdLst>
   <p:sldSz cx="9144000" cy="6858000" type="screen4x3"/>
   <p:notesSz cx="6858000" cy="9144000"/>
-</p:presentation>"#);
-    zip.write_all(presentation.as_bytes()).map_err(|err| err.to_string())?;
+</p:presentation>"#,
+    );
+    zip.write_all(presentation.as_bytes())
+        .map_err(|err| err.to_string())?;
 
     // ppt/_rels/presentation.xml.rels
-    zip.start_file("ppt/_rels/presentation.xml.rels", options).map_err(|err| err.to_string())?;
-    let mut pres_rels = String::from(r#"<?xml version="1.0" encoding="UTF-8"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">"#);
+    zip.start_file("ppt/_rels/presentation.xml.rels", options)
+        .map_err(|err| err.to_string())?;
+    let mut pres_rels = String::from(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">"#,
+    );
     for i in 1..=slide_count {
         pres_rels.push_str(&format!(
             r#"<Relationship Id="rId{}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide{}.xml"/>"#,
@@ -913,13 +1034,15 @@ fn write_pptx(
         ));
     }
     pres_rels.push_str("</Relationships>");
-    zip.write_all(pres_rels.as_bytes()).map_err(|err| err.to_string())?;
+    zip.write_all(pres_rels.as_bytes())
+        .map_err(|err| err.to_string())?;
 
     // Generate each slide
     for (idx, (slide_title, slide_body)) in slides.iter().enumerate() {
         let slide_num = idx + 1;
 
-        zip.start_file(&format!("ppt/slides/slide{}.xml", slide_num), options).map_err(|err| err.to_string())?;
+        zip.start_file(&format!("ppt/slides/slide{}.xml", slide_num), options)
+            .map_err(|err| err.to_string())?;
 
         let mut tx_body = String::new();
         if !slide_title.is_empty() {
@@ -935,9 +1058,15 @@ fn write_pptx(
                     continue;
                 }
                 // Strip common bullet prefixes for cleaner XML text
-                let cleaned = if trimmed.starts_with("• ") || trimmed.starts_with("- ") || trimmed.starts_with("– ") {
+                let cleaned = if trimmed.starts_with("• ")
+                    || trimmed.starts_with("- ")
+                    || trimmed.starts_with("– ")
+                {
                     &trimmed[2..]
-                } else if trimmed.starts_with("•") || trimmed.starts_with("-") || trimmed.starts_with("–") {
+                } else if trimmed.starts_with("•")
+                    || trimmed.starts_with("-")
+                    || trimmed.starts_with("–")
+                {
                     &trimmed[1..]
                 } else {
                     trimmed
@@ -968,12 +1097,16 @@ fn write_pptx(
   </p:cSld>
   <p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr>
 </p:sld>"#,
-            slide_num,
-            tx_body
+            slide_num, tx_body
         );
-        zip.write_all(slide_xml.as_bytes()).map_err(|err| err.to_string())?;
+        zip.write_all(slide_xml.as_bytes())
+            .map_err(|err| err.to_string())?;
 
-        zip.start_file(&format!("ppt/slides/_rels/slide{}.xml.rels", slide_num), options).map_err(|err| err.to_string())?;
+        zip.start_file(
+            &format!("ppt/slides/_rels/slide{}.xml.rels", slide_num),
+            options,
+        )
+        .map_err(|err| err.to_string())?;
         zip.write_all(br#"<?xml version="1.0" encoding="UTF-8"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>"#).map_err(|err| err.to_string())?;
     }
@@ -982,7 +1115,13 @@ fn write_pptx(
     Ok(())
 }
 
-fn write_simple_pdf(path: &Path, title: &str, row_count: usize, col_count: usize, totals: &[(String, f64)]) -> Result<(), String> {
+fn write_simple_pdf(
+    path: &Path,
+    title: &str,
+    row_count: usize,
+    col_count: usize,
+    totals: &[(String, f64)],
+) -> Result<(), String> {
     let mut lines = vec![
         title.to_string(),
         format!("Datensaetze: {}", row_count),
@@ -1064,7 +1203,10 @@ fn xml_escape(input: &str) -> String {
 }
 
 fn pdf_escape(input: &str) -> String {
-    input.replace('\\', "\\\\").replace('(', "\\(").replace(')', "\\)")
+    input
+        .replace('\\', "\\\\")
+        .replace('(', "\\(")
+        .replace(')', "\\)")
 }
 
 #[cfg(test)]
@@ -1078,6 +1220,7 @@ mod tests {
         let paragraphs = vec![
             "Slide 1: Titel\nErste Zeile\nZweite Zeile".to_string(),
             "Slide 2: Agenda\nPunkt A\nPunkt B".to_string(),
+            "Slide 3: Abschluss\nNaechste Schritte".to_string(),
         ];
         let bullets = vec!["Bullet Extra".to_string()];
         write_pptx(&tmp, Some("Haupttitel"), &paragraphs, &bullets).unwrap();

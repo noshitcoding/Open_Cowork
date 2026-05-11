@@ -33,7 +33,7 @@ type APIToolDef = {
 type OpenAiCompatibleRequestMessage =
   | { role: 'system'; content: string }
   | { role: 'user'; content: string | OpenAiCompatibleContentPart[] }
-  | { role: 'assistant'; content: string | null; tool_calls?: OpenAiCompatibleToolCall[] }
+  | { role: 'assistant'; content: string | null; reasoning?: string | null; tool_calls?: OpenAiCompatibleToolCall[] }
   | { role: 'tool'; content: string; tool_call_id: string }
 
 type OpenAiCompatibleContentPart =
@@ -49,6 +49,12 @@ type OpenAiCompatibleToolCall = {
   }
 }
 
+type OpenAiCompatibleChoiceError = {
+  code?: number
+  message?: string
+  metadata?: Record<string, unknown>
+}
+
 type OpenAiCompatibleResponse = {
   id?: string
   model?: string
@@ -58,6 +64,7 @@ type OpenAiCompatibleResponse = {
   }
   choices?: Array<{
     finish_reason?: string | null
+    error?: OpenAiCompatibleChoiceError
     message?: {
       content?: string | Array<{ type?: string; text?: string; content?: string }> | null
       reasoning?: string | null
@@ -75,6 +82,11 @@ type OpenAiCompatibleResponse = {
 }
 
 type OpenAiCompatibleResponseMessage = NonNullable<NonNullable<OpenAiCompatibleResponse['choices']>[number]['message']>
+
+type RequestFailure = Error & {
+  status?: number
+  bodyText?: string
+}
 
 function getProviderLabel(provider: OpenAiCompatibleConfig['provider']): string {
   return provider === 'openrouter' ? 'OpenRouter' : 'OpenAI-kompatibler Provider'
@@ -153,9 +165,57 @@ function blocksToUserContent(blocks: ContentBlock[]): string | OpenAiCompatibleC
   return contentParts
 }
 
+function userContentHasImageParts(content: string | OpenAiCompatibleContentPart[]): boolean {
+  return Array.isArray(content) && content.some((part) => part.type === 'image_url')
+}
+
+function requestMessagesContainImages(messages: OpenAiCompatibleRequestMessage[]): boolean {
+  return messages.some((message) => message.role === 'user' && userContentHasImageParts(message.content))
+}
+
+function stripImagesFromUserContent(content: string | OpenAiCompatibleContentPart[]): string | OpenAiCompatibleContentPart[] | null {
+  if (typeof content === 'string') return content
+
+  const textParts = content.filter(
+    (part): part is Extract<OpenAiCompatibleContentPart, { type: 'text' }> => part.type === 'text' && part.text.trim().length > 0,
+  )
+
+  if (textParts.length === 0) return null
+  if (textParts.length === 1) return textParts[0].text
+  return textParts
+}
+
+function stripImagePartsFromMessages(messages: OpenAiCompatibleRequestMessage[]): OpenAiCompatibleRequestMessage[] {
+  const sanitized: OpenAiCompatibleRequestMessage[] = []
+
+  for (const message of messages) {
+    if (message.role !== 'user') {
+      sanitized.push(message)
+      continue
+    }
+
+    const nextContent = stripImagesFromUserContent(message.content)
+    if (nextContent === null) {
+      continue
+    }
+
+    sanitized.push({ role: 'user', content: nextContent })
+  }
+
+  return sanitized
+}
+
+function isUnsupportedOpenRouterImageInputError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false
+
+  return /OpenRouter API Error \(404\):/i.test(error.message)
+    && /No endpoints found that support image input/i.test(error.message)
+}
+
 function toOpenAiCompatibleMessages(
   messages: APIMessage[],
   systemPrompt: string,
+  provider: OpenAiCompatibleConfig['provider'],
 ): OpenAiCompatibleRequestMessage[] {
   const result: OpenAiCompatibleRequestMessage[] = []
 
@@ -175,6 +235,12 @@ function toOpenAiCompatibleMessages(
         .join('\n\n')
         .trim()
 
+      const thinkingContent = blocks
+        .filter((block): block is Extract<ContentBlock, { type: 'thinking' }> => block.type === 'thinking')
+        .map((block) => block.thinking)
+        .join('\n\n')
+        .trim()
+
       const toolCalls = blocks
         .filter((block): block is Extract<ContentBlock, { type: 'tool_use' }> => block.type === 'tool_use')
         .map((block) => ({
@@ -186,10 +252,11 @@ function toOpenAiCompatibleMessages(
           },
         }))
 
-      if (textContent || toolCalls.length > 0) {
+      if (textContent || toolCalls.length > 0 || (provider === 'openrouter' && thinkingContent)) {
         result.push({
           role: 'assistant',
           content: textContent || null,
+          ...(provider === 'openrouter' && thinkingContent ? { reasoning: thinkingContent } : {}),
           ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
         })
       }
@@ -298,6 +365,17 @@ function extractReasoningContent(message: OpenAiCompatibleResponseMessage | unde
     .trim()
 }
 
+function formatChoiceError(providerLabel: string, error: OpenAiCompatibleChoiceError | undefined): string | null {
+  if (!error) return null
+
+  const message = typeof error.message === 'string' && error.message.trim()
+    ? error.message.trim()
+    : 'Unbekannter Fehler'
+  const code = typeof error.code === 'number' ? ` (${error.code})` : ''
+
+  return `${providerLabel} API Error${code}: ${message}`
+}
+
 function mapStopReason(
   finishReason: string | null | undefined,
   hasToolCalls: boolean,
@@ -333,37 +411,10 @@ export async function* streamOpenAiCompatibleMessages(
   }
 
   const endpoint = buildEndpoint(config.baseUrl)
-  const requestMessages = toOpenAiCompatibleMessages(messages, systemPrompt)
+  let requestMessages = toOpenAiCompatibleMessages(messages, systemPrompt, config.provider)
   const timeoutSignal = createAbortSignal(config.timeoutMs, signal)
 
   try {
-    const body: Record<string, unknown> = {
-      model: config.model,
-      messages: requestMessages,
-      stream: false,
-    }
-
-    if (config.provider === 'openrouter') {
-      body.reasoning = {
-        enabled: true,
-        exclude: false,
-      }
-    }
-
-    const toolDefs = toOpenAiCompatibleToolDefs(tools)
-    if (toolDefs) {
-      body.tools = toolDefs
-      body.tool_choice = 'auto'
-    }
-
-    if (config.temperature !== undefined) {
-      body.temperature = config.temperature
-    }
-
-    if (config.maxTokens !== undefined) {
-      body.max_tokens = config.maxTokens
-    }
-
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${config.apiKey.trim()}`,
@@ -374,21 +425,75 @@ export async function* streamOpenAiCompatibleMessages(
       headers['X-Title'] = 'Open Cowork'
     }
 
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body),
-      signal: timeoutSignal.signal,
-    })
+    const executeRequest = async (messagesForRequest: OpenAiCompatibleRequestMessage[]): Promise<OpenAiCompatibleResponse> => {
+      const body: Record<string, unknown> = {
+        model: config.model,
+        messages: messagesForRequest,
+        stream: false,
+      }
 
-    if (!response.ok) {
-      const bodyText = await response.text()
-      const excerpt = bodyText.slice(0, 400)
-      throw new Error(`${providerLabel} API Error (${response.status}): ${excerpt || response.statusText}`)
+      if (config.provider === 'openrouter') {
+        body.reasoning = {
+          enabled: true,
+          exclude: false,
+        }
+      }
+
+      const toolDefs = toOpenAiCompatibleToolDefs(tools)
+      if (toolDefs) {
+        body.tools = toolDefs
+        body.tool_choice = 'auto'
+      }
+
+      if (config.temperature !== undefined) {
+        body.temperature = config.temperature
+      }
+
+      if (config.maxTokens !== undefined) {
+        body.max_tokens = config.maxTokens
+      }
+
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+        signal: timeoutSignal.signal,
+      })
+
+      if (!response.ok) {
+        const bodyText = await response.text()
+        const excerpt = bodyText.slice(0, 400)
+        const requestError = new Error(`${providerLabel} API Error (${response.status}): ${excerpt || response.statusText}`) as RequestFailure
+        requestError.status = response.status
+        requestError.bodyText = bodyText
+        throw requestError
+      }
+
+      return response.json() as Promise<OpenAiCompatibleResponse>
     }
 
-    const payload = await response.json() as OpenAiCompatibleResponse
+    let payload: OpenAiCompatibleResponse
+    try {
+      payload = await executeRequest(requestMessages)
+    } catch (error) {
+      if (
+        config.provider === 'openrouter'
+        && requestMessagesContainImages(requestMessages)
+        && isUnsupportedOpenRouterImageInputError(error)
+      ) {
+        requestMessages = stripImagePartsFromMessages(requestMessages)
+        payload = await executeRequest(requestMessages)
+      } else {
+        throw error
+      }
+    }
+
     const choice = payload.choices?.[0]
+    const choiceError = formatChoiceError(providerLabel, choice?.error)
+    if (choiceError) {
+      throw new Error(choiceError)
+    }
+
     const message = choice?.message
     const reasoningContent = extractReasoningContent(message)
     const textContent = extractTextContent(message?.content).trim()
@@ -418,7 +523,11 @@ export async function* streamOpenAiCompatibleMessages(
     }
 
     if (resultContent.length === 0) {
-      throw new Error(`${providerLabel} lieferte keine Antwort.`)
+      const finishReason = choice?.finish_reason?.trim()
+      const finishReasonSuffix = finishReason && finishReason !== 'stop'
+        ? ` (finish_reason: ${finishReason})`
+        : ''
+      throw new Error(`${providerLabel} lieferte keine Antwort${finishReasonSuffix}.`)
     }
 
     const stopReason = mapStopReason(choice?.finish_reason, toolCalls.length > 0)

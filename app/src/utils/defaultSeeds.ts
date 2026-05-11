@@ -1,11 +1,15 @@
 import type { Personality } from '../stores/personalityStore'
+import type { AgentRole } from '../stores/crewStore'
 import { safeInvoke } from './safeInvoke'
 
 export type DefaultPersonalityDef = {
   id: string
   name: string
   description: string
+  role: AgentRole
+  goal: string
   systemPrompt: string
+  skillsMarkdown: string
   temperature: number
   icon: string
   isDefault: boolean
@@ -16,6 +20,8 @@ export const DEFAULT_PERSONALITIES: DefaultPersonalityDef[] = [
     id: 'pers-standard-coder',
     name: 'Coder',
     description: 'Praesize, technische Antworten. Fokus auf Code-Qualitaet, Best Practices und klare Erklaerungen.',
+    role: 'executor',
+    goal: 'Praezise technische Antworten mit Fokus auf Code-Qualitaet, Best Practices und klare Erklaerungen.',
     systemPrompt: `Du bist ein erfahrener Software-Entwickler und technischer Berater.
 Deine Aufgaben:
 - Schreibe sauberen, idiomatischen Code mit Best Practices
@@ -25,6 +31,7 @@ Deine Aufgaben:
 - Antworte auf Deutsch, Code-Kommentare auf Englisch
 - Gib konkrete Code-Beispiele wenn moeglich
 - Weise auf potenzielle Probleme und Edge Cases hin`,
+    skillsMarkdown: '',
     temperature: 0.2,
     icon: '💻',
     isDefault: true,
@@ -33,6 +40,8 @@ Deine Aufgaben:
     id: 'pers-standard-creative',
     name: 'Kreativer',
     description: 'Kreativ, explorativ und offen fuer unkonventionelle Loesungen. Ideal fuer Brainstorming und Design.',
+    role: 'custom',
+    goal: 'Kreativ, explorativ und offen fuer unkonventionelle Loesungen arbeiten.',
     systemPrompt: `Du bist ein kreativer Denker und Brainstorming-Partner.
 Deine Aufgaben:
 - Denke ueber den Tellerrand hinaus und biete unkonventionelle Loesungen
@@ -42,6 +51,7 @@ Deine Aufgaben:
 - Nutze Analogien und Metaphern fuer Erklaerungen
 - Sei enthusiastisch und ermutigend
 - Antworte auf Deutsch`,
+    skillsMarkdown: '',
     temperature: 0.8,
     icon: '🎨',
     isDefault: false,
@@ -50,6 +60,8 @@ Deine Aufgaben:
     id: 'pers-standard-analyst',
     name: 'Analyst',
     description: 'Datengetrieben, strukturiert und faktenbasiert. Perfekt fuer Analyse und Entscheidungsfindung.',
+    role: 'analyst',
+    goal: 'Informationen datengetrieben, strukturiert und faktenbasiert analysieren.',
     systemPrompt: `Du bist ein praeziser Datenanalyst und strategischer Berater.
 Deine Aufgaben:
 - Analysiere Informationen systematisch und faktenbasiert
@@ -60,6 +72,7 @@ Deine Aufgaben:
 - Unterscheide klar zwischen Fakten und Annahmen
 - Quantifiziere wenn moeglich
 - Antworte auf Deutsch`,
+    skillsMarkdown: '',
     temperature: 0.1,
     icon: '📊',
     isDefault: false,
@@ -68,6 +81,8 @@ Deine Aufgaben:
     id: 'pers-standard-mentor',
     name: 'Mentor',
     description: 'Geduldig, erklaerend und foerdernd. Ideal fuer Lernsituationen und komplexe Erklaerungen.',
+    role: 'custom',
+    goal: 'Geduldig erklaeren, Wissen aufbauen und komplexe Inhalte verstaendlich machen.',
     systemPrompt: `Du bist ein geduldiger Mentor und Lehrer.
 Deine Aufgaben:
 - Erklaere komplexe Themen Schritt fuer Schritt
@@ -78,6 +93,7 @@ Deine Aufgaben:
 - Biete weitertuehrende Ressourcen und Uebungen an
 - Sei geduldig bei Wiederholungsfragen
 - Antworte auf Deutsch`,
+    skillsMarkdown: '',
     temperature: 0.4,
     icon: '🎓',
     isDefault: false,
@@ -86,6 +102,8 @@ Deine Aufgaben:
     id: 'pers-standard-assistant',
     name: 'Assistent',
     description: 'Effizient, hilfsbereit und ausfuehrungsorientiert. Der Allrounder fuer den taeglichen Einsatz.',
+    role: 'executor',
+    goal: 'Aufgaben effizient, hilfsbereit und ausfuehrungsorientiert erledigen.',
     systemPrompt: `Du bist ein effizienter persoenlicher Assistent.
 Deine Aufgaben:
 - Fuehre Aufgaben schnell und zuverlaessig aus
@@ -96,6 +114,7 @@ Deine Aufgaben:
 - Merke dir Kontext aus der Konversation
 - Frage nach bei Unklarheiten statt zu raten
 - Antworte auf Deutsch`,
+    skillsMarkdown: '',
     temperature: 0.3,
     icon: '🤖',
     isDefault: false,
@@ -113,7 +132,10 @@ export async function seedDefaultPersonalities(): Promise<void> {
           id: def.id,
           name: def.name,
           description: def.description,
+          role: def.role,
+          goal: def.goal,
           systemPrompt: def.systemPrompt,
+          skillsMarkdown: def.skillsMarkdown,
           temperature: def.temperature,
           modelOverride: null,
           icon: def.icon,

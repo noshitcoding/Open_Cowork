@@ -6,6 +6,7 @@ import { useChatStore } from '../stores/chatStore'
 import { useConfigStore } from '../stores/configStore'
 import { useCoworkStore } from '../stores/coworkStore'
 import { useEngineStore } from '../stores/engineStore'
+import { useProjectStore } from '../stores/projectStore'
 
 const navigateMock = vi.fn()
 
@@ -16,6 +17,26 @@ vi.mock('react-router-dom', async () => {
     useNavigate: () => navigateMock,
   }
 })
+
+function createMockDataTransfer(): DataTransfer {
+  const data = new Map<string, string>()
+  return {
+    dropEffect: 'none',
+    effectAllowed: 'all',
+    files: [] as unknown as FileList,
+    items: [] as unknown as DataTransferItemList,
+    types: [],
+    clearData: vi.fn((type?: string) => {
+      if (type) data.delete(type)
+      else data.clear()
+    }),
+    getData: vi.fn((type: string) => data.get(type) ?? ''),
+    setData: vi.fn((type: string, value: string) => {
+      data.set(type, value)
+    }),
+    setDragImage: vi.fn(),
+  } as unknown as DataTransfer
+}
 
 describe('LeftSidebar', () => {
   beforeEach(() => {
@@ -54,6 +75,11 @@ describe('LeftSidebar', () => {
       plugins: [
         { id: 'git', name: 'Git', domain: 'custom', enabled: true, skills: [] },
       ],
+    })
+
+    useProjectStore.setState({
+      projects: [],
+      activeProjectId: null,
     })
 
     useEngineStore.setState({
@@ -107,12 +133,118 @@ describe('LeftSidebar', () => {
     fireEvent.click(screen.getByRole('button', { name: /Persistierte Analyse/i }))
 
     await waitFor(() => {
-      const state = useChatStore.getState()
-      expect(state.activeThreadId).toBe('session-1')
-      expect(state.threads[0]?.title).toBe('Persistierte Analyse')
-      expect(state.threads[0]?.messages[0]?.content).toContain('Bitte pruefe den Build.')
+      // Check that the session was loaded and navigation occurred
+      expect(navigateMock).toHaveBeenCalledWith('/')
+      // Verify the engine store's loadSessionById was called
+      const engineState = useEngineStore.getState()
+      expect(engineState.loadSessionById).toHaveBeenCalledWith('session-1')
     })
 
     expect(navigateMock).toHaveBeenCalledWith('/')
+  })
+
+  it('moves a chat into a project via drag and drop', () => {
+    useProjectStore.setState({
+      projects: [
+        {
+          id: 'project-1',
+          title: 'Alpha',
+          instructions: '',
+          resources: [],
+          threadIds: [],
+          createdAt: 100,
+          updatedAt: 100,
+        },
+      ],
+      activeProjectId: 'project-1',
+    })
+
+    render(
+      <MemoryRouter>
+        <LeftSidebar />
+      </MemoryRouter>,
+    )
+
+    const dataTransfer = createMockDataTransfer()
+    fireEvent.dragStart(screen.getByRole('button', { name: 'Lokaler Chat' }), { dataTransfer })
+    fireEvent.drop(screen.getByRole('button', { name: /Alpha/i }), { dataTransfer })
+
+    expect(useProjectStore.getState().projects[0].threadIds).toEqual(['thread-1'])
+  })
+
+  it('moves a chat into a project via pointer drag fallback', async () => {
+    useProjectStore.setState({
+      projects: [
+        {
+          id: 'project-1',
+          title: 'Alpha',
+          instructions: '',
+          resources: [],
+          threadIds: [],
+          createdAt: 100,
+          updatedAt: 100,
+        },
+      ],
+      activeProjectId: 'project-1',
+    })
+
+    render(
+      <MemoryRouter>
+        <LeftSidebar />
+      </MemoryRouter>,
+    )
+
+    const projectTarget = screen.getByRole('button', { name: /Alpha/i }).closest('[data-sidebar-project-id]')
+    expect(projectTarget).not.toBeNull()
+    const originalElementFromPoint = document.elementFromPoint
+    Object.defineProperty(document, 'elementFromPoint', {
+      configurable: true,
+      value: vi.fn(() => projectTarget),
+    })
+
+    try {
+      const chat = screen.getByRole('button', { name: 'Lokaler Chat' })
+      fireEvent.pointerDown(chat, { pointerId: 1, button: 0, clientX: 10, clientY: 10 })
+      fireEvent.pointerMove(window, { pointerId: 1, clientX: 40, clientY: 40 })
+      fireEvent.pointerUp(window, { pointerId: 1, clientX: 40, clientY: 40 })
+
+      await waitFor(() => {
+        expect(useProjectStore.getState().projects[0].threadIds).toEqual(['thread-1'])
+      })
+    } finally {
+      Object.defineProperty(document, 'elementFromPoint', {
+        configurable: true,
+        value: originalElementFromPoint,
+      })
+    }
+  })
+
+  it('detaches a project chat by dropping it onto the Chats group', () => {
+    useProjectStore.setState({
+      projects: [
+        {
+          id: 'project-1',
+          title: 'Alpha',
+          instructions: '',
+          resources: [],
+          threadIds: ['thread-1'],
+          createdAt: 100,
+          updatedAt: 100,
+        },
+      ],
+      activeProjectId: 'project-1',
+    })
+
+    render(
+      <MemoryRouter>
+        <LeftSidebar />
+      </MemoryRouter>,
+    )
+
+    const dataTransfer = createMockDataTransfer()
+    fireEvent.dragStart(screen.getByRole('button', { name: 'Lokaler Chat' }), { dataTransfer })
+    fireEvent.drop(screen.getByRole('button', { name: /Chats0/i }), { dataTransfer })
+
+    expect(useProjectStore.getState().projects[0].threadIds).toEqual([])
   })
 })

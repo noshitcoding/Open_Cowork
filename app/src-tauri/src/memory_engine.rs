@@ -81,7 +81,13 @@ pub struct MemoryHint {
 // ── Core engine logic ───────────────────────────────────────────────────────
 
 /// Check for duplicates before upsert - returns true if content is a duplicate
-pub fn is_duplicate_memory(db: &Arc<Database>, scope: &str, category: &str, key: &str, _content: &str) -> bool {
+pub fn is_duplicate_memory(
+    db: &Arc<Database>,
+    scope: &str,
+    category: &str,
+    key: &str,
+    _content: &str,
+) -> bool {
     db.get_memory_entry(scope, category, key)
         .ok()
         .flatten()
@@ -149,7 +155,8 @@ pub fn compact_low_confidence(
     let mut deleted_count = 0usize;
     for entry in &entries {
         if entry.confidence < min_confidence {
-            db.delete_memory_entry(&entry.id).map_err(|e| e.to_string())?;
+            db.delete_memory_entry(&entry.id)
+                .map_err(|e| e.to_string())?;
             deleted_count += 1;
         }
     }
@@ -164,7 +171,10 @@ pub fn compact_low_confidence(
 pub fn validate_scope(scope: &str) -> Result<&str, String> {
     match scope {
         "agent" | "user" | "session" | "shared" => Ok(scope),
-        _ => Err(format!("Ungültiger Memory-Scope: {}. Erlaubt: agent, user, session, shared", scope)),
+        _ => Err(format!(
+            "Ungültiger Memory-Scope: {}. Erlaubt: agent, user, session, shared",
+            scope
+        )),
     }
 }
 
@@ -179,7 +189,13 @@ pub fn merge_external_entries(
     let mut skipped = 0usize;
 
     for entry in entries {
-        if is_duplicate_memory(db, &entry.scope, &entry.category, &entry.key, &entry.content) {
+        if is_duplicate_memory(
+            db,
+            &entry.scope,
+            &entry.category,
+            &entry.key,
+            &entry.content,
+        ) {
             skipped += 1;
             continue;
         }

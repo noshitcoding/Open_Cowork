@@ -56,12 +56,12 @@ pub fn extract_text_for_llm(path: &Path) -> Result<String, String> {
         .to_lowercase();
 
     match ext.as_str() {
-        "txt" | "md" | "log" | "rs" | "ts" | "tsx" | "js" | "jsx" | "py" | "csv" | "json" | "xml" | "html" | "htm" => {
-            fs::read_to_string(path).map_err(|err| err.to_string())
-        }
+        "txt" | "md" | "log" | "rs" | "ts" | "tsx" | "js" | "jsx" | "py" | "csv" | "json"
+        | "xml" | "html" | "htm" => fs::read_to_string(path).map_err(|err| err.to_string()),
         "ipynb" => {
             let raw = fs::read_to_string(path).map_err(|err| err.to_string())?;
-            let parsed: serde_json::Value = serde_json::from_str(&raw).map_err(|err| err.to_string())?;
+            let parsed: serde_json::Value =
+                serde_json::from_str(&raw).map_err(|err| err.to_string())?;
             let mut out = String::new();
             if let Some(cells) = parsed.get("cells").and_then(|value| value.as_array()) {
                 for cell in cells {
@@ -103,7 +103,9 @@ pub fn extract_text_for_llm(path: &Path) -> Result<String, String> {
                     continue;
                 }
                 let mut xml = String::new();
-                entry.read_to_string(&mut xml).map_err(|err| err.to_string())?;
+                entry
+                    .read_to_string(&mut xml)
+                    .map_err(|err| err.to_string())?;
                 combined.push_str(&strip_tags(&xml));
                 combined.push_str("\n\n");
             }
@@ -114,7 +116,10 @@ pub fn extract_text_for_llm(path: &Path) -> Result<String, String> {
     }
 }
 
-pub fn extract_text_for_llm_limited(path: &Path, max_chars: usize) -> Result<(String, bool), String> {
+pub fn extract_text_for_llm_limited(
+    path: &Path,
+    max_chars: usize,
+) -> Result<(String, bool), String> {
     let ext = path
         .extension()
         .and_then(|value| value.to_str())
@@ -141,7 +146,10 @@ fn safe_extract_pdf_text(path: &Path) -> Result<String, String> {
     Ok(text)
 }
 
-fn safe_extract_pdf_text_limited(path: &Path, max_chars: Option<usize>) -> Result<(String, bool), String> {
+fn safe_extract_pdf_text_limited(
+    path: &Path,
+    max_chars: Option<usize>,
+) -> Result<(String, bool), String> {
     match extract_pdf_text_with_pdfium(path, max_chars) {
         Ok((text, truncated)) if !text.trim().is_empty() => return Ok((text, truncated)),
         Ok(_) => {}
@@ -154,7 +162,9 @@ fn safe_extract_pdf_text_limited(path: &Path, max_chars: Option<usize>) -> Resul
             None => (text, false),
         }),
         Ok(Err(err)) => Err(err.to_string()),
-        Err(_) => Err("PDF-Text konnte nicht extrahiert werden: Parser ist abgestuerzt".to_string()),
+        Err(_) => {
+            Err("PDF-Text konnte nicht extrahiert werden: Parser ist abgestuerzt".to_string())
+        }
     }
 }
 
@@ -165,7 +175,10 @@ fn truncate_text(text: String, max_chars: usize) -> (String, bool) {
     (limited, truncated)
 }
 
-fn extract_pdf_text_with_pdfium(path: &Path, max_chars: Option<usize>) -> Result<(String, bool), String> {
+fn extract_pdf_text_with_pdfium(
+    path: &Path,
+    max_chars: Option<usize>,
+) -> Result<(String, bool), String> {
     let pdfium = bind_pdfium()?;
     let document = pdfium
         .load_pdf_from_file(path, None)
@@ -174,10 +187,7 @@ fn extract_pdf_text_with_pdfium(path: &Path, max_chars: Option<usize>) -> Result
     let mut truncated = false;
 
     for (index, page) in document.pages().iter().enumerate() {
-        let text = page
-            .text()
-            .map_err(|err| err.to_string())?
-            .all();
+        let text = page.text().map_err(|err| err.to_string())?.all();
         if !output.is_empty() {
             output.push_str("\n\n");
         }
@@ -216,7 +226,10 @@ fn bind_pdfium() -> Result<Pdfium, String> {
         Ok(bindings) => Ok(Pdfium::new(bindings)),
         Err(err) => {
             errors.push(format!("system library: {}", err));
-            Err(format!("Pdfium konnte nicht geladen werden ({})", errors.join("; ")))
+            Err(format!(
+                "Pdfium konnte nicht geladen werden ({})",
+                errors.join("; ")
+            ))
         }
     }
 }
@@ -233,14 +246,33 @@ fn pdfium_library_candidates() -> Vec<PathBuf> {
     if let Ok(exe_path) = std::env::current_exe() {
         if let Some(exe_dir) = exe_path.parent() {
             candidates.push(exe_dir.join("pdfium.dll"));
-            candidates.push(exe_dir.join("resources").join("pdfium").join("bin").join("pdfium.dll"));
+            candidates.push(
+                exe_dir
+                    .join("resources")
+                    .join("pdfium")
+                    .join("bin")
+                    .join("pdfium.dll"),
+            );
             candidates.push(exe_dir.join("pdfium").join("bin").join("pdfium.dll"));
         }
     }
 
     if let Ok(current_dir) = std::env::current_dir() {
-        candidates.push(current_dir.join("resources").join("pdfium").join("bin").join("pdfium.dll"));
-        candidates.push(current_dir.join("src-tauri").join("resources").join("pdfium").join("bin").join("pdfium.dll"));
+        candidates.push(
+            current_dir
+                .join("resources")
+                .join("pdfium")
+                .join("bin")
+                .join("pdfium.dll"),
+        );
+        candidates.push(
+            current_dir
+                .join("src-tauri")
+                .join("resources")
+                .join("pdfium")
+                .join("bin")
+                .join("pdfium.dll"),
+        );
     }
 
     candidates.sort();
@@ -269,7 +301,11 @@ fn strip_tags(input: &str) -> String {
     out.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-fn parse_text_like(path: &Path, format: &str, size_bytes: u64) -> Result<ArtifactParseResponse, String> {
+fn parse_text_like(
+    path: &Path,
+    format: &str,
+    size_bytes: u64,
+) -> Result<ArtifactParseResponse, String> {
     let preview = read_text_limited(path, 2000)?;
     let line_count = preview.lines().count();
 
@@ -462,11 +498,18 @@ fn parse_pdf(path: &Path, size_bytes: u64) -> Result<ArtifactParseResponse, Stri
         format: "application/pdf".to_string(),
         size_bytes,
         summary: if extracted_text.is_some() {
-            let truncated = extracted_text.as_ref().map(|(_, value)| *value).unwrap_or(false);
+            let truncated = extracted_text
+                .as_ref()
+                .map(|(_, value)| *value)
+                .unwrap_or(false);
             format!(
                 "PDF-Text extrahiert, Vorschauzeichen: {}{}",
                 preview_chars,
-                if truncated { " (Vorschau gekuerzt)" } else { "" }
+                if truncated {
+                    " (Vorschau gekuerzt)"
+                } else {
+                    ""
+                }
             )
         } else {
             "PDF erkannt, Text konnte nicht extrahiert werden".to_string()
@@ -483,7 +526,9 @@ fn read_zip_entry_text(path: &Path, entry_name: &str) -> Result<String, String> 
     let mut archive = zip::ZipArchive::new(file).map_err(|err| err.to_string())?;
     let mut entry = archive.by_name(entry_name).map_err(|err| err.to_string())?;
     let mut out = String::new();
-    entry.read_to_string(&mut out).map_err(|err| err.to_string())?;
+    entry
+        .read_to_string(&mut out)
+        .map_err(|err| err.to_string())?;
     Ok(out)
 }
 
@@ -493,7 +538,8 @@ fn parse_docx(path: &Path, size_bytes: u64) -> Result<ArtifactParseResponse, Str
 
     Ok(ArtifactParseResponse {
         path: path.display().to_string(),
-        format: "application/vnd.openxmlformats-officedocument.wordprocessingml.document".to_string(),
+        format: "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            .to_string(),
         size_bytes,
         summary: "DOCX-Inhalt aus document.xml extrahiert".to_string(),
         preview: preview.chars().take(3000).collect(),
@@ -522,7 +568,8 @@ fn parse_pptx(path: &Path, size_bytes: u64) -> Result<ArtifactParseResponse, Str
 
     Ok(ArtifactParseResponse {
         path: path.display().to_string(),
-        format: "application/vnd.openxmlformats-officedocument.presentationml.presentation".to_string(),
+        format: "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+            .to_string(),
         size_bytes,
         summary: "PPTX-Vorschau aus erster Folie extrahiert".to_string(),
         preview: preview.chars().take(3000).collect(),

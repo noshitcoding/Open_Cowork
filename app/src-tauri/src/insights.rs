@@ -56,11 +56,8 @@ pub struct EventSummary {
 
 // ── Core logic ──────────────────────────────────────────────────────────────
 
-/// Record an insights event 
-pub fn record_event(
-    db: &Arc<Database>,
-    req: &InsightsEventRequest,
-) -> Result<String, String> {
+/// Record an insights event
+pub fn record_event(db: &Arc<Database>, req: &InsightsEventRequest) -> Result<String, String> {
     let id = uuid::Uuid::new_v4().to_string();
     db.insert_insights_event(
         &id,

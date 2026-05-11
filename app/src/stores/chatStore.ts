@@ -4,6 +4,7 @@ import { hydrateStoredMessage, serializeChatMessageForStorage } from '../utils/s
 import type { ChatAttachment } from '../utils/chatAttachments'
 import { normalizeChatProviderSelection, type ChatProviderSelection } from '../utils/chatProvider'
 import type { PermissionMode } from '../engine/types/tool'
+import { useProjectStore } from './projectStore'
 
 export type ChatMessage = {
   id: string
@@ -16,10 +17,45 @@ export type ChatMessage = {
   thinkingContent?: string
   verboseContent?: string
   liveToolCalls?: LiveToolCall[]
+  crewLive?: CrewLiveState
   streaming?: boolean
 }
 
 export type LiveToolCallStatus = 'requested' | 'running' | 'completed' | 'failed' | 'approval' | 'waiting_input'
+
+export type CrewLiveStatus = 'running' | 'completed' | 'failed' | 'canceled'
+
+export type CrewLiveEntryCategory =
+  | 'status'
+  | 'context'
+  | 'agent'
+  | 'handoff'
+  | 'delegation'
+  | 'tool'
+  | 'mcp'
+  | 'task'
+  | 'output'
+  | 'error'
+
+export type CrewLiveEntry = {
+  id: string
+  timestamp: number
+  agentId: string
+  taskId: string
+  action: string
+  category: CrewLiveEntryCategory
+  title: string
+  detail: string
+}
+
+export type CrewLiveState = {
+  streamId: string
+  title: string
+  status: CrewLiveStatus
+  entries: CrewLiveEntry[]
+  agentColors: Record<string, string>
+  updatedAt: number
+}
 
 export type AskQuestionOption = {
   label: string
@@ -56,6 +92,8 @@ export type ChatThread = {
   updatedAt: number
   providerSettings?: ChatProviderSelection
   permissionConfig?: PermissionConfig
+  runner?: 'crew' | 'model'
+  crewId?: string | null
 }
 
 type ChatState = {
@@ -65,7 +103,7 @@ type ChatState = {
   busy: boolean
   error: string | null
   loadFromDb: () => Promise<void>
-  addThread: (title: string, providerSettings?: ChatProviderSelection) => string
+  addThread: (title: string, providerSettings?: ChatProviderSelection, permissionConfig?: PermissionConfig, runner?: 'crew' | 'model', crewId?: string | null) => string
   hydrateThread: (thread: ChatThread) => void
   setActiveThread: (id: string | null) => void
   setThreadProviderSettings: (threadId: string, providerSettings?: ChatProviderSelection) => void
@@ -74,7 +112,7 @@ type ChatState = {
   updateMessage: (
     threadId: string,
     messageId: string,
-    patch: Partial<Pick<ChatMessage, 'content' | 'debugContent' | 'thinkingContent' | 'verboseContent' | 'liveToolCalls' | 'streaming'>>,
+    patch: Partial<Pick<ChatMessage, 'content' | 'debugContent' | 'thinkingContent' | 'verboseContent' | 'liveToolCalls' | 'crewLive' | 'streaming'>>,
     options?: { persist?: boolean },
   ) => void
   setPendingApproval: (steps: string[]) => void
@@ -93,7 +131,7 @@ function isTauriRuntime(): boolean {
   return typeof window !== 'undefined' && Boolean((window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__)
 }
 
-async function persistInvoke(command: string, args: Record<string, unknown>, context: string): Promise<void> {
+export async function persistInvoke(command: string, args: Record<string, unknown>, context: string): Promise<void> {
   if (!isTauriRuntime()) {
     return
   }
@@ -189,18 +227,63 @@ export const useChatStore = create<ChatState>()((set) => ({
         messages: Array.isArray(thread.messages) ? thread.messages : [],
       }))
       const hydratedThreadIds = new Set(hydratedThreads.map((thread) => thread.id))
+      
+      // Finde den neuesten Thread (nach updatedAt sortiert)
+      const sortedThreads = [...hydratedThreads].sort((a, b) => b.updatedAt - a.updatedAt)
+      const mostRecentThread = sortedThreads[0] || null
+      
       set((state) => ({
         threads: [
           ...state.threads.filter((thread) => !hydratedThreadIds.has(thread.id)),
           ...hydratedThreads,
         ],
+        // Setze activeThreadId auf den neuesten Thread, falls keiner aktiv ist
+        activeThreadId: state.activeThreadId && hydratedThreads.some(t => t.id === state.activeThreadId)
+          ? state.activeThreadId
+          : mostRecentThread?.id ?? state.activeThreadId,
       }))
+      
+      // Bereinige leere Threads nach dem Laden
+      // cleanupEmptyThreads wird über set() aufgerufen
+      set((state) => {
+        // Finde alle leeren "Neuer Chat" Threads (nur mit System-Nachricht)
+        const emptyThreadIds = state.threads
+          .filter(t => 
+            t.title === 'Neuer Chat' && 
+            t.messages.length <= 1 && 
+            t.messages.every(m => m.role === 'system')
+          )
+          .map(t => t.id)
+        
+        // Behalte nur den neuesten leeren Thread, lösche die restlichen
+        if (emptyThreadIds.length <= 1) return state
+        
+        const sortedEmptyThreads = state.threads
+          .filter(t => emptyThreadIds.includes(t.id))
+          .sort((a, b) => b.updatedAt - a.updatedAt)
+        
+        // Behalte den neuesten, lösche die restlichen
+        const keepId = sortedEmptyThreads[0]?.id
+        const deleteIds = sortedEmptyThreads.slice(1).map(t => t.id)
+        
+        // Lösche aus der Datenbank
+        for (const id of deleteIds) {
+          void persistInvoke('db_delete_thread', { id }, 'db_delete_thread cleanup')
+        }
+        
+        return {
+          threads: state.threads.filter(t => !deleteIds.includes(t.id)),
+          activeThreadId: deleteIds.includes(state.activeThreadId as string) 
+            ? (keepId ?? null) 
+            : state.activeThreadId
+        }
+      })
     } catch {
       // DB not available (e.g. in tests) - keep in-memory state
     }
   },
 
-  addThread: (title: string, providerSettings?: ChatProviderSelection, permissionConfig?: PermissionConfig) => {
+  addThread: (title: string, providerSettings?: ChatProviderSelection, permissionConfig?: PermissionConfig, runner?: 'crew' | 'model', crewId?: string | null) => {
     const id = generateId()
     const now = Date.now()
     const normalizedProviderSettings = normalizeChatProviderSelection(providerSettings)
@@ -218,6 +301,8 @@ export const useChatStore = create<ChatState>()((set) => ({
       updatedAt: now,
       providerSettings: normalizedProviderSettings,
       permissionConfig,
+      runner,
+      crewId,
     }
     set((state) => ({
       threads: [thread, ...state.threads],
@@ -238,6 +323,42 @@ export const useChatStore = create<ChatState>()((set) => ({
       content: serializeChatMessageForStorage(systemMsg),
       timestamp: systemMsg.timestamp,
     }, 'db_save_message system')
+    
+    // Bereinige leere Threads nach dem Erstellen eines neuen
+    set((state) => {
+      // Finde alle leeren "Neuer Chat" Threads (nur mit System-Nachricht)
+      const emptyThreadIds = state.threads
+        .filter(t => 
+          t.title === 'Neuer Chat' && 
+          t.messages.length <= 1 && 
+          t.messages.every(m => m.role === 'system')
+        )
+        .map(t => t.id)
+      
+      // Behalte nur den neuesten leeren Thread, lösche die restlichen
+      if (emptyThreadIds.length <= 1) return state
+      
+      const sortedEmptyThreads = state.threads
+        .filter(t => emptyThreadIds.includes(t.id))
+        .sort((a, b) => b.updatedAt - a.updatedAt)
+      
+      // Behalte den neuesten, lösche die restlichen
+      const keepId = sortedEmptyThreads[0]?.id
+      const deleteIds = sortedEmptyThreads.slice(1).map(t => t.id)
+      
+      // Lösche aus der Datenbank
+      for (const deleteId of deleteIds) {
+        void persistInvoke('db_delete_thread', { id: deleteId }, 'db_delete_thread cleanup')
+      }
+      
+      return {
+        threads: state.threads.filter(t => !deleteIds.includes(t.id)),
+        activeThreadId: deleteIds.includes(state.activeThreadId as string) 
+          ? (keepId ?? null) 
+          : state.activeThreadId
+      }
+    })
+    
     return id
   },
 
@@ -247,6 +368,8 @@ export const useChatStore = create<ChatState>()((set) => ({
       messages: Array.isArray(thread.messages) ? thread.messages : [],
       updatedAt: thread.updatedAt || Date.now(),
       providerSettings: normalizeChatProviderSelection(thread.providerSettings),
+      runner: thread.runner === 'crew' || thread.runner === 'model' ? thread.runner : undefined,
+      crewId: thread.crewId ?? undefined,
     }
     set((state) => {
       const remaining = state.threads.filter((item) => item.id !== normalized.id)
@@ -354,6 +477,7 @@ export const useChatStore = create<ChatState>()((set) => ({
       threads: state.threads.filter((t) => t.id !== id),
       activeThreadId: state.activeThreadId === id ? null : state.activeThreadId,
     }))
+    useProjectStore.getState().detachThreadFromAll(id)
     void persistInvoke('db_delete_thread', { id }, 'db_delete_thread')
   },
 

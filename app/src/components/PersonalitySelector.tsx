@@ -1,11 +1,14 @@
 import { useEffect, useState } from 'react'
 import { usePersonalityStore, type Personality } from '../stores/personalityStore'
 import { useConfigStore } from '../stores/configStore'
+import type { AgentRole } from '../stores/crewStore'
 
 type PersonalityForm = {
   name: string
-  description: string
+  role: AgentRole
+  goal: string
   systemPrompt: string
+  skillsMarkdown: string
   icon: string
   modelOverride: string
   temperature: string
@@ -14,13 +17,17 @@ type PersonalityForm = {
 
 const EMPTY_FORM: PersonalityForm = {
   name: '',
-  description: '',
+  role: 'custom',
+  goal: '',
   systemPrompt: '',
+  skillsMarkdown: '',
   icon: 'AI',
   modelOverride: '',
   temperature: '',
   isDefault: false,
 }
+
+const ROLE_OPTIONS: AgentRole[] = ['researcher', 'writer', 'reviewer', 'planner', 'executor', 'analyst', 'custom']
 
 function randomId() {
   return `pers-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -29,8 +36,10 @@ function randomId() {
 function toForm(personality: Personality): PersonalityForm {
   return {
     name: personality.name,
-    description: personality.description,
+    role: personality.role,
+    goal: personality.goal || personality.description,
     systemPrompt: personality.system_prompt,
+    skillsMarkdown: personality.skills_markdown,
     icon: personality.icon || 'AI',
     modelOverride: personality.model_override || '',
     temperature: personality.temperature != null ? String(personality.temperature) : '',
@@ -55,7 +64,7 @@ function PersonalityEditor({
 }) {
   return (
     <div>
-      <div className="grid" style={{ gridTemplateColumns: '80px 1fr 1fr', marginBottom: 8 }}>
+      <div className="grid" style={{ gridTemplateColumns: '80px 1fr 160px 1fr', marginBottom: 8 }}>
         <label>
           Icon
           <input type="text" value={form.icon} onChange={(e) => onChange({ ...form, icon: e.target.value })} maxLength={4} />
@@ -65,7 +74,13 @@ function PersonalityEditor({
           <input type="text" value={form.name} onChange={(e) => onChange({ ...form, name: e.target.value })} />
         </label>
         <label>
-          Modell-Override
+          Rolle
+          <select value={form.role} onChange={(e) => onChange({ ...form, role: e.target.value as AgentRole })}>
+            {ROLE_OPTIONS.map((role) => <option key={role} value={role}>{role}</option>)}
+          </select>
+        </label>
+        <label>
+          Modell
           <select value={form.modelOverride} onChange={(e) => onChange({ ...form, modelOverride: e.target.value })}>
             <option value="">Standard</option>
             {availableModels.map((model) => <option key={model} value={model}>{model}</option>)}
@@ -76,15 +91,29 @@ function PersonalityEditor({
         </label>
       </div>
       <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13, marginBottom: 8 }}>
-        Beschreibung
-        <input type="text" value={form.description} onChange={(e) => onChange({ ...form, description: e.target.value })} />
+        Ziel / Prompt-Fokus
+        <textarea
+          value={form.goal}
+          onChange={(e) => onChange({ ...form, goal: e.target.value })}
+          rows={3}
+          style={{ padding: '6px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)', fontSize: 13, resize: 'vertical' }}
+        />
       </label>
       <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13, marginBottom: 8 }}>
-        System-Prompt
+        Hintergrund / System-Prompt
         <textarea
           value={form.systemPrompt}
           onChange={(e) => onChange({ ...form, systemPrompt: e.target.value })}
           rows={8}
+          style={{ padding: '6px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)', fontSize: 13, resize: 'vertical', fontFamily: 'monospace' }}
+        />
+      </label>
+      <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13, marginBottom: 8 }}>
+        skills.md
+        <textarea
+          value={form.skillsMarkdown}
+          onChange={(e) => onChange({ ...form, skillsMarkdown: e.target.value })}
+          rows={4}
           style={{ padding: '6px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)', fontSize: 13, resize: 'vertical', fontFamily: 'monospace' }}
         />
       </label>
@@ -133,8 +162,11 @@ export default function PersonalitySelector() {
     await upsertPersonality({
       id,
       name: source.name.trim(),
-      description: source.description,
+      description: source.goal,
+      role: source.role,
+      goal: source.goal,
       systemPrompt: source.systemPrompt,
+      skillsMarkdown: source.skillsMarkdown,
       icon: source.icon || undefined,
       modelOverride: source.modelOverride || undefined,
       temperature: source.temperature ? Number(source.temperature) : undefined,
@@ -223,8 +255,9 @@ export default function PersonalitySelector() {
                         {activeId === personality.id && <span style={{ fontSize: 10, color: 'var(--accent)', marginLeft: 6 }}>aktiv</span>}
                         {personality.is_default && <span style={{ fontSize: 10, color: 'var(--info)', marginLeft: 6 }}>Standard</span>}
                       </div>
-                      <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>{personality.description}</div>
+                      <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>{personality.goal || personality.description}</div>
                       <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4, display: 'flex', gap: 10 }}>
+                        <span>Rolle: {personality.role}</span>
                         {personality.model_override && <span>Modell: {personality.model_override}</span>}
                         {personality.temperature != null && <span>Temp: {personality.temperature}</span>}
                       </div>

@@ -77,7 +77,11 @@ pub fn destroy_workspace_snapshot(app_data_dir: &Path, sandbox_id: &str) -> Resu
     Ok(())
 }
 
-fn copy_dir_recursive(source: &Path, destination: &Path, stats: &mut CopyStats) -> Result<(), String> {
+fn copy_dir_recursive(
+    source: &Path,
+    destination: &Path,
+    stats: &mut CopyStats,
+) -> Result<(), String> {
     for entry in fs::read_dir(source).map_err(|err| err.to_string())? {
         let entry = entry.map_err(|err| err.to_string())?;
         let source_path = entry.path();

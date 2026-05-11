@@ -1,7 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useConfigStore, type OllamaConfig } from '../stores/configStore'
 import { useCoworkStore } from '../stores/coworkStore'
-import { useCrewStore, type AgentRole, type CrewExternalProviderConfig, type CrewOutputMode, type CrewProcess, type CrewProviderKind } from '../stores/crewStore'
+import { resolveCrewAgentWithProfile, useCrewStore, type AgentRole, type CrewAgent, type CrewExternalProviderConfig, type CrewOutputMode, type CrewPersonalityProfile, type CrewProcess, type CrewProviderKind } from '../stores/crewStore'
+import { usePersonalityStore } from '../stores/personalityStore'
+import CrewControlPlanePanel from './crew/CrewControlPlanePanel'
+import CrewGovernancePanel from './crew/CrewGovernancePanel'
+import CrewHistoryPanel from './crew/CrewHistoryPanel'
+import CrewRuntimePanel from './crew/CrewRuntimePanel'
 import { safeInvoke } from '../utils/safeInvoke'
 
 const ROLE_OPTIONS: AgentRole[] = ['researcher', 'writer', 'reviewer', 'planner', 'executor', 'analyst', 'custom']
@@ -16,17 +21,30 @@ const PROVIDER_OPTIONS: Array<{ value: CrewProviderKind; label: string }> = [
   { value: 'openrouter', label: 'OpenRouter' },
 ]
 
+type ProviderModelState = {
+  loading: boolean
+  endpoint?: string
+  models: string[]
+  error?: string
+  cacheKey?: string
+}
+
 function toggleStringValue(values: string[], nextValue: string): string[] {
   return values.includes(nextValue)
     ? values.filter((value) => value !== nextValue)
     : [...values, nextValue]
 }
 
-function agentUsesCrewDefaultProvider(
-  agent: { providerKind?: CrewProviderKind; modelOverride?: string | null },
-  crewDefaultProvider: CrewProviderKind,
-): boolean {
-  return (agent.providerKind ?? crewDefaultProvider) === crewDefaultProvider && !agent.modelOverride?.trim()
+function setStringValue(values: string[], nextValue: string, enabled: boolean): string[] {
+  if (enabled) {
+    return values.includes(nextValue) ? values : [...values, nextValue]
+  }
+
+  return values.filter((value) => value !== nextValue)
+}
+
+function getProviderLabel(providerKind: CrewProviderKind): string {
+  return PROVIDER_OPTIONS.find((option) => option.value === providerKind)?.label ?? providerKind
 }
 
 function resolveCrewRuntimeConfig(
@@ -108,6 +126,7 @@ type CrewProviderModelsResult = {
 function getCrewDiagnostics(crew: {
   process: CrewProcess
   managerAgentId: string | null
+  defaultProvider?: CrewProviderKind
   agents: Array<{ id: string; name: string; enabled: boolean; providerKind?: CrewProviderKind; modelOverride?: string | null }>
   providerProfiles?: {
     openAICompatible: CrewExternalProviderConfig
@@ -125,7 +144,8 @@ openRouterProfile?: { baseUrl?: string; model?: string; apiKey?: string }) {
     errors.push('Keine aktiven Crew-Mitglieder vorhanden.')
   }
 
-  const openAiAgents = enabledAgents.filter((agent) => agent.providerKind === 'openai-compatible')
+  const crewDefaultProvider = crew.defaultProvider ?? 'ollama'
+  const openAiAgents = crewDefaultProvider === 'openai-compatible' ? enabledAgents : []
   if (openAiAgents.length > 0) {
     const profile = crew.providerProfiles?.openAICompatible
     const effectiveApiKey = profile?.apiKey.trim() || openAIProfile?.apiKey?.trim() || ''
@@ -146,7 +166,7 @@ openRouterProfile?: { baseUrl?: string; model?: string; apiKey?: string }) {
     }
   }
 
-  const openRouterAgents = enabledAgents.filter((agent) => agent.providerKind === 'openrouter')
+  const openRouterAgents = crewDefaultProvider === 'openrouter' ? enabledAgents : []
   if (openRouterAgents.length > 0) {
     const profile = crew.providerProfiles?.openRouter
     const effectiveApiKey = profile?.apiKey.trim() || openRouterProfile?.apiKey?.trim() || ''
@@ -188,13 +208,18 @@ export default function CrewPanel() {
     setActiveCrew,
     loadAgents,
     installDefaultAgents,
+    syncAgentsFromPersonalityProfiles,
+    migrateAgentsToPersonalityProfiles,
     updateCrewAgent,
   } = useCrewStore()
   const { availableModels, defaultLlmProfileIds, llmProfiles, mcpServer, mcpServers, ollama } = useConfigStore()
   const claudeTools = useCoworkStore((state) => state.claudeTools)
+  const personalities = usePersonalityStore((state) => state.personalities)
+  const loadPersonalities = usePersonalityStore((state) => state.loadPersonalities)
+  const upsertPersonality = usePersonalityStore((state) => state.upsertPersonality)
 
   const [crewName, setCrewName] = useState('')
-  const [providerModelOptions, setProviderModelOptions] = useState<Record<string, { loading: boolean; endpoint?: string; models: string[]; error?: string }>>({})
+  const [providerModelOptions, setProviderModelOptions] = useState<Record<string, ProviderModelState>>({})
   const [pendingScrollCrewId, setPendingScrollCrewId] = useState<string | null>(null)
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({ general: true, execution: false, provider: false, diagnostics: true })
   const [expandedAgents, setExpandedAgents] = useState<Record<string, boolean>>({})
@@ -206,6 +231,40 @@ export default function CrewPanel() {
     loadAgents()
     installDefaultAgents()
   }, [installDefaultAgents, loadAgents])
+
+  useEffect(() => {
+    void loadPersonalities()
+  }, [loadPersonalities])
+
+  const personalityProfiles = useMemo<CrewPersonalityProfile[]>(() => (
+    personalities.map((personality) => ({
+      id: personality.id,
+      name: personality.name,
+      description: personality.description,
+      role: personality.role,
+      goal: personality.goal || personality.description,
+      systemPrompt: personality.system_prompt,
+      skillsMarkdown: personality.skills_markdown,
+      modelOverride: personality.model_override,
+      temperature: personality.temperature,
+      icon: personality.icon,
+      isDefault: personality.is_default,
+    }))
+  ), [personalities])
+
+  useEffect(() => {
+    if (personalityProfiles.length === 0) return
+
+    syncAgentsFromPersonalityProfiles(personalityProfiles)
+  }, [personalityProfiles, syncAgentsFromPersonalityProfiles])
+
+  useEffect(() => {
+    void migrateAgentsToPersonalityProfiles(personalityProfiles).then((changed) => {
+      if (changed) {
+        void loadPersonalities()
+      }
+    })
+  }, [loadPersonalities, migrateAgentsToPersonalityProfiles, personalityProfiles])
 
   useEffect(() => {
     if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return
@@ -261,7 +320,13 @@ export default function CrewPanel() {
     } : { openAICompatible: undefined, openRouter: undefined },
     [activeCrew, defaultOpenAICompatibleProfile, defaultOpenRouterProfile],
   )
-  const configuredMcpServers = mcpServers.length > 0 ? mcpServers : [mcpServer]
+  const configuredMcpServers = (mcpServers.length > 0 ? mcpServers : [mcpServer]).filter((server) => server.name.trim())
+
+  const getProviderModelCacheKey = (providerKey: 'openAICompatible' | 'openRouter') => {
+    const config = resolvedActiveProviderConfigs[providerKey]
+    if (!config) return ''
+    return `${config.baseUrl.trim()}::${config.apiKey.trim()}`
+  }
 
   const getProviderModelCatalog = (providerKind: CrewProviderKind) => {
     if (providerKind === 'ollama') {
@@ -322,8 +387,8 @@ export default function CrewPanel() {
       : activeCrew.providerProfiles.openRouter.enabled
   }
 
-  const getAgentModelOptions = (agent: { providerKind: CrewProviderKind; modelOverride?: string | null }) => {
-    const catalog = getProviderModelCatalog(agent.providerKind)
+  const getAgentModelOptions = (agent: { modelOverride?: string | null }) => {
+    const catalog = getProviderModelCatalog(activeCrew?.defaultProvider || 'ollama')
     const modelOverride = agent.modelOverride?.trim()
 
     if (!modelOverride || catalog.authoritative || catalog.models.includes(modelOverride)) {
@@ -336,14 +401,12 @@ export default function CrewPanel() {
   const handleCrewDefaultProviderChange = (providerKind: CrewProviderKind) => {
     if (providerKind !== 'ollama' && !isProviderEnabledForCrew(providerKind)) return
 
-    const currentDefaultProvider = activeCrew?.defaultProvider || 'ollama'
-
     updateActiveCrew({
       defaultProvider: providerKind,
       defaultModel: '',
       agents: activeCrew?.agents.map((agent) => ({
         ...agent,
-        providerKind: agentUsesCrewDefaultProvider(agent, currentDefaultProvider) ? providerKind : agent.providerKind,
+        providerKind,
       })),
     })
 
@@ -356,36 +419,24 @@ export default function CrewPanel() {
     }
   }
 
-  const handleAgentProviderKindChange = (agentId: string, providerKind: CrewProviderKind) => {
-    const agent = activeCrew?.agents.find((candidate) => candidate.id === agentId)
-    if (!agent) return
-    if (providerKind !== 'ollama' && !isProviderEnabledForCrew(providerKind)) return
-
-    const currentModelOverride = agent.modelOverride?.trim()
-    const nextCatalog = getProviderModelCatalog(providerKind)
-
-    updateActiveCrewAgent(agentId, {
-      providerKind,
-      modelOverride: currentModelOverride && nextCatalog.models.includes(currentModelOverride) ? currentModelOverride : null,
-    })
-
-    if (providerKind === 'ollama') {
-      return
-    }
-
-    const providerKey = providerKind === 'openai-compatible' ? 'openAICompatible' : 'openRouter'
-    const providerState = providerModelOptions[providerKey]
-
-    if (providerState?.loading || providerState?.models.length) {
-      return
-    }
-
-    void handleLoadProviderModels(providerKey)
-  }
-
   useEffect(() => {
     setProviderModelOptions({})
   }, [activeCrew?.id])
+
+  useEffect(() => {
+    if (!activeCrew) return
+
+    const providerKind = activeCrew.defaultProvider || 'ollama'
+    const providerKey = getProviderKey(providerKind)
+    if (!providerKey || !isProviderEnabledForCrew(providerKind)) return
+
+    const current = providerModelOptions[providerKey]
+    const cacheKey = getProviderModelCacheKey(providerKey)
+    if (current?.loading) return
+    if (current?.cacheKey === cacheKey && (current.endpoint || current.error)) return
+
+    void handleLoadProviderModels(providerKey)
+  }, [activeCrew, providerModelOptions, resolvedActiveProviderConfigs])
 
   useEffect(() => {
     if (!pendingScrollCrewId || activeCrew?.id !== pendingScrollCrewId) return
@@ -393,15 +444,37 @@ export default function CrewPanel() {
     setPendingScrollCrewId(null)
   }, [activeCrew?.id, pendingScrollCrewId])
 
+  const updateCrewPersonalityProfile = useCallback((profile: CrewPersonalityProfile, patch: Partial<CrewPersonalityProfile>) => {
+    const next = {
+      ...profile,
+      ...patch,
+    }
+    void upsertPersonality({
+      id: next.id,
+      name: next.name,
+      description: next.goal || next.description,
+      role: next.role,
+      goal: next.goal,
+      systemPrompt: next.systemPrompt,
+      skillsMarkdown: next.skillsMarkdown,
+      modelOverride: next.modelOverride,
+      temperature: next.temperature ?? null,
+      icon: next.icon ?? null,
+      isDefault: next.isDefault ?? false,
+    })
+  }, [upsertPersonality])
+
   useEffect(() => {
     if (!activeCrew) return
 
     const invalidAgentIds = activeCrew.agents
       .filter((agent) => {
-        const modelOverride = agent.modelOverride?.trim()
+        const profile = agent.personalityId ? personalityProfiles.find((entry) => entry.id === agent.personalityId) : null
+        const effectiveAgent = profile ? resolveCrewAgentWithProfile(agent, [profile]) : agent
+        const modelOverride = effectiveAgent.modelOverride?.trim()
         if (!modelOverride) return false
 
-        const catalog = getProviderModelCatalog(agent.providerKind)
+        const catalog = getProviderModelCatalog(activeCrew.defaultProvider || 'ollama')
         return catalog.authoritative && !catalog.models.includes(modelOverride)
       })
       .map((agent) => agent.id)
@@ -409,9 +482,16 @@ export default function CrewPanel() {
     if (invalidAgentIds.length === 0) return
 
     invalidAgentIds.forEach((agentId) => {
+      const agent = activeCrew.agents.find((entry) => entry.id === agentId)
+      const profile = agent?.personalityId ? personalityProfiles.find((entry) => entry.id === agent.personalityId) : null
+      if (profile) {
+        updateCrewPersonalityProfile(profile, { modelOverride: null })
+        return
+      }
+
       updateCrewAgent(activeCrew.id, agentId, { modelOverride: null })
     })
-  }, [activeCrew, availableModels, providerModelOptions, updateCrewAgent])
+  }, [activeCrew, availableModels, personalityProfiles, providerModelOptions, updateCrewAgent, updateCrewPersonalityProfile])
 
   const handleCreateCrew = () => {
     const nextName = crewName.trim() || buildDefaultCrewName(crews.map((crew) => crew.name))
@@ -430,6 +510,28 @@ export default function CrewPanel() {
   const updateActiveCrewAgent = (agentId: string, patch: Parameters<typeof updateCrewAgent>[2]) => {
     if (!activeCrew) return
     updateCrewAgent(activeCrew.id, agentId, patch)
+  }
+
+  const updateAllActiveCrewAgents = (mapper: (agent: CrewAgent) => CrewAgent) => {
+    if (!activeCrew) return
+    updateActiveCrew({
+      agents: activeCrew.agents.map(mapper),
+    })
+  }
+
+  const setCrewToolForAllAgents = (toolId: string, enabled: boolean) => {
+    updateAllActiveCrewAgents((agent) => ({
+      ...agent,
+      tools: setStringValue(agent.tools, toolId, enabled),
+      allowDelegation: toolId === 'delegate_task' ? enabled : agent.allowDelegation,
+    }))
+  }
+
+  const setCrewMcpServerForAllAgents = (serverName: string, enabled: boolean) => {
+    updateAllActiveCrewAgents((agent) => ({
+      ...agent,
+      mcpServerNames: setStringValue(agent.mcpServerNames, serverName, enabled),
+    }))
   }
 
   const handleDuplicateCrew = () => {
@@ -610,6 +712,7 @@ export default function CrewPanel() {
   const handleLoadProviderModels = async (providerKey: 'openAICompatible' | 'openRouter') => {
     const config = resolvedActiveProviderConfigs[providerKey]
     if (!config) return
+    const cacheKey = getProviderModelCacheKey(providerKey)
 
     setProviderModelOptions((current) => ({
       ...current,
@@ -617,6 +720,7 @@ export default function CrewPanel() {
         loading: true,
         endpoint: current[providerKey]?.endpoint,
         models: current[providerKey]?.models ?? [],
+        cacheKey,
       },
     }))
 
@@ -635,6 +739,7 @@ export default function CrewPanel() {
           loading: false,
           endpoint: result.endpoint,
           models: result.models,
+          cacheKey,
         },
       }))
     } catch (error) {
@@ -645,6 +750,7 @@ export default function CrewPanel() {
           endpoint: config.baseUrl,
           models: current[providerKey]?.models ?? [],
           error: error instanceof Error ? error.message : String(error),
+          cacheKey,
         },
       }))
     }
@@ -661,6 +767,7 @@ export default function CrewPanel() {
 
   return (
     <div className="panel">
+      <CrewRuntimePanel />
       {/* Header */}
       <div className="crew-header">
         <div className="crew-header-title">
@@ -686,6 +793,16 @@ export default function CrewPanel() {
           {isCrewListVisible ? '🗂 Crew-Liste ausblenden' : '🗂 Crew-Liste anzeigen'}
         </button>
       </div>
+
+      {activeCrew && (
+        <div style={{ display: 'grid', gap: 16, marginBottom: 16 }}>
+          <CrewControlPlanePanel activeCrew={activeCrew} />
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 16 }}>
+            <CrewGovernancePanel activeCrewId={activeCrew.id} />
+            <CrewHistoryPanel activeCrewId={activeCrew.id} />
+          </div>
+        </div>
+      )}
 
       {crews.length === 0 ? (
         <div className="crew-empty">
@@ -764,9 +881,21 @@ export default function CrewPanel() {
                         <span className="crew-label">Beschreibung</span>
                         <AutoResizeTextarea className="crew-textarea" value={activeCrew.description} onChange={(e) => updateActiveCrew({ description: e.target.value })} />
                       </div>
+                      <div className="crew-form-row">
+                        <div className="crew-form-group">
+                          <span className="crew-label">Execution Subject</span>
+                          <input className="crew-input" value={activeCrew.executionSubject} onChange={(e) => updateActiveCrew({ executionSubject: e.target.value })} placeholder="workspace-user" />
+                          <span className="crew-hint">Muss zu einer hinterlegten Crew-Rolle passen, wenn Governance aktiv ist.</span>
+                        </div>
+                      </div>
                       <div className="crew-form-group full-width">
                         <span className="crew-label">Crew-Zusatzanweisungen</span>
                         <AutoResizeTextarea className="crew-textarea" value={activeCrew.executionGuidelines} onChange={(e) => updateActiveCrew({ executionGuidelines: e.target.value })} placeholder="z. B. Antworte mit Risiken, Annahmen und nächsten Schritten" />
+                      </div>
+                      <div className="crew-form-group full-width">
+                        <span className="crew-label">Knowledge-Fokus</span>
+                        <AutoResizeTextarea className="crew-textarea" value={activeCrew.knowledgeFocus} onChange={(e) => updateActiveCrew({ knowledgeFocus: e.target.value })} placeholder="z. B. priorisiere API-Vertraege, Scheduler-Verhalten und letzte Crew-Laeufe" />
+                        <span className="crew-hint">Lenkt die Memory- und Knowledge-Suche fuer den Python-Runtime-Prompt.</span>
                       </div>
                     </div>
                   )}
@@ -785,7 +914,11 @@ export default function CrewPanel() {
                           <span className="crew-label">Manager-Agent</span>
                           <select className="crew-select" value={activeCrew.managerAgentId ?? ''} onChange={(e) => updateActiveCrew({ managerAgentId: e.target.value || null })}>
                             <option value="">Keiner</option>
-                            {activeCrew.agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                            {activeCrew.agents.map((a) => {
+                              const profile = a.personalityId ? personalityProfiles.find((entry) => entry.id === a.personalityId) : null
+                              const resolved = profile ? resolveCrewAgentWithProfile(a, [profile]) : a
+                              return <option key={a.id} value={a.id}>{resolved.name}</option>
+                            })}
                           </select>
                         </div>
                         <div className="crew-form-group">
@@ -848,7 +981,7 @@ export default function CrewPanel() {
                               return <option key={o.value} value={o.value} disabled={!ok}>{ok ? o.label : `${o.label} (Profil aktivieren)`}</option>
                             })}
                           </select>
-                          <span className="crew-hint">Mitglieder mit eigenem Provider/Modell bleiben beim Umschalten unverändert.</span>
+                          <span className="crew-hint">Der Crew-Provider gilt fuer alle Mitglieder. Pro Mitglied ist nur noch das Modell ueberschreibbar.</span>
                         </div>
                         <div className="crew-form-group">
                           <span className="crew-label">Crew-Modell</span>
@@ -897,23 +1030,92 @@ export default function CrewPanel() {
                     <span className="crew-section-icon">👥</span> Crew-Mitglieder ({activeCrew.agents.filter((a) => a.enabled).length}/{activeCrew.agents.length})
                   </div>
                   <div className="crew-section-body">
+                    <div className="crew-agent-panel crew-agent-panel-wide crew-bulk-access-panel">
+                      <div className="crew-agent-panel-header">
+                        <div className="crew-agent-panel-title">Freigaben fuer alle Mitglieder</div>
+                        <div className="crew-agent-panel-subtitle">Setzt Tool- und MCP-Zugriffe global fuer die aktive Crew.</div>
+                      </div>
+                      <div className="crew-agent-access-grid">
+                        <div className="crew-agent-subpanel">
+                          <div className="crew-form-group">
+                            <span className="crew-label">Tools</span>
+                            <div className="crew-tool-list">
+                              {claudeTools.map((tool) => {
+                                const allAgentsHaveTool = activeCrew.agents.length > 0 && activeCrew.agents.every((agent) => agent.tools.includes(tool.id))
+                                return (
+                                  <label key={tool.id} className="crew-tool-item">
+                                    <input
+                                      type="checkbox"
+                                      checked={allAgentsHaveTool}
+                                      onChange={(event) => setCrewToolForAllAgents(tool.id, event.target.checked)}
+                                    />
+                                    {tool.label}
+                                  </label>
+                                )
+                              })}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="crew-agent-subpanel">
+                          <div className="crew-form-group">
+                            <span className="crew-label">MCP-Zugriffe</span>
+                            {configuredMcpServers.length === 0 ? <span className="crew-hint">Keine MCP-Server konfiguriert.</span> : (
+                              <div className="crew-tool-list">
+                                {configuredMcpServers.map((srv) => {
+                                  const allAgentsHaveServer = activeCrew.agents.length > 0 && activeCrew.agents.every((agent) => agent.mcpServerNames.includes(srv.name))
+                                  return (
+                                    <label key={srv.name} className="crew-tool-item">
+                                      <input
+                                        type="checkbox"
+                                        checked={allAgentsHaveServer}
+                                        onChange={(event) => setCrewMcpServerForAllAgents(srv.name, event.target.checked)}
+                                      />
+                                      {srv.name}
+                                    </label>
+                                  )
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
                     <div className="crew-agents-list">
                       {activeCrew.agents.map((agent) => {
-                        const pmc = getProviderModelCatalog(agent.providerKind)
-                        const amo = getAgentModelOptions(agent)
-                        const selModel = agent.modelOverride?.trim() && amo.includes(agent.modelOverride.trim()) ? agent.modelOverride.trim() : ''
-                        const effectiveModelLabel = selModel || getCrewDefaultModelLabel(agent.providerKind)
+                        const profile = agent.personalityId ? personalityProfiles.find((entry) => entry.id === agent.personalityId) ?? null : null
+                        const profileAgent = profile ? resolveCrewAgentWithProfile(agent, [profile]) : agent
+                        const effectiveProviderKind = activeCrew.defaultProvider || 'ollama'
+                        const pmc = getProviderModelCatalog(effectiveProviderKind)
+                        const amo = getAgentModelOptions(profileAgent)
+                        const selModel = profileAgent.modelOverride?.trim() && amo.includes(profileAgent.modelOverride.trim()) ? profileAgent.modelOverride.trim() : ''
+                        const effectiveModelLabel = selModel || getCrewDefaultModelLabel(effectiveProviderKind)
                         const isOpen = expandedAgents[agent.id] ?? false
+                        const updateProfileOrSnapshot = (patch: Partial<CrewAgent>) => {
+                          if (profile) {
+                            updateCrewPersonalityProfile(profile, {
+                              name: patch.name ?? profile.name,
+                              role: patch.role ?? profile.role,
+                              goal: patch.goal ?? profile.goal,
+                              systemPrompt: patch.backstory ?? profile.systemPrompt,
+                              skillsMarkdown: patch.skillsMarkdown ?? profile.skillsMarkdown,
+                              modelOverride: patch.modelOverride !== undefined ? patch.modelOverride : profile.modelOverride,
+                            })
+                            return
+                          }
+
+                          updateActiveCrewAgent(agent.id, patch)
+                        }
                         return (
                           <div key={agent.id} className={`crew-agent-card${!agent.enabled ? ' disabled' : ''}${isOpen ? ' open' : ''}`}>
                             <div className="crew-agent-header" onClick={() => toggleAgent(agent.id)}>
-                              <div className="crew-agent-avatar">{roleEmoji(agent.role)}</div>
+                              <div className="crew-agent-avatar">{roleEmoji(profileAgent.role)}</div>
                               <div className="crew-agent-info">
-                                <div className="crew-agent-name">{agent.name}</div>
-                                <div className="crew-agent-role">{agent.role}</div>
+                                <div className="crew-agent-name">{profileAgent.name}</div>
+                                <div className="crew-agent-role">{profileAgent.role}</div>
                                 <div className="crew-agent-summary">
-                                  <span className="crew-inline-badge">{agent.providerKind}</span>
+                                  <span className="crew-inline-badge">{getProviderLabel(effectiveProviderKind)}</span>
                                   <span className="crew-inline-badge subtle">{effectiveModelLabel}</span>
+                                  {profile && <span className="crew-inline-badge subtle">globales Profil</span>}
                                 </div>
                               </div>
                               <div className="crew-agent-header-actions">
@@ -930,12 +1132,28 @@ export default function CrewPanel() {
                                   </div>
                                   <div className="crew-agent-col">
                                     <div className="crew-form-row">
-                                      <div className="crew-form-group"><span className="crew-label">Name</span><input className="crew-input" value={agent.name} onChange={(e) => updateActiveCrewAgent(agent.id, { name: e.target.value })} /></div>
-                                      <div className="crew-form-group"><span className="crew-label">Rolle</span><select className="crew-select" value={agent.role} onChange={(e) => updateActiveCrewAgent(agent.id, { role: e.target.value as AgentRole })}>{ROLE_OPTIONS.map((r) => <option key={r} value={r}>{r}</option>)}</select></div>
+                                      {profile && (
+                                        <div className="crew-form-group">
+                                          <span className="crew-label">Icon</span>
+                                          <input className="crew-input" value={profile.icon ?? ''} maxLength={4} onChange={(e) => updateCrewPersonalityProfile(profile, { icon: e.target.value || null })} />
+                                        </div>
+                                      )}
+                                      <div className="crew-form-group"><span className="crew-label">Name</span><input className="crew-input" value={profileAgent.name} onChange={(e) => updateProfileOrSnapshot({ name: e.target.value })} /></div>
+                                      <div className="crew-form-group"><span className="crew-label">Rolle</span><select className="crew-select" value={profileAgent.role} onChange={(e) => updateProfileOrSnapshot({ role: e.target.value as AgentRole })}>{ROLE_OPTIONS.map((r) => <option key={r} value={r}>{r}</option>)}</select></div>
+                                      {profile && (
+                                        <div className="crew-form-group">
+                                          <span className="crew-label">Temperatur</span>
+                                          <input className="crew-input" type="number" min={0} max={2} step={0.1} value={profile.temperature ?? ''} onChange={(e) => updateCrewPersonalityProfile(profile, { temperature: e.target.value === '' ? null : Number(e.target.value) })} />
+                                        </div>
+                                      )}
                                     </div>
-                                    <div className="crew-form-group"><span className="crew-label">Ziel / Prompt-Fokus</span><AutoResizeTextarea className="crew-textarea" value={agent.goal} onChange={(e) => updateActiveCrewAgent(agent.id, { goal: e.target.value })} /></div>
-                                    <div className="crew-form-group"><span className="crew-label">Hintergrund</span><AutoResizeTextarea className="crew-textarea" value={agent.backstory} onChange={(e) => updateActiveCrewAgent(agent.id, { backstory: e.target.value })} /></div>
-                                    <div className="crew-form-group"><span className="crew-label">skills.md</span><AutoResizeTextarea className="crew-textarea" value={agent.skillsMarkdown} onChange={(e) => updateActiveCrewAgent(agent.id, { skillsMarkdown: e.target.value })} placeholder="# skills.md&#10;- Projektkontext&#10;- Arbeitsstil" /></div>
+                                    {profile && (
+                                      <label className="crew-checkbox-label"><input type="checkbox" checked={profile.isDefault ?? false} onChange={(e) => updateCrewPersonalityProfile(profile, { isDefault: e.target.checked })} /> Als Standard verwenden</label>
+                                    )}
+                                    <div className="crew-form-group"><span className="crew-label">Ziel / Prompt-Fokus</span><AutoResizeTextarea className="crew-textarea" value={profileAgent.goal} onChange={(e) => updateProfileOrSnapshot({ goal: e.target.value })} /></div>
+                                    <div className="crew-form-group"><span className="crew-label">Hintergrund / System-Prompt</span><AutoResizeTextarea className="crew-textarea" value={profileAgent.backstory} onChange={(e) => updateProfileOrSnapshot({ backstory: e.target.value })} /></div>
+                                    <div className="crew-form-group"><span className="crew-label">skills.md</span><AutoResizeTextarea className="crew-textarea" value={profileAgent.skillsMarkdown} onChange={(e) => updateProfileOrSnapshot({ skillsMarkdown: e.target.value })} placeholder="# skills.md&#10;- Projektkontext&#10;- Arbeitsstil" /></div>
+                                    <span className="crew-hint">{profile ? 'Profilfelder werden global fuer alle Crews synchronisiert.' : 'Lokaler Snapshot ohne aktive Profil-Synchronisation.'}</span>
                                   </div>
                                 </div>
                                 <div className="crew-agent-panel">
@@ -952,10 +1170,8 @@ export default function CrewPanel() {
                                     <div className="crew-form-row">
                                       <div className="crew-form-group">
                                         <span className="crew-label">Provider</span>
-                                        <select className="crew-select" value={agent.providerKind} onChange={(e) => handleAgentProviderKindChange(agent.id, e.target.value as CrewProviderKind)}>
-                                          {PROVIDER_OPTIONS.map((o) => { const ok = o.value === agent.providerKind || isProviderEnabledForCrew(o.value); return <option key={o.value} value={o.value} disabled={!ok}>{ok ? o.label : `${o.label} (aktivieren)`}</option> })}
-                                        </select>
-                                        {agent.providerKind !== 'ollama' && !isProviderEnabledForCrew(agent.providerKind) && <span className="crew-hint" style={{ color: 'var(--danger)' }}>Provider nicht aktiviert.</span>}
+                                        <input className="crew-input" value={getProviderLabel(effectiveProviderKind)} readOnly />
+                                        <span className="crew-hint">Wird vom Crew-Provider gesteuert.</span>
                                       </div>
                                       <div className="crew-form-group">
                                         <span className="crew-label">Max Iterationen</span>
@@ -964,11 +1180,11 @@ export default function CrewPanel() {
                                     </div>
                                     <div className="crew-form-group">
                                       <span className="crew-label">Modell</span>
-                                      <select className="crew-select" value={selModel} onChange={(e) => updateActiveCrewAgent(agent.id, { modelOverride: e.target.value || null })}>
-                                        <option value="">Crew-Modell ({getCrewDefaultModelLabel(agent.providerKind)})</option>
+                                      <select className="crew-select" value={selModel} onChange={(e) => updateProfileOrSnapshot({ modelOverride: e.target.value || null })}>
+                                        <option value="">Crew-Modell ({getCrewDefaultModelLabel(effectiveProviderKind)})</option>
                                         {amo.map((m) => <option key={m} value={m}>{m}</option>)}
                                       </select>
-                                      {agent.providerKind !== 'ollama' && pmc.models.length === 0 && <span className="crew-hint">Keine Modelle geladen.</span>}
+                                      {effectiveProviderKind !== 'ollama' && pmc.models.length === 0 && <span className="crew-hint">Keine Modelle geladen.</span>}
                                       <span className="crew-hint">Aktuell wirksam: {effectiveModelLabel}</span>
                                     </div>
                                   </div>
@@ -983,7 +1199,19 @@ export default function CrewPanel() {
                                       <div className="crew-form-group">
                                         <span className="crew-label">Tools</span>
                                         <div className="crew-tool-list">
-                                          {claudeTools.map((tool) => (<label key={tool.id} className="crew-tool-item"><input type="checkbox" checked={agent.tools.includes(tool.id)} onChange={() => updateActiveCrewAgent(agent.id, { tools: toggleStringValue(agent.tools, tool.id) })} />{tool.label}</label>))}
+                                          {claudeTools.map((tool) => (
+                                            <label key={tool.id} className="crew-tool-item">
+                                              <input
+                                                type="checkbox"
+                                                checked={agent.tools.includes(tool.id)}
+                                                onChange={(event) => updateActiveCrewAgent(agent.id, {
+                                                  tools: toggleStringValue(agent.tools, tool.id),
+                                                  allowDelegation: tool.id === 'delegate_task' ? event.target.checked : agent.allowDelegation,
+                                                })}
+                                              />
+                                              {tool.label}
+                                            </label>
+                                          ))}
                                         </div>
                                       </div>
                                     </div>

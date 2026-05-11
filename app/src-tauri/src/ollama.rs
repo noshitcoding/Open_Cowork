@@ -193,9 +193,8 @@ fn normalize_config(config: Option<OllamaConfig>) -> Result<OllamaConfig, Ollama
         merged.base_url.trim().to_string()
     };
 
-    let parsed = Url::parse(&endpoint).map_err(|error| {
-        OllamaError::InvalidEndpoint(format!("{endpoint} ({error})"))
-    })?;
+    let parsed = Url::parse(&endpoint)
+        .map_err(|error| OllamaError::InvalidEndpoint(format!("{endpoint} ({error})")))?;
 
     let model = if merged.model.trim().is_empty() {
         DEFAULT_MODEL.to_string()
@@ -217,7 +216,9 @@ fn build_http_client(timeout_ms: u64) -> Result<Client, OllamaError> {
         .map_err(|error| OllamaError::RequestFailed(error.to_string()))
 }
 
-pub async fn check_health(config: Option<OllamaConfig>) -> Result<OllamaHealthResponse, OllamaError> {
+pub async fn check_health(
+    config: Option<OllamaConfig>,
+) -> Result<OllamaHealthResponse, OllamaError> {
     let config = normalize_config(config)?;
     let client = build_http_client(config.timeout_ms)?;
 
@@ -240,7 +241,10 @@ pub async fn check_health(config: Option<OllamaConfig>) -> Result<OllamaHealthRe
             latency_ms: started.elapsed().as_millis(),
             version: None,
             models: vec![],
-            error: Some(format!("Ollama returned status {} for /api/tags", tags_response.status())),
+            error: Some(format!(
+                "Ollama returned status {} for /api/tags",
+                tags_response.status()
+            )),
         });
     }
 
@@ -264,12 +268,19 @@ pub async fn check_health(config: Option<OllamaConfig>) -> Result<OllamaHealthRe
         model: config.model,
         latency_ms: started.elapsed().as_millis(),
         version: version_payload,
-        models: tag_payload.models.into_iter().map(|item| item.name).collect(),
+        models: tag_payload
+            .models
+            .into_iter()
+            .map(|item| item.name)
+            .collect(),
         error: None,
     })
 }
 
-pub async fn generate_plan(config: Option<OllamaConfig>, prompt: String) -> Result<PlanResponse, OllamaError> {
+pub async fn generate_plan(
+    config: Option<OllamaConfig>,
+    prompt: String,
+) -> Result<PlanResponse, OllamaError> {
     let config = normalize_config(config)?;
     let client = build_http_client(config.timeout_ms)?;
 
@@ -444,6 +455,7 @@ pub async fn chat_turn_stream<F>(
     history: Vec<ChatMessage>,
     tools: Vec<ChatToolDef>,
     mut on_chunk: F,
+    is_cancelled: impl Fn() -> bool,
 ) -> Result<ChatTurnResponse, OllamaError>
 where
     F: FnMut(ChatStreamChunkPayload) -> Result<(), OllamaError>,
@@ -502,6 +514,10 @@ where
     let mut assistant_message = String::new();
 
     while let Some(next) = stream.next().await {
+        if is_cancelled() {
+            return Err(OllamaError::RequestFailed("Chat-Generierung abgebrochen.".to_string()));
+        }
+
         let bytes = match next {
             Ok(bytes) => bytes,
             Err(error) => {
@@ -512,7 +528,13 @@ where
                     config.model,
                     stream_error
                 );
-                return chat_turn(Some(config.clone()), prompt.clone(), history.clone(), vec![]).await;
+                return chat_turn(
+                    Some(config.clone()),
+                    prompt.clone(),
+                    history.clone(),
+                    vec![],
+                )
+                .await;
             }
         };
         let text = String::from_utf8_lossy(&bytes);
@@ -548,7 +570,12 @@ where
         assistant_message.len()
     );
 
-    Ok(build_chat_turn_response(config, prompt, assistant_message, vec![]))
+    Ok(build_chat_turn_response(
+        config,
+        prompt,
+        assistant_message,
+        vec![],
+    ))
 }
 
 async fn chat_turn_with_tools(
@@ -667,7 +694,11 @@ where
     let payload: GenerateStreamResponse = match serde_json::from_str(normalized) {
         Ok(payload) => payload,
         Err(error) => {
-            log::debug!("ignoring non-json ollama stream line: {} ({})", normalized, error);
+            log::debug!(
+                "ignoring non-json ollama stream line: {} ({})",
+                normalized,
+                error
+            );
             return Ok(());
         }
     };
@@ -756,7 +787,9 @@ fn detect_risky_action(text: &str) -> bool {
         "mkfs.",
         "dd if=",
     ];
-    dangerous_phrases.iter().any(|phrase| normalized.contains(phrase))
+    dangerous_phrases
+        .iter()
+        .any(|phrase| normalized.contains(phrase))
 }
 
 fn build_chat_turn_response(
@@ -765,14 +798,18 @@ fn build_chat_turn_response(
     assistant_message: String,
     tool_calls: Vec<OllamaToolCall>,
 ) -> ChatTurnResponse {
-    let requires_approval =
-        detect_risky_action(&prompt) || detect_risky_action(&assistant_message);
+    let requires_approval = detect_risky_action(&prompt) || detect_risky_action(&assistant_message);
 
     let proposed_plan = if requires_approval {
         let response_steps = parse_steps(&assistant_message);
         let steps: Vec<String> = response_steps.into_iter().take(6).collect();
         if steps.is_empty() || (steps.len() == 1 && steps[0] == assistant_message.trim()) {
-            vec![assistant_message.lines().next().unwrap_or("Aktion pruefen").trim().to_string()]
+            vec![assistant_message
+                .lines()
+                .next()
+                .unwrap_or("Aktion pruefen")
+                .trim()
+                .to_string()]
         } else {
             steps
         }
@@ -796,7 +833,9 @@ fn parse_steps(raw: &str) -> Vec<String> {
     for line in raw.lines() {
         let cleaned = line
             .trim()
-            .trim_start_matches(|ch: char| ch.is_ascii_digit() || ch == '.' || ch == '-' || ch == ')')
+            .trim_start_matches(|ch: char| {
+                ch.is_ascii_digit() || ch == '.' || ch == '-' || ch == ')'
+            })
             .trim()
             .to_string();
 
@@ -814,7 +853,9 @@ fn parse_steps(raw: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_chat_turn_response, parse_steps, OllamaConfig, OllamaToolCall, OllamaToolFunctionCall};
+    use super::{
+        build_chat_turn_response, parse_steps, OllamaConfig, OllamaToolCall, OllamaToolFunctionCall,
+    };
     use serde_json::{Map, Value};
 
     #[test]
@@ -843,7 +884,10 @@ mod tests {
     #[test]
     fn build_chat_turn_response_preserves_tool_calls() {
         let mut arguments = Map::new();
-        arguments.insert("file_path".to_string(), Value::String("C:\\workspace\\README.md".to_string()));
+        arguments.insert(
+            "file_path".to_string(),
+            Value::String("C:\\workspace\\README.md".to_string()),
+        );
 
         let response = build_chat_turn_response(
             OllamaConfig {

@@ -229,4 +229,194 @@ describe('streamOpenAiCompatibleMessages', () => {
       ],
     })
   })
+
+  it('preserves assistant reasoning for follow-up OpenRouter turns', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          id: 'resp-follow-up',
+          model: 'openai/gpt-4o-mini',
+          usage: { prompt_tokens: 15, completion_tokens: 3 },
+          choices: [{ finish_reason: 'stop', message: { content: 'Weiter geht es.' } }],
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      ),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { streamOpenAiCompatibleMessages } = await import('./openaiCompatibleClient')
+    const stream = streamOpenAiCompatibleMessages(
+      {
+        provider: 'openrouter',
+        apiKey: 'sk-or-test',
+        model: 'openai/gpt-4o-mini',
+        baseUrl: 'https://openrouter.ai/api/v1',
+      },
+      [
+        {
+          role: 'assistant',
+          content: [
+            { type: 'thinking', thinking: 'Ich muss erst den Dateibaum auswerten.' },
+            { type: 'text', text: 'Ich pruefe jetzt die Dateien.' },
+          ],
+        },
+        { role: 'user', content: 'Bitte mache weiter.' },
+      ],
+      'Systemprompt',
+    )
+
+    while (!(await stream.next()).done) {
+      // consume stream
+    }
+
+    const [, requestInit] = fetchMock.mock.calls[0] as [string, RequestInit]
+    const body = JSON.parse(String(requestInit.body))
+    expect(body.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: 'assistant',
+          content: 'Ich pruefe jetzt die Dateien.',
+          reasoning: 'Ich muss erst den Dateibaum auswerten.',
+        }),
+      ]),
+    )
+  })
+
+  it('retries OpenRouter requests without image input after unsupported-image 404 errors', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            error: {
+              message: 'No endpoints found that support image input',
+              code: 404,
+            },
+          }),
+          {
+            status: 404,
+            headers: { 'Content-Type': 'application/json' },
+          },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            id: 'resp-fallback',
+            model: 'meta-llama/llama-3.3-70b-instruct',
+            usage: { prompt_tokens: 18, completion_tokens: 7 },
+            choices: [{
+              finish_reason: 'stop',
+              message: {
+                content: 'Ich nutze den Textkontext ohne Bild.',
+              },
+            }],
+          }),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          },
+        ),
+      )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { streamOpenAiCompatibleMessages } = await import('./openaiCompatibleClient')
+    const stream = streamOpenAiCompatibleMessages(
+      {
+        provider: 'openrouter',
+        apiKey: 'sk-or-test',
+        model: 'meta-llama/llama-3.3-70b-instruct',
+        baseUrl: 'https://openrouter.ai/api/v1',
+      },
+      [{
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Bitte analysiere den Screenshot.' },
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAA' } },
+        ],
+      }],
+      'Systemprompt',
+      [readToolDef],
+    )
+
+    let result: Awaited<ReturnType<typeof stream.next>>['value'] | null = null
+    while (true) {
+      const next = await stream.next()
+      if (next.done) {
+        result = next.value
+        break
+      }
+    }
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+
+    const [, firstInit] = fetchMock.mock.calls[0] as [string, RequestInit]
+    const firstBody = JSON.parse(String(firstInit.body))
+    expect(firstBody.messages).toEqual([
+      { role: 'system', content: 'Systemprompt' },
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Bitte analysiere den Screenshot.' },
+          { type: 'image_url', image_url: { url: 'data:image/png;base64,AAA' } },
+        ],
+      },
+    ])
+
+    const [, secondInit] = fetchMock.mock.calls[1] as [string, RequestInit]
+    const secondBody = JSON.parse(String(secondInit.body))
+    expect(secondBody.messages).toEqual([
+      { role: 'system', content: 'Systemprompt' },
+      { role: 'user', content: 'Bitte analysiere den Screenshot.' },
+    ])
+    expect(result).toMatchObject({
+      model: 'meta-llama/llama-3.3-70b-instruct',
+      stopReason: 'end_turn',
+      content: [{ type: 'text', text: 'Ich nutze den Textkontext ohne Bild.' }],
+    })
+  })
+
+  it('surfaces normalized OpenRouter choice errors instead of masking them as empty responses', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          id: 'resp-choice-error',
+          model: 'openai/gpt-4o-mini',
+          choices: [{
+            finish_reason: 'error',
+            error: {
+              code: 502,
+              message: 'Upstream provider timeout',
+            },
+            message: { content: null },
+          }],
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      ),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { streamOpenAiCompatibleMessages } = await import('./openaiCompatibleClient')
+    const stream = streamOpenAiCompatibleMessages(
+      {
+        provider: 'openrouter',
+        apiKey: 'sk-or-test',
+        model: 'openai/gpt-4o-mini',
+        baseUrl: 'https://openrouter.ai/api/v1',
+      },
+      [{ role: 'user', content: 'Bitte antworte.' }],
+      'Systemprompt',
+    )
+
+    await expect((async () => {
+      while (!(await stream.next()).done) {
+        // consume stream
+      }
+    })()).rejects.toThrow('OpenRouter API Error (502): Upstream provider timeout')
+  })
 })

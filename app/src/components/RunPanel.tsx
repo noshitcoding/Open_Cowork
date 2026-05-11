@@ -46,6 +46,98 @@ type WorkerSandboxRow = {
   allowMcp: boolean
 }
 
+type RawRecord = Record<string, unknown>
+
+const ISO_EPOCH = new Date(0).toISOString()
+
+const asRecord = (value: unknown): RawRecord =>
+  value && typeof value === 'object' ? value as RawRecord : {}
+
+const asString = (value: unknown, fallback = ''): string =>
+  typeof value === 'string' ? value : fallback
+
+const asNullableString = (value: unknown): string | null =>
+  typeof value === 'string' ? value : null
+
+const asNumber = (value: unknown, fallback = 0): number => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value)
+    if (Number.isFinite(parsed)) return parsed
+  }
+  return fallback
+}
+
+const asBoolean = (value: unknown, fallback = false): boolean =>
+  typeof value === 'boolean' ? value : fallback
+
+const asTimestampString = (primary: unknown, secondary?: unknown): string => {
+  const value = asString(primary) || asString(secondary)
+  return value || ISO_EPOCH
+}
+
+const normalizeRun = (value: unknown): EngineRunRow | null => {
+  const row = asRecord(value)
+  const id = asString(row.id)
+  if (!id) return null
+
+  return {
+    id,
+    parentRunId: asNullableString(row.parentRunId ?? row.parent_run_id),
+    sessionId: asNullableString(row.sessionId ?? row.session_id),
+    title: asString(row.title, 'Unbenannter Run'),
+    inputSummary: asNullableString(row.inputSummary ?? row.input_summary),
+    status: asString(row.status, 'unknown'),
+    phase: asString(row.phase, 'unknown'),
+    cwd: asNullableString(row.cwd),
+    model: asNullableString(row.model),
+    provider: asNullableString(row.provider),
+    retryCount: asNumber(row.retryCount ?? row.retry_count),
+    resumedFromRunId: asNullableString(row.resumedFromRunId ?? row.resumed_from_run_id),
+    checkpointJson: asNullableString(row.checkpointJson ?? row.checkpoint_json),
+    resultSummary: asNullableString(row.resultSummary ?? row.result_summary),
+    error: asNullableString(row.error),
+    updatedAt: asTimestampString(row.updatedAt ?? row.updated_at, row.createdAt ?? row.created_at),
+    createdAt: asTimestampString(row.createdAt ?? row.created_at, row.updatedAt ?? row.updated_at),
+  }
+}
+
+const normalizeCheckpoint = (value: unknown): EngineRunCheckpointRow | null => {
+  const checkpoint = asRecord(value)
+  const id = asString(checkpoint.id)
+  if (!id) return null
+
+  return {
+    id,
+    runId: asString(checkpoint.runId ?? checkpoint.run_id),
+    label: asString(checkpoint.label, 'Checkpoint'),
+    snapshotJson: asString(checkpoint.snapshotJson ?? checkpoint.snapshot_json),
+    createdAt: asTimestampString(checkpoint.createdAt ?? checkpoint.created_at),
+  }
+}
+
+const normalizeSandbox = (value: unknown): WorkerSandboxRow | null => {
+  const sandbox = asRecord(value)
+  const id = asString(sandbox.id)
+  if (!id) return null
+
+  return {
+    id,
+    runId: asString(sandbox.runId ?? sandbox.run_id),
+    backendId: asNullableString(sandbox.backendId ?? sandbox.backend_id),
+    status: asString(sandbox.status, 'unknown'),
+    mode: asString(sandbox.mode, 'unknown'),
+    sourceCwd: asString(sandbox.sourceCwd ?? sandbox.source_cwd),
+    workspaceRoot: asString(sandbox.workspaceRoot ?? sandbox.workspace_root),
+    allowFileRead: asBoolean(sandbox.allowFileRead ?? sandbox.allow_file_read),
+    allowFileWrite: asBoolean(sandbox.allowFileWrite ?? sandbox.allow_file_write),
+    allowShellExecution: asBoolean(sandbox.allowShellExecution ?? sandbox.allow_shell_execution),
+    allowWebFetch: asBoolean(sandbox.allowWebFetch ?? sandbox.allow_web_fetch),
+    allowWebSearch: asBoolean(sandbox.allowWebSearch ?? sandbox.allow_web_search),
+    allowMcp: asBoolean(sandbox.allowMcp ?? sandbox.allow_mcp),
+  }
+}
+
 export default function RunPanel() {
   const currentRunId = useEngineStore((state) => state.currentRunId)
   const [runs, setRuns] = useState<EngineRunRow[]>([])
@@ -60,8 +152,10 @@ export default function RunPanel() {
     setLoading(true)
     setError(null)
     try {
-      const rows = await safeInvoke<EngineRunRow[] | null>('engine_run_list', { limit: 100 }, [])
-      const safeRows = Array.isArray(rows) ? rows : []
+      const rows = await safeInvoke<unknown[] | null>('engine_run_list', { limit: 100 }, [])
+      const safeRows = Array.isArray(rows)
+        ? rows.map(normalizeRun).filter((row): row is EngineRunRow => row !== null)
+        : []
       setRuns(safeRows)
       const nextSelected = selectedRun && safeRows.some((row) => row.id === selectedRun)
         ? selectedRun
@@ -76,11 +170,15 @@ export default function RunPanel() {
 
   const refreshCheckpoints = async (runId: string) => {
     try {
-      const rows = await safeInvoke<EngineRunCheckpointRow[] | null>('engine_run_checkpoint_list', {
+      const rows = await safeInvoke<unknown[] | null>('engine_run_checkpoint_list', {
         runId,
         limit: 20,
       }, [])
-      setCheckpoints(Array.isArray(rows) ? rows : [])
+      setCheckpoints(
+        Array.isArray(rows)
+          ? rows.map(normalizeCheckpoint).filter((checkpoint): checkpoint is EngineRunCheckpointRow => checkpoint !== null)
+          : [],
+      )
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     }
@@ -88,8 +186,8 @@ export default function RunPanel() {
 
   const refreshSandbox = async (runId: string) => {
     try {
-      const row = await safeInvoke<WorkerSandboxRow | null>('worker_sandbox_get_for_run', { runId }, null)
-      setSandbox(row ?? null)
+      const row = await safeInvoke<unknown>('worker_sandbox_get_for_run', { runId }, null)
+      setSandbox(normalizeSandbox(row))
     } catch {
       setSandbox(null)
     }

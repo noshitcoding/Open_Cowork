@@ -175,8 +175,17 @@ async function callOllamaGenerate(
   request: ChatTurnRequest,
   streaming: boolean,
   onChunk?: (chunk: string) => void,
+  signal?: AbortSignal,
 ): Promise<string> {
   const abortController = new AbortController()
+  const abortFromSource = () => abortController.abort(signal?.reason)
+  if (signal) {
+    if (signal.aborted) {
+      abortFromSource()
+    } else {
+      signal.addEventListener('abort', abortFromSource, { once: true })
+    }
+  }
   const timeoutHandle = window.setTimeout(() => abortController.abort(), config.timeoutMs)
 
   try {
@@ -253,6 +262,9 @@ async function callOllamaGenerate(
     return assistantMessage
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') {
+      if (signal?.aborted) {
+        throw new Error('Generierung abgebrochen.')
+      }
       throw new Error(`Zeitueberschreitung nach ${config.timeoutMs}ms beim Aufruf von ${config.baseUrl}/api/generate`)
     }
 
@@ -266,18 +278,22 @@ async function callOllamaGenerate(
     throw error instanceof Error ? error : new Error(message)
   } finally {
     window.clearTimeout(timeoutHandle)
+    if (signal) {
+      signal.removeEventListener('abort', abortFromSource)
+    }
   }
 }
 
 async function streamChatTurnViaHttp(
   request: ChatTurnRequest,
   onChunk: (chunk: string) => void,
+  signal?: AbortSignal,
 ): Promise<ChatTurnResponse> {
   const config = normalizeClientConfig(request.config)
-  let assistantMessage = await callOllamaGenerate(config, request, true, onChunk)
+  let assistantMessage = await callOllamaGenerate(config, request, true, onChunk, signal)
 
   if (!assistantMessage.trim()) {
-    assistantMessage = await callOllamaGenerate(config, request, false)
+    assistantMessage = await callOllamaGenerate(config, request, false, undefined, signal)
   }
 
   if (!assistantMessage.trim()) {
@@ -331,13 +347,23 @@ async function invokeChatTurnFallback(request: ChatTurnRequest): Promise<ChatTur
 export async function streamChatTurn(
   request: ChatTurnRequest,
   onChunk: (chunk: string) => void,
+  options?: { signal?: AbortSignal },
 ): Promise<ChatTurnResponse> {
   if (!canUseTauriInvoke()) {
-    return await streamChatTurnViaHttp(request, onChunk)
+    return await streamChatTurnViaHttp(request, onChunk, options?.signal)
   }
 
   const streamId = createStreamId()
   let unlisten: (() => void) | null = null
+  const cancelStream = () => {
+    void invoke('chat_turn_stream_cancel', { streamId }).catch(() => {})
+  }
+
+  if (options?.signal?.aborted) {
+    cancelStream()
+    throw new Error('Generierung abgebrochen.')
+  }
+  options?.signal?.addEventListener('abort', cancelStream, { once: true })
 
   try {
     unlisten = await listen<OllamaChatChunk>('ollama-chat-chunk', (event) => {
@@ -371,6 +397,7 @@ export async function streamChatTurn(
       throw new Error(`${streamMessage}\nFallback fehlgeschlagen: ${fallbackMessage}`)
     }
   } finally {
+    options?.signal?.removeEventListener('abort', cancelStream)
     if (unlisten) {
       unlisten()
     }

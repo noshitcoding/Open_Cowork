@@ -7,6 +7,20 @@ use std::sync::{mpsc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use thiserror::Error;
 
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+#[cfg(target_os = "windows")]
+fn suppress_command_window(command: &mut Command) {
+    command.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg(not(target_os = "windows"))]
+fn suppress_command_window(_command: &mut Command) {}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct McpServerRequest {
@@ -123,10 +137,14 @@ fn spawn_process(
     let mut command = Command::new(command_name.trim());
     command
         .args(args.iter().map(String::as_str))
-        .envs(env.iter().map(|(key, value)| (key.as_str(), value.as_str())))
+        .envs(
+            env.iter()
+                .map(|(key, value)| (key.as_str(), value.as_str())),
+        )
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
+    suppress_command_window(&mut command);
 
     command
         .spawn()
@@ -467,7 +485,9 @@ pub fn probe_server(req: McpServerRequest) -> Result<McpProbeResponse, McpError>
 
     writeln!(stdin, "{}", init).map_err(|error| McpError::IoFailed(error.to_string()))?;
     writeln!(stdin, "{}", list_tools).map_err(|error| McpError::IoFailed(error.to_string()))?;
-    stdin.flush().map_err(|error| McpError::IoFailed(error.to_string()))?;
+    stdin
+        .flush()
+        .map_err(|error| McpError::IoFailed(error.to_string()))?;
 
     let (tx, rx) = mpsc::channel::<String>();
     std::thread::spawn(move || {
@@ -609,7 +629,9 @@ pub fn call_tool(req: McpCallRequest) -> Result<McpCallResponse, McpError> {
 
     writeln!(stdin, "{}", init).map_err(|error| McpError::IoFailed(error.to_string()))?;
     writeln!(stdin, "{}", tool_call).map_err(|error| McpError::IoFailed(error.to_string()))?;
-    stdin.flush().map_err(|error| McpError::IoFailed(error.to_string()))?;
+    stdin
+        .flush()
+        .map_err(|error| McpError::IoFailed(error.to_string()))?;
 
     let (tx, rx) = mpsc::channel::<String>();
     std::thread::spawn(move || {
@@ -654,10 +676,14 @@ pub fn call_tool(req: McpCallRequest) -> Result<McpCallResponse, McpError> {
                                 .to_string(),
                         );
                     } else if let Some(result) = value.get("result") {
-                        if let Some(content) = result.get("content").and_then(|entry| entry.as_array()) {
+                        if let Some(content) =
+                            result.get("content").and_then(|entry| entry.as_array())
+                        {
                             let texts: Vec<&str> = content
                                 .iter()
-                                .filter_map(|entry| entry.get("text").and_then(|text| text.as_str()))
+                                .filter_map(|entry| {
+                                    entry.get("text").and_then(|text| text.as_str())
+                                })
                                 .collect();
                             result_text = texts.join("\n");
                         } else {
