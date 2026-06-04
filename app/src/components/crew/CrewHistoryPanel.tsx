@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { safeInvoke } from '../../utils/safeInvoke'
+import { tr } from '../../i18n'
 
 type CrewRunHistoryRow = {
   id: string
@@ -45,7 +46,7 @@ type Props = {
 function formatTimestamp(value: string | number | null): string {
   if (!value) return '—'
   const date = typeof value === 'number' ? new Date(value) : new Date(value)
-  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString('de-DE')
+  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString('en-US')
 }
 
 export default function CrewHistoryPanel({ activeCrewId }: Props) {
@@ -115,7 +116,7 @@ export default function CrewHistoryPanel({ activeCrewId }: Props) {
 
     try {
       const response = await safeInvoke<CrewExecutionResponse>('crew_run_replay', { runId: selectedRunId }, undefined)
-      setReplayMessage(response.error ?? `Replay abgeschlossen: ${response.status}`)
+      setReplayMessage(response.error ?? `${tr('Replay finished')}: ${response.status}`)
       setSelectedRunId(null)
       setRefreshToken((value) => value + 1)
     } catch (value) {
@@ -129,11 +130,11 @@ export default function CrewHistoryPanel({ activeCrewId }: Props) {
     <div className="card crew-overview-card">
       <div className="crew-overview-head">
         <div className="crew-overview-copy">
-          <div className="crew-overview-kicker">History</div>
-          <strong className="crew-overview-title">Crew-Runs & Events</strong>
+          <div className="crew-overview-kicker">{tr("History")}</div>
+          <strong className="crew-overview-title">{tr("Crew-Runs & Events")}</strong>
         </div>
         <button type="button" className="btn-sm crew-action-btn" disabled={!selectedRunId || replaying} onClick={() => void handleReplaySelectedRun()}>
-          {replaying ? 'Replay laeuft…' : 'Ausgewaehlten Run replayen'}
+          {replaying ? tr('Replay running...') : tr('Replay selected run')}
         </button>
       </div>
 
@@ -141,7 +142,7 @@ export default function CrewHistoryPanel({ activeCrewId }: Props) {
       {replayMessage && <div className="crew-inline-feedback">{replayMessage}</div>}
 
       {runs.length === 0 ? (
-        <div className="crew-inline-feedback">Noch keine gespeicherten Runs fuer diese Crew.</div>
+        <div className="crew-inline-feedback">{tr("No saved runs for this crew yet.")}</div>
       ) : (
         <div className="crew-history-grid">
           <div className="crew-run-list">
@@ -168,8 +169,7 @@ export default function CrewHistoryPanel({ activeCrewId }: Props) {
                   <strong>{selectedRun.crewName}</strong>
                   <span style={{ color: selectedRun.status === 'completed' ? 'var(--success)' : selectedRun.status === 'failed' ? 'var(--danger)' : 'var(--text-muted)' }}>{selectedRun.status}</span>
                 </div>
-                <div className="crew-stat-meta">
-                  Start: {formatTimestamp(selectedRun.startedAt)} · Ende: {formatTimestamp(selectedRun.finishedAt)}
+                <div className="crew-stat-meta">{tr("Start:")}{formatTimestamp(selectedRun.startedAt)}{tr("· Ende:")}{formatTimestamp(selectedRun.finishedAt)}
                 </div>
                 {selectedRun.error && (
                   <div className="crew-inline-feedback error">{selectedRun.error}</div>
@@ -178,10 +178,10 @@ export default function CrewHistoryPanel({ activeCrewId }: Props) {
             )}
 
             <div>
-              <div className="crew-stat-label" style={{ marginBottom: 8 }}>Events</div>
+              <div className="crew-stat-label" style={{ marginBottom: 8 }}>{tr("Events")}</div>
               <div className="crew-stack-list crew-scroll-stack">
                 {events.length === 0 ? (
-                  <div className="crew-inline-feedback">Noch keine Events gespeichert.</div>
+                  <div className="crew-inline-feedback">{tr("No events saved yet.")}</div>
                 ) : events.slice(0, 8).map((event) => (
                   <div key={event.id} className="crew-stack-card">
                     <div className="crew-stack-card-header">
@@ -194,10 +194,10 @@ export default function CrewHistoryPanel({ activeCrewId }: Props) {
             </div>
 
             <div>
-              <div className="crew-stat-label" style={{ marginBottom: 8 }}>Logs</div>
+              <div className="crew-stat-label" style={{ marginBottom: 8 }}>{tr("Logs")}</div>
               <div className="crew-stack-list crew-scroll-stack">
                 {logs.length === 0 ? (
-                  <div className="crew-inline-feedback">Noch keine Logs fuer diesen Run.</div>
+                  <div className="crew-inline-feedback">{tr("No logs for this run yet.")}</div>
                 ) : logs.slice(0, 8).map((log) => (
                   <div key={log.id} className="crew-stack-card">
                     <div className="crew-stat-value">{log.action}</div>

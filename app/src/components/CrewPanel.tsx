@@ -8,6 +8,7 @@ import CrewGovernancePanel from './crew/CrewGovernancePanel'
 import CrewHistoryPanel from './crew/CrewHistoryPanel'
 import CrewRuntimePanel from './crew/CrewRuntimePanel'
 import { safeInvoke } from '../utils/safeInvoke'
+import { tr } from '../i18n'
 
 const ROLE_OPTIONS: AgentRole[] = ['researcher', 'writer', 'reviewer', 'planner', 'executor', 'analyst', 'custom']
 const PROCESS_OPTIONS: Array<{ value: CrewProcess; label: string }> = [
@@ -17,7 +18,7 @@ const PROCESS_OPTIONS: Array<{ value: CrewProcess; label: string }> = [
 ]
 const PROVIDER_OPTIONS: Array<{ value: CrewProviderKind; label: string }> = [
   { value: 'ollama', label: 'Ollama' },
-  { value: 'openai-compatible', label: 'OpenAI-kompatibel' },
+  { value: 'openai-compatible', label: 'OpenAI-compatible' },
   { value: 'openrouter', label: 'OpenRouter' },
 ]
 
@@ -234,7 +235,7 @@ openRouterProfile?: { baseUrl?: string; model?: string; apiKey?: string }) {
   const enabledAgents = crew.agents.filter((agent) => agent.enabled)
 
   if (enabledAgentIds.size === 0) {
-    errors.push('Keine aktiven Crew-Mitglieder vorhanden.')
+    errors.push('No active Crew-members available.')
   }
 
   const crewDefaultProvider = crew.defaultProvider ?? 'ollama'
@@ -246,16 +247,16 @@ openRouterProfile?: { baseUrl?: string; model?: string; apiKey?: string }) {
     const effectiveModel = profile?.model.trim() || openAIProfile?.model?.trim() || ''
     const needsFallbackModel = openAiAgents.some((agent) => !agent.modelOverride?.trim())
     if (!profile?.enabled) {
-      errors.push('Aktive Crew-Mitglieder nutzen OpenAI-kompatibles Routing, aber das Crew-Profil ist nicht aktiviert.')
+      errors.push('Active crew members use OpenAI-compatible routing, but the crew profile is not enabled.')
     }
     if (!effectiveApiKey) {
-      errors.push('OpenAI-kompatibles Crew-Profil hat keinen API-Key.')
+      errors.push('OpenAI-compatible crew profile has no API key.')
     }
     if (!effectiveBaseUrl) {
-      errors.push('OpenAI-kompatibles Crew-Profil hat keinen Endpoint.')
+      errors.push('OpenAI-compatible crew profile has no endpoint.')
     }
     if (needsFallbackModel && !effectiveModel) {
-      errors.push('OpenAI-kompatibles Crew-Profil hat kein Modell und mindestens ein Agent besitzt keinen Model-Override.')
+      errors.push('OpenAI-compatible crew profile has no model and at least one agent has no model override.')
     }
   }
 
@@ -267,24 +268,24 @@ openRouterProfile?: { baseUrl?: string; model?: string; apiKey?: string }) {
     const effectiveModel = profile?.model.trim() || openRouterProfile?.model?.trim() || ''
     const needsFallbackModel = openRouterAgents.some((agent) => !agent.modelOverride?.trim())
     if (!profile?.enabled) {
-      errors.push('Aktive Crew-Mitglieder nutzen OpenRouter, aber das Crew-Profil ist nicht aktiviert.')
+      errors.push('Active crew members use OpenRouter, but the crew profile is not enabled.')
     }
     if (!effectiveApiKey) {
-      errors.push('OpenRouter-Crew-Profil hat keinen API-Key.')
+      errors.push('OpenRouter crew profile has no API key.')
     }
     if (!effectiveBaseUrl) {
-      errors.push('OpenRouter-Crew-Profil hat keinen Endpoint.')
+      errors.push('OpenRouter crew profile has no endpoint.')
     }
     if (needsFallbackModel && !effectiveModel) {
-      errors.push('OpenRouter-Crew-Profil hat kein Modell und mindestens ein Agent besitzt keinen Model-Override.')
+      errors.push('OpenRouter crew profile has no model and at least one agent has no model override.')
     }
   }
 
   if (crew.process === 'hierarchical') {
     if (!crew.managerAgentId) {
-      errors.push('Hierarchische Crew benoetigt einen Manager-Agenten.')
+      errors.push('Hierarchical crew requires a manager agent.')
     } else if (!enabledAgentIds.has(crew.managerAgentId)) {
-      errors.push('Der gewaehlte Manager-Agent ist deaktiviert oder fehlt.')
+      errors.push('The selected manager agent is disabled or missing.')
     }
   }
 
@@ -445,14 +446,14 @@ export default function CrewPanel() {
     }
 
     if (providerKind === 'ollama') {
-      return resolvedActiveCrewConfig.model || ollama.model || 'nicht gesetzt'
+      return resolvedActiveCrewConfig.model || ollama.model || 'not set'
     }
 
     if (providerKind === 'openai-compatible') {
-      return resolvedActiveProviderConfigs.openAICompatible?.model || defaultOpenAICompatibleProfile?.model || 'nicht gesetzt'
+      return resolvedActiveProviderConfigs.openAICompatible?.model || defaultOpenAICompatibleProfile?.model || 'not set'
     }
 
-    return resolvedActiveProviderConfigs.openRouter?.model || 'nicht gesetzt'
+    return resolvedActiveProviderConfigs.openRouter?.model || 'not set'
   }
 
   const getCrewDefaultModelOptions = () => {
@@ -823,18 +824,16 @@ export default function CrewPanel() {
         <CrewRuntimePanel />
         <div className="crew-header">
           <div className="crew-header-copy">
-            <div className="crew-header-eyebrow">Crew Workspace</div>
+            <div className="crew-header-eyebrow">{tr("Crew Workspace")}</div>
             <div className="crew-header-title">
               <span className="crew-header-icon">🚀</span>
-              <span>Crew AI</span>
+              <span>{tr("Crew AI")}</span>
             </div>
-            <div className="crew-header-subtitle">
-              Plane Rollen, Governance und reproduzierbare Runs in einer aufgeraeumten Arbeitsflaeche statt in gequetschten Einzelkarten.
-            </div>
+            <div className="crew-header-subtitle">{tr("Plan roles, governance, and reproducible runs in a clean workspace instead of cramped individual cards.")}</div>
           </div>
-          <div className="crew-header-badge" aria-label="Crew-Uebersicht">
+          <div className="crew-header-badge" aria-label={tr("Crew-Uebersicht")}>
             <strong>{crews.length}</strong>
-            <span>{crews.length === 1 ? 'Crew konfiguriert' : 'Crews konfiguriert'}</span>
+            <span>{crews.length === 1 ? 'Crew configured' : 'Crews configured'}</span>
           </div>
         </div>
       </div>
@@ -844,17 +843,17 @@ export default function CrewPanel() {
         <div className="crew-toolbar-primary">
           <input
             className="crew-toolbar-input"
-            placeholder="Neue Crew…"
+            placeholder={tr("New crew...")}
             value={crewName}
             onChange={(event) => setCrewName(event.target.value)}
             onKeyDown={(event) => { if (event.key === 'Enter') handleCreateCrew() }}
           />
-          <button type="button" className="crew-toolbar-btn" onClick={handleCreateCrew}>Anlegen</button>
+          <button type="button" className="crew-toolbar-btn" onClick={handleCreateCrew}>{tr("Create")}</button>
         </div>
         <div className="crew-toolbar-actions">
-          <button type="button" className="crew-toolbar-btn secondary" onClick={handleDuplicateCrew} disabled={!activeCrew}>Duplizieren</button>
-          <button type="button" className="crew-toolbar-btn secondary" onClick={handleExportCrew} disabled={!activeCrew}>Export</button>
-          <button type="button" className="crew-toolbar-btn secondary" onClick={() => importCrewInputRef.current?.click()}>Import</button>
+          <button type="button" className="crew-toolbar-btn secondary" onClick={handleDuplicateCrew} disabled={!activeCrew}>{tr("Duplicate")}</button>
+          <button type="button" className="crew-toolbar-btn secondary" onClick={handleExportCrew} disabled={!activeCrew}>{tr("Export")}</button>
+          <button type="button" className="crew-toolbar-btn secondary" onClick={() => importCrewInputRef.current?.click()}>{tr("Import")}</button>
           <button type="button" className="crew-toolbar-btn secondary crew-toolbar-toggle" aria-pressed={isCrewListVisible} onClick={toggleCrewListVisibility}>
             {isCrewListVisible ? 'Liste ausblenden' : 'Liste zeigen'}
           </button>
@@ -874,7 +873,7 @@ export default function CrewPanel() {
       {crews.length === 0 ? (
         <div className="crew-empty">
           <div className="crew-empty-icon">🚀</div>
-          <div className="crew-empty-text">Noch keine Crew vorhanden. Erstelle deine erste Crew oben.</div>
+          <div className="crew-empty-text">{tr("No crew available yet. Create your first crew above.")}</div>
         </div>
       ) : (
         <div className={`crew-grid${isCrewListVisible ? '' : ' crew-grid-list-hidden'}`}>
@@ -892,8 +891,8 @@ export default function CrewPanel() {
                       <div className="crew-card-meta">
                         <span>{processLabel(crew.process)}</span>
                         <span>·</span>
-                        <span>{enabledCount}/{crew.agents.length} aktiv</span>
-                        {diag.errors.length > 0 && <><span>·</span><span style={{ color: 'var(--danger)' }}>{diag.errors.length} Blocker</span></>}
+                        <span>{enabledCount}/{crew.agents.length}{tr("active")}</span>
+                        {diag.errors.length > 0 && <><span>·</span><span style={{ color: 'var(--danger)' }}>{diag.errors.length}{tr("Blocker")}</span></>}
                       </div>
                     </div>
                     <button type="button" className="crew-card-delete" onClick={(e) => { e.stopPropagation(); deleteCrew(crew.id) }}>✕</button>
@@ -916,71 +915,69 @@ export default function CrewPanel() {
                         <div className="crew-active-compact-meta">
                           <span>{processLabel(activeCrew.process)}</span>
                           <span>·</span>
-                          <span>{activeCrew.agents.filter((agent) => agent.enabled).length}/{activeCrew.agents.length} aktiv</span>
+                          <span>{activeCrew.agents.filter((agent) => agent.enabled).length}/{activeCrew.agents.length}{tr("active")}</span>
                         </div>
                       </div>
                     </div>
-                    <button type="button" className="crew-compact-toggle" onClick={toggleCrewListVisibility}>Liste zeigen</button>
+                    <button type="button" className="crew-compact-toggle" onClick={toggleCrewListVisibility}>{tr("Show list")}</button>
                   </div>
                 )}
 
-                {/* Section: Allgemein */}
+                {/* Section: General */}
                 <div className={`crew-section${openSections.general ? ' open' : ''}`}>
                   <button type="button" className="crew-section-header" onClick={() => toggleSection('general')}>
-                    <span className="crew-section-icon">📝</span> Allgemein
-                    <span className="crew-section-chevron">▾</span>
+                    <span className="crew-section-icon">📝</span>{tr("General")}<span className="crew-section-chevron">▾</span>
                   </button>
                   {openSections.general && (
                     <div className="crew-section-body">
                       <div className="crew-form-row">
                         <div className="crew-form-group">
-                          <span className="crew-label">Crew-Name</span>
+                          <span className="crew-label">{tr("Crew-Name")}</span>
                           <input className="crew-input" value={activeCrew.name} onChange={(e) => updateActiveCrew({ name: e.target.value })} />
                         </div>
                         <div className="crew-form-group">
-                          <span className="crew-label">Ausführungsmodus</span>
+                          <span className="crew-label">{tr("Execution mode")}</span>
                           <select className="crew-select" value={activeCrew.process} onChange={(e) => updateActiveCrew({ process: e.target.value as CrewProcess })}>
-                            {PROCESS_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                            {PROCESS_OPTIONS.map((o) => <option key={o.value} value={o.value}>{tr(o.label)}</option>)}
                           </select>
                         </div>
                       </div>
                       <div className="crew-form-group full-width">
-                        <span className="crew-label">Beschreibung</span>
+                        <span className="crew-label">{tr("Description")}</span>
                         <AutoResizeTextarea className="crew-textarea" value={activeCrew.description} onChange={(e) => updateActiveCrew({ description: e.target.value })} />
                       </div>
                       <div className="crew-form-row">
                         <div className="crew-form-group">
-                          <span className="crew-label">Execution Subject</span>
-                          <input className="crew-input" value={activeCrew.executionSubject} onChange={(e) => updateActiveCrew({ executionSubject: e.target.value })} placeholder="workspace-user" />
-                          <span className="crew-hint">Muss zu einer hinterlegten Crew-Rolle passen, wenn Governance aktiv ist.</span>
+                          <span className="crew-label">{tr("Execution Subject")}</span>
+                          <input className="crew-input" value={activeCrew.executionSubject} onChange={(e) => updateActiveCrew({ executionSubject: e.target.value })} placeholder={tr("workspace-user")} />
+                          <span className="crew-hint">{tr("Must match a stored crew role when governance is active.")}</span>
                         </div>
                       </div>
                       <div className="crew-form-group full-width">
-                        <span className="crew-label">Crew-Zusatzanweisungen</span>
-                        <AutoResizeTextarea className="crew-textarea" value={activeCrew.executionGuidelines} onChange={(e) => updateActiveCrew({ executionGuidelines: e.target.value })} placeholder="z. B. Antworte mit Risiken, Annahmen und nächsten Schritten" />
+                        <span className="crew-label">{tr("Additional crew instructions")}</span>
+                        <AutoResizeTextarea className="crew-textarea" value={activeCrew.executionGuidelines} onChange={(e) => updateActiveCrew({ executionGuidelines: e.target.value })} placeholder={tr("e.g. respond with risks, assumptions, and next steps")} />
                       </div>
                       <div className="crew-form-group full-width">
-                        <span className="crew-label">Knowledge-Fokus</span>
-                        <AutoResizeTextarea className="crew-textarea" value={activeCrew.knowledgeFocus} onChange={(e) => updateActiveCrew({ knowledgeFocus: e.target.value })} placeholder="z. B. priorisiere API-Vertraege, Scheduler-Verhalten und letzte Crew-Laeufe" />
-                        <span className="crew-hint">Lenkt die Memory- und Knowledge-Suche fuer den Python-Runtime-Prompt.</span>
+                        <span className="crew-label">{tr("Knowledge focus")}</span>
+                        <AutoResizeTextarea className="crew-textarea" value={activeCrew.knowledgeFocus} onChange={(e) => updateActiveCrew({ knowledgeFocus: e.target.value })} placeholder={tr("z. B. priorisiere API-Vertraege, Scheduler-Verhalten und letzte Crew-Laeufe")} />
+                        <span className="crew-hint">{tr("Guides memory and knowledge search for the Python runtime prompt.")}</span>
                       </div>
                     </div>
                   )}
                 </div>
 
-                {/* Section: Ausführung */}
+                {/* Section: Execution */}
                 <div className={`crew-section${openSections.execution ? ' open' : ''}`}>
                   <button type="button" className="crew-section-header" onClick={() => toggleSection('execution')}>
-                    <span className="crew-section-icon">⚡</span> Ausführung
-                    <span className="crew-section-chevron">▾</span>
+                    <span className="crew-section-icon">⚡</span>{tr("Execution")}<span className="crew-section-chevron">▾</span>
                   </button>
                   {openSections.execution && (
                     <div className="crew-section-body">
                       <div className="crew-form-row">
                         <div className="crew-form-group">
-                          <span className="crew-label">Manager-Agent</span>
+                          <span className="crew-label">{tr("Manager-Agent")}</span>
                           <select className="crew-select" value={activeCrew.managerAgentId ?? ''} onChange={(e) => updateActiveCrew({ managerAgentId: e.target.value || null })}>
-                            <option value="">Keiner</option>
+                            <option value="">{tr("Nor")}</option>
                             {activeCrew.agents.map((a) => {
                               const profile = a.personalityId ? personalityProfiles.find((entry) => entry.id === a.personalityId) : null
                               const resolved = profile ? resolveCrewAgentWithProfile(a, [profile]) : a
@@ -989,78 +986,77 @@ export default function CrewPanel() {
                           </select>
                         </div>
                         <div className="crew-form-group">
-                          <span className="crew-label">Ausgabeformat</span>
+                          <span className="crew-label">{tr("Outputformat")}</span>
                           <select className="crew-select" value={activeCrew.outputMode} onChange={(e) => updateActiveCrew({ outputMode: e.target.value as CrewOutputMode })}>
-                            <option value="standard">Standard</option>
-                            <option value="bullet-report">Stichpunkt-Report</option>
-                            <option value="json">JSON</option>
+                            <option value="standard">{tr("Standard")}</option>
+                            <option value="bullet-report">{tr("Stichpunkt-Report")}</option>
+                            <option value="json">{tr("JSON")}</option>
                           </select>
                         </div>
                       </div>
                       <div className="crew-form-row">
                         <div className="crew-form-group">
-                          <span className="crew-label">Max RPM</span>
+                          <span className="crew-label">{tr("Max RPM")}</span>
                           <input className="crew-input" type="number" min={1} max={600} value={activeCrew.maxRpm} onChange={(e) => updateActiveCrew({ maxRpm: Number(e.target.value) || 1 })} />
                         </div>
                         <div className="crew-form-group">
-                          <span className="crew-label">Max parallele Tasks</span>
+                          <span className="crew-label">{tr("Max parallele Tasks")}</span>
                           <input className="crew-input" type="number" min={1} max={24} value={activeCrew.maxParallelTasks} onChange={(e) => updateActiveCrew({ maxParallelTasks: Number(e.target.value) || 1 })} />
                         </div>
                       </div>
                       <div className="crew-form-row">
                         <div className="crew-form-group">
-                          <span className="crew-label">Retry-Versuche pro Task</span>
+                          <span className="crew-label">{tr("Retry-Versuche pro Task")}</span>
                           <input className="crew-input" type="number" min={0} max={5} value={activeCrew.retryCount} onChange={(e) => updateActiveCrew({ retryCount: Math.max(0, Number(e.target.value) || 0) })} />
                         </div>
                         <div className="crew-form-group">
-                          <span className="crew-label">Zeichenlimit geteilte Ergebnisse</span>
+                          <span className="crew-label">{tr("Zeichenlimit geteilte Resultse")}</span>
                           <input className="crew-input" type="number" min={0} max={50000} value={activeCrew.sharedOutputCharLimit} onChange={(e) => updateActiveCrew({ sharedOutputCharLimit: Math.max(0, Number(e.target.value) || 0) })} />
                         </div>
                       </div>
-                      <label className="crew-checkbox-label"><input type="checkbox" checked={activeCrew.verbose} onChange={(e) => updateActiveCrew({ verbose: e.target.checked })} /> Verbose Crew-Logging aktivieren</label>
-                      <label className="crew-checkbox-label"><input type="checkbox" checked={activeCrew.stopOnFailure} onChange={(e) => updateActiveCrew({ stopOnFailure: e.target.checked })} /> Crew bei Task-Fehler sofort stoppen</label>
-                      <label className="crew-checkbox-label"><input type="checkbox" checked={activeCrew.managerReviewEnabled} onChange={(e) => updateActiveCrew({ managerReviewEnabled: e.target.checked })} /> Manager-Review nach Task-Batches aktivieren</label>
+                      <label className="crew-checkbox-label"><input type="checkbox" checked={activeCrew.verbose} onChange={(e) => updateActiveCrew({ verbose: e.target.checked })} />{tr("Enable verbose crew logging")}</label>
+                      <label className="crew-checkbox-label"><input type="checkbox" checked={activeCrew.stopOnFailure} onChange={(e) => updateActiveCrew({ stopOnFailure: e.target.checked })} />{tr("Crew bei Task-Error sofort stoppen")}</label>
+                      <label className="crew-checkbox-label"><input type="checkbox" checked={activeCrew.managerReviewEnabled} onChange={(e) => updateActiveCrew({ managerReviewEnabled: e.target.checked })} />{tr("Enable manager review after task batches")}</label>
                       {activeCrew.managerReviewEnabled && (
                         <div className="crew-form-group">
-                          <span className="crew-label">Manager-Review-Anweisungen</span>
-                          <AutoResizeTextarea className="crew-textarea" value={activeCrew.managerReviewGuidelines} onChange={(e) => updateActiveCrew({ managerReviewGuidelines: e.target.value })} placeholder="z. B. Beurteile Risiken strenger und eskaliere frühzeitig" />
+                          <span className="crew-label">{tr("Manager-Review-instructions")}</span>
+                          <AutoResizeTextarea className="crew-textarea" value={activeCrew.managerReviewGuidelines} onChange={(e) => updateActiveCrew({ managerReviewGuidelines: e.target.value })} placeholder={tr("e.g. assess risks more strictly and escalate early")} />
                         </div>
                       )}
-                      <label className="crew-checkbox-label"><input type="checkbox" checked={activeCrew.shareAllTaskOutputs} onChange={(e) => updateActiveCrew({ shareAllTaskOutputs: e.target.checked })} /> Vorherige Task-Ergebnisse global als Kontext teilen</label>
+                      <label className="crew-checkbox-label"><input type="checkbox" checked={activeCrew.shareAllTaskOutputs} onChange={(e) => updateActiveCrew({ shareAllTaskOutputs: e.target.checked })} />{tr("Vorherige Task-Resultse global als Context teilen")}</label>
                     </div>
                   )}
                 </div>
 
-                {/* Section: Provider & Modell */}
+                {/* Section: Provider & Model */}
                 <div className={`crew-section${openSections.provider ? ' open' : ''}`}>
                   <button type="button" className="crew-section-header" onClick={() => toggleSection('provider')}>
-                    <span className="crew-section-icon">🔌</span> Provider & Modell
-                    <span className="crew-section-chevron">▾</span>
+                    <span className="crew-section-icon">🔌</span>{tr("Provider & Model")}<span className="crew-section-chevron">▾</span>
                   </button>
                   {openSections.provider && (
                     <div className="crew-section-body">
                       <div className="crew-form-row">
                         <div className="crew-form-group">
-                          <span className="crew-label">Crew-Provider</span>
-                          <select aria-label="Crew-Provider" className="crew-select" value={activeCrew.defaultProvider || 'ollama'} onChange={(e) => handleCrewDefaultProviderChange(e.target.value as CrewProviderKind)}>
+                          <span className="crew-label">{tr("Crew-Provider")}</span>
+                          <select aria-label={tr("Crew-Provider")} className="crew-select" value={activeCrew.defaultProvider || 'ollama'} onChange={(e) => handleCrewDefaultProviderChange(e.target.value as CrewProviderKind)}>
                             {PROVIDER_OPTIONS.map((o) => {
                               const ok = o.value === activeCrew.defaultProvider || isProviderEnabledForCrew(o.value)
-                              return <option key={o.value} value={o.value} disabled={!ok}>{ok ? o.label : `${o.label} (Profil aktivieren)`}</option>
+                              return <option key={o.value} value={o.value} disabled={!ok}>{ok ? tr(o.label) : `${tr(o.label)} (${tr("Enable profile")})`}</option>
                             })}
                           </select>
-                          <span className="crew-hint">Der Crew-Provider gilt fuer alle Mitglieder. Pro Mitglied ist nur noch das Modell ueberschreibbar.</span>
+                          <span className="crew-hint">{tr("The crew provider applies to all members. Only the model can still be overridden per member.")}</span>
                         </div>
                         <div className="crew-form-group">
-                          <span className="crew-label">Crew-Modell</span>
+                          <span className="crew-label">{tr("Crew-Model")}</span>
                           <select className="crew-select" value={activeCrew.defaultModel || ''} onChange={(e) => updateActiveCrew({ defaultModel: e.target.value })}>
-                            <option value="">Globale Einstellungen verwenden</option>
+                            <option value="">{tr("Globale Settings verwenden")}</option>
                             {getCrewDefaultModelOptions().map((m) => <option key={m} value={m}>{m}</option>)}
                           </select>
                           {activeCrew.defaultProvider !== 'ollama' && getCrewDefaultModelOptions().length === 0 && (
-                            <span className="crew-hint">Für diesen Provider sind noch keine Modelle geladen.</span>
+                            <span className="crew-hint">{tr("No models have been loaded for this provider yet.")}</span>
                           )}
-                          <span className="crew-hint">Aktuell wirksam: {activeCrew.defaultModel || 'Globale Einstellungen'}</span>
-                          <span className="crew-hint">Gilt automatisch für alle Mitglieder ohne eigenes Modell-Override.</span>
+                          <span className="crew-hint">{tr("Aktuell wirksam:")}{activeCrew.defaultModel || 'Globale Settings'}</span>
+                          <span className="crew-hint">{tr("Gilt automatisch for alle members ohne eigenes Model-Override.")}</span>
                         </div>
                       </div>
                     </div>
@@ -1070,13 +1066,12 @@ export default function CrewPanel() {
                 {/* Diagnostics */}
                 <div className={`crew-section${openSections.diagnostics ? ' open' : ''}`}>
                   <button type="button" className="crew-section-header" onClick={() => toggleSection('diagnostics')}>
-                    <span className="crew-section-icon">🩺</span> Diagnostik
-                    <span className="crew-section-chevron">▾</span>
+                    <span className="crew-section-icon">🩺</span>{tr("Diagnostik")}<span className="crew-section-chevron">▾</span>
                   </button>
                   {openSections.diagnostics && (
                     <div className="crew-section-body">
                       {activeCrewDiagnostics.errors.length === 0 && activeCrewDiagnostics.warnings.length === 0 ? (
-                        <div className="crew-alert success"><span className="crew-alert-icon">✅</span> Keine Blocker gefunden. Crew ist startbereit.</div>
+                        <div className="crew-alert success"><span className="crew-alert-icon">✅</span>{tr("No blockers found. Crew is ready to start.")}</div>
                       ) : (
                         <>
                           {activeCrewDiagnostics.errors.map((entry) => (
@@ -1094,53 +1089,51 @@ export default function CrewPanel() {
                 {/* Agents */}
                 <div className="crew-section open">
                   <div className="crew-section-header" style={{ cursor: 'default' }}>
-                    <span className="crew-section-icon">👥</span> Crew-Mitglieder ({activeAgentCount}/{activeCrew.agents.length})
+                    <span className="crew-section-icon">👥</span>{tr("Crew-members (")}{activeAgentCount}/{activeCrew.agents.length})
                   </div>
                   <div className="crew-section-body">
                     <div className="crew-members-hero">
                       <div className="crew-members-copy">
-                        <div className="crew-overview-kicker">Mitglieder</div>
-                        <strong className="crew-overview-title">Rollen, Modelle und Zugriffe pro Agent</strong>
-                        <div className="crew-overview-description">
-                          Profile, Laufzeitverhalten und Berechtigungen bleiben hier gesammelt sichtbar, damit die Crew-Konfiguration nicht in einzelne Formblöcke zerfällt.
-                        </div>
+                        <div className="crew-overview-kicker">{tr("members")}</div>
+                        <strong className="crew-overview-title">{tr("Roles, models, and access per agent")}</strong>
+                        <div className="crew-overview-description">{tr("Profiles, runtime behavior, and permissions stay visible together here so the crew configuration does not fragment into separate form blocks.")}</div>
                       </div>
                       <div className="crew-members-stats">
                         <div className="crew-members-stat">
                           <strong>{activeAgentCount}</strong>
-                          <span>aktiv</span>
+                          <span>{tr("active")}</span>
                         </div>
                         <div className="crew-members-stat">
                           <strong>{profileBackedAgentCount}</strong>
-                          <span>mit Profil</span>
+                          <span>{tr("mit Profil")}</span>
                         </div>
                         <div className="crew-members-stat">
                           <strong>{configuredToolCount}</strong>
-                          <span>Tools genutzt</span>
+                          <span>{tr("Tools genutzt")}</span>
                         </div>
                         <div className="crew-members-stat">
                           <strong>{configuredMcpCount}</strong>
-                          <span>MCP-Zugriffe</span>
+                          <span>{tr("MCP-Zugriffe")}</span>
                         </div>
                       </div>
                     </div>
                     <div className="crew-agent-panel crew-agent-panel-wide crew-bulk-access-panel">
                       <div className="crew-agent-panel-header crew-agent-panel-header-split">
                         <div>
-                          <div className="crew-agent-panel-title">Freigaben fuer alle Mitglieder</div>
-                          <div className="crew-agent-panel-subtitle">Setzt Tool- und MCP-Zugriffe global fuer die aktive Crew.</div>
+                          <div className="crew-agent-panel-title">{tr("Approvals for all members")}</div>
+                          <div className="crew-agent-panel-subtitle">{tr("Sets tool and MCP access globally for the active crew.")}</div>
                         </div>
                         <div className="crew-members-badge-row">
-                          <span className="crew-inline-badge subtle">{claudeTools.length} Tools verfuegbar</span>
-                          <span className="crew-inline-badge subtle">{configuredMcpServers.length} MCP-Server</span>
+                          <span className="crew-inline-badge subtle">{claudeTools.length}{tr("Tools available")}</span>
+                          <span className="crew-inline-badge subtle">{configuredMcpServers.length}{tr("MCP-Server")}</span>
                         </div>
                       </div>
                       <div className="crew-agent-access-grid">
                         <div className="crew-agent-subpanel">
                           <div className="crew-form-group">
                             <div className="crew-subpanel-head">
-                              <span className="crew-label">Tools</span>
-                              <span className="crew-subpanel-count">Alle Mitglieder synchronisieren</span>
+                              <span className="crew-label">{tr("Tools")}</span>
+                              <span className="crew-subpanel-count">{tr("All members synchronisieren")}</span>
                             </div>
                             <div className="crew-tool-list">
                               {claudeTools.map((tool) => {
@@ -1152,7 +1145,7 @@ export default function CrewPanel() {
                                       checked={allAgentsHaveTool}
                                       onChange={(event) => setCrewToolForAllAgents(tool.id, event.target.checked)}
                                     />
-                                    {tool.label}
+                                    {tr(tool.label)}
                                   </label>
                                 )
                               })}
@@ -1162,10 +1155,10 @@ export default function CrewPanel() {
                         <div className="crew-agent-subpanel">
                           <div className="crew-form-group">
                             <div className="crew-subpanel-head">
-                              <span className="crew-label">MCP-Zugriffe</span>
-                              <span className="crew-subpanel-count">Workspace-Verbindungen</span>
+                              <span className="crew-label">{tr("MCP-Zugriffe")}</span>
+                              <span className="crew-subpanel-count">{tr("Workspace-Verbindungen")}</span>
                             </div>
-                            {configuredMcpServers.length === 0 ? <span className="crew-hint">Keine MCP-Server konfiguriert.</span> : (
+                            {configuredMcpServers.length === 0 ? <span className="crew-hint">{tr("No MCP-Server configured.")}</span> : (
                               <div className="crew-tool-list">
                                 {configuredMcpServers.map((srv) => {
                                   const allAgentsHaveServer = activeCrew.agents.length > 0 && activeCrew.agents.every((agent) => agent.mcpServerNames.includes(srv.name))
@@ -1221,11 +1214,11 @@ export default function CrewPanel() {
                                 <div className="crew-agent-summary">
                                   <span className="crew-inline-badge">{getProviderLabel(effectiveProviderKind)}</span>
                                   <span className="crew-inline-badge subtle">{effectiveModelLabel}</span>
-                                  {profile && <span className="crew-inline-badge subtle">globales Profil</span>}
+                                  {profile && <span className="crew-inline-badge subtle">{tr("global profile")}</span>}
                                 </div>
                               </div>
                               <div className="crew-agent-header-actions">
-                                <span className={`crew-badge ${agent.enabled ? 'active' : 'inactive'}`}>{agent.enabled ? 'Aktiv' : 'Inaktiv'}</span>
+                                <span className={`crew-badge ${agent.enabled ? 'active' : 'inactive'}`}>{agent.enabled ? 'Active' : 'Inactive'}</span>
                                 <span className="crew-agent-chevron">▾</span>
                               </div>
                             </div>
@@ -1233,77 +1226,77 @@ export default function CrewPanel() {
                               <div className="crew-agent-body">
                                 <div className="crew-agent-panel">
                                   <div className="crew-agent-panel-header">
-                                    <div className="crew-agent-panel-title">Profil</div>
-                                    <div className="crew-agent-panel-subtitle">Name, Rolle und Arbeitskontext des Crew-Mitglieds.</div>
+                                    <div className="crew-agent-panel-title">{tr("Profil")}</div>
+                                    <div className="crew-agent-panel-subtitle">{tr("Name, Rolle und Arbeitskontext des Crew-Mitglieds.")}</div>
                                   </div>
                                   <div className="crew-agent-col">
                                     <div className="crew-form-row">
                                       {profile && (
                                         <div className="crew-form-group">
-                                          <span className="crew-label">Icon</span>
+                                          <span className="crew-label">{tr("Icon")}</span>
                                           <input className="crew-input" value={profile.icon ?? ''} maxLength={4} onChange={(e) => updateCrewPersonalityProfile(profile, { icon: e.target.value || null })} />
                                         </div>
                                       )}
-                                      <div className="crew-form-group"><span className="crew-label">Name</span><input className="crew-input" value={profileAgent.name} onChange={(e) => updateProfileOrSnapshot({ name: e.target.value })} /></div>
-                                      <div className="crew-form-group"><span className="crew-label">Rolle</span><select className="crew-select" value={profileAgent.role} onChange={(e) => updateProfileOrSnapshot({ role: e.target.value as AgentRole })}>{ROLE_OPTIONS.map((r) => <option key={r} value={r}>{r}</option>)}</select></div>
+                                      <div className="crew-form-group"><span className="crew-label">{tr("Name")}</span><input className="crew-input" value={profileAgent.name} onChange={(e) => updateProfileOrSnapshot({ name: e.target.value })} /></div>
+                                      <div className="crew-form-group"><span className="crew-label">{tr("Rolle")}</span><select className="crew-select" value={profileAgent.role} onChange={(e) => updateProfileOrSnapshot({ role: e.target.value as AgentRole })}>{ROLE_OPTIONS.map((r) => <option key={r} value={r}>{r}</option>)}</select></div>
                                       {profile && (
                                         <div className="crew-form-group">
-                                          <span className="crew-label">Temperatur</span>
+                                          <span className="crew-label">{tr("Temperatur")}</span>
                                           <input className="crew-input" type="number" min={0} max={2} step={0.1} value={profile.temperature ?? ''} onChange={(e) => updateCrewPersonalityProfile(profile, { temperature: e.target.value === '' ? null : Number(e.target.value) })} />
                                         </div>
                                       )}
                                     </div>
                                     {profile && (
-                                      <label className="crew-checkbox-label"><input type="checkbox" checked={profile.isDefault ?? false} onChange={(e) => updateCrewPersonalityProfile(profile, { isDefault: e.target.checked })} /> Als Standard verwenden</label>
+                                      <label className="crew-checkbox-label"><input type="checkbox" checked={profile.isDefault ?? false} onChange={(e) => updateCrewPersonalityProfile(profile, { isDefault: e.target.checked })} />{tr("Als Standard verwenden")}</label>
                                     )}
-                                    <div className="crew-form-group"><span className="crew-label">Ziel / Prompt-Fokus</span><AutoResizeTextarea className="crew-textarea" value={profileAgent.goal} onChange={(e) => updateProfileOrSnapshot({ goal: e.target.value })} /></div>
-                                    <div className="crew-form-group"><span className="crew-label">Hintergrund / System-Prompt</span><AutoResizeTextarea className="crew-textarea" value={profileAgent.backstory} onChange={(e) => updateProfileOrSnapshot({ backstory: e.target.value })} /></div>
-                                    <div className="crew-form-group"><span className="crew-label">skills.md</span><AutoResizeTextarea className="crew-textarea" value={profileAgent.skillsMarkdown} onChange={(e) => updateProfileOrSnapshot({ skillsMarkdown: e.target.value })} placeholder="# skills.md&#10;- Projektkontext&#10;- Arbeitsstil" /></div>
-                                    <span className="crew-hint">{profile ? 'Profilfelder werden global fuer alle Crews synchronisiert.' : 'Lokaler Snapshot ohne aktive Profil-Synchronisation.'}</span>
+                                    <div className="crew-form-group"><span className="crew-label">{tr("Target / Prompt-Fokus")}</span><AutoResizeTextarea className="crew-textarea" value={profileAgent.goal} onChange={(e) => updateProfileOrSnapshot({ goal: e.target.value })} /></div>
+                                    <div className="crew-form-group"><span className="crew-label">{tr("Hintergrund / System-Prompt")}</span><AutoResizeTextarea className="crew-textarea" value={profileAgent.backstory} onChange={(e) => updateProfileOrSnapshot({ backstory: e.target.value })} /></div>
+                                    <div className="crew-form-group"><span className="crew-label">{tr("skills.md")}</span><AutoResizeTextarea className="crew-textarea" value={profileAgent.skillsMarkdown} onChange={(e) => updateProfileOrSnapshot({ skillsMarkdown: e.target.value })} placeholder={tr("# skills.md&#10;- Projektkontext&#10;- Arbeitsstil")} /></div>
+                                    <span className="crew-hint">{profile ? 'Profile fields are synchronized globally for all crews.' : 'Local snapshot without active profile synchronization.'}</span>
                                   </div>
                                 </div>
                                 <div className="crew-agent-panel">
                                   <div className="crew-agent-panel-header">
-                                    <div className="crew-agent-panel-title">Konfiguration</div>
-                                    <div className="crew-agent-panel-subtitle">Status, Provider, Modell und Laufzeitverhalten.</div>
+                                    <div className="crew-agent-panel-title">{tr("Configuration")}</div>
+                                    <div className="crew-agent-panel-subtitle">{tr("Status, Provider, Model und runtimeverhalten.")}</div>
                                   </div>
                                   <div className="crew-agent-col">
                                     <div className="crew-checkbox-stack">
-                                      <label className="crew-checkbox-label"><input type="checkbox" checked={agent.enabled} onChange={(e) => updateActiveCrewAgent(agent.id, { enabled: e.target.checked })} /> Aktiviert</label>
-                                      <label className="crew-checkbox-label"><input type="checkbox" checked={agent.allowDelegation} onChange={(e) => updateActiveCrewAgent(agent.id, { allowDelegation: e.target.checked })} /> Delegation erlaubt</label>
-                                      <label className="crew-checkbox-label"><input type="checkbox" checked={agent.verbose} onChange={(e) => updateActiveCrewAgent(agent.id, { verbose: e.target.checked })} /> Verbose Logs</label>
+                                      <label className="crew-checkbox-label"><input type="checkbox" checked={agent.enabled} onChange={(e) => updateActiveCrewAgent(agent.id, { enabled: e.target.checked })} />{tr("Enabled")}</label>
+                                      <label className="crew-checkbox-label"><input type="checkbox" checked={agent.allowDelegation} onChange={(e) => updateActiveCrewAgent(agent.id, { allowDelegation: e.target.checked })} />{tr("Delegation allowed")}</label>
+                                      <label className="crew-checkbox-label"><input type="checkbox" checked={agent.verbose} onChange={(e) => updateActiveCrewAgent(agent.id, { verbose: e.target.checked })} />{tr("Verbose Logs")}</label>
                                     </div>
                                     <div className="crew-form-row">
                                       <div className="crew-form-group">
-                                        <span className="crew-label">Provider</span>
+                                        <span className="crew-label">{tr("Provider")}</span>
                                         <input className="crew-input" value={getProviderLabel(effectiveProviderKind)} readOnly />
-                                        <span className="crew-hint">Wird vom Crew-Provider gesteuert.</span>
+                                        <span className="crew-hint">{tr("Controlled by the crew provider.")}</span>
                                       </div>
                                       <div className="crew-form-group">
-                                        <span className="crew-label">Max Iterationen</span>
+                                        <span className="crew-label">{tr("Max Iterationen")}</span>
                                         <input className="crew-input" type="number" min={1} max={100} value={agent.maxIterations} onChange={(e) => updateActiveCrewAgent(agent.id, { maxIterations: Number(e.target.value) || 1 })} />
                                       </div>
                                     </div>
                                     <div className="crew-form-group">
-                                      <span className="crew-label">Modell</span>
+                                      <span className="crew-label">{tr("Model")}</span>
                                       <select className="crew-select" value={selModel} onChange={(e) => updateProfileOrSnapshot({ modelOverride: e.target.value || null })}>
-                                        <option value="">Crew-Modell ({getCrewDefaultModelLabel(effectiveProviderKind)})</option>
+                                        <option value="">{tr("Crew-Model (")}{getCrewDefaultModelLabel(effectiveProviderKind)})</option>
                                         {amo.map((m) => <option key={m} value={m}>{m}</option>)}
                                       </select>
-                                      {effectiveProviderKind !== 'ollama' && pmc.models.length === 0 && <span className="crew-hint">Keine Modelle geladen.</span>}
-                                      <span className="crew-hint">Aktuell wirksam: {effectiveModelLabel}</span>
+                                      {effectiveProviderKind !== 'ollama' && pmc.models.length === 0 && <span className="crew-hint">{tr("No models loaded.")}</span>}
+                                      <span className="crew-hint">{tr("Aktuell wirksam:")}{effectiveModelLabel}</span>
                                     </div>
                                   </div>
                                 </div>
                                 <div className="crew-agent-panel crew-agent-panel-wide">
                                   <div className="crew-agent-panel-header">
-                                    <div className="crew-agent-panel-title">Werkzeuge & Zugriffe</div>
-                                    <div className="crew-agent-panel-subtitle">Alle verfügbaren Funktionen bleiben erhalten, sind hier aber übersichtlicher gruppiert.</div>
+                                    <div className="crew-agent-panel-title">{tr("Werkzeuge & Zugriffe")}</div>
+                                    <div className="crew-agent-panel-subtitle">{tr("All available features remain available, but are grouped more clearly here.")}</div>
                                   </div>
                                   <div className="crew-agent-access-grid">
                                     <div className="crew-agent-subpanel">
                                       <div className="crew-form-group">
-                                        <span className="crew-label">Tools</span>
+                                        <span className="crew-label">{tr("Tools")}</span>
                                         <div className="crew-tool-list">
                                           {claudeTools.map((tool) => (
                                             <label key={tool.id} className="crew-tool-item">
@@ -1315,7 +1308,7 @@ export default function CrewPanel() {
                                                   allowDelegation: tool.id === 'delegate_task' ? event.target.checked : agent.allowDelegation,
                                                 })}
                                               />
-                                              {tool.label}
+                                              {tr(tool.label)}
                                             </label>
                                           ))}
                                         </div>
@@ -1323,8 +1316,8 @@ export default function CrewPanel() {
                                     </div>
                                     <div className="crew-agent-subpanel">
                                       <div className="crew-form-group">
-                                        <span className="crew-label">MCP-Zugriffe</span>
-                                        {configuredMcpServers.length === 0 ? <span className="crew-hint">Keine MCP-Server konfiguriert.</span> : (
+                                        <span className="crew-label">{tr("MCP-Zugriffe")}</span>
+                                        {configuredMcpServers.length === 0 ? <span className="crew-hint">{tr("No MCP-Server configured.")}</span> : (
                                           <div className="crew-tool-list">
                                             {configuredMcpServers.map((srv) => (<label key={srv.name} className="crew-tool-item"><input type="checkbox" checked={agent.mcpServerNames.includes(srv.name)} onChange={() => updateActiveCrewAgent(agent.id, { mcpServerNames: toggleStringValue(agent.mcpServerNames, srv.name) })} />{srv.name}</label>))}
                                           </div>
@@ -1345,27 +1338,25 @@ export default function CrewPanel() {
                 {/* Tasks hint */}
                 <div className="crew-task-rail">
                   <div className="crew-task-rail-copy">
-                    <div className="crew-overview-kicker">Task-Flow</div>
-                    <strong className="crew-overview-title">Tasks werden unter /tasks erstellt, ausgefuehrt und geplant</strong>
-                    <div className="crew-overview-description">
-                      Diese Crew-Ansicht steuert dafuer Parallelitaet, Retry-Verhalten, Ergebnis-Sharing und das Ausgabeformat der Laufzeit.
-                    </div>
+                    <div className="crew-overview-kicker">{tr("Task-Flow")}</div>
+                    <strong className="crew-overview-title">{tr("Tasks are created, executed, and scheduled under /tasks")}</strong>
+                    <div className="crew-overview-description">{tr("This crew view controls parallelism, retry behavior, result sharing, and the runtime output format.")}</div>
                   </div>
                   <div className="crew-task-rail-metrics">
                     <div className="crew-task-metric">
-                      <span>Parallel</span>
+                      <span>{tr("Parallel")}</span>
                       <strong>{activeCrew.maxParallelTasks}</strong>
                     </div>
                     <div className="crew-task-metric">
-                      <span>Retries</span>
+                      <span>{tr("Retries")}</span>
                       <strong>{activeCrew.retryCount}</strong>
                     </div>
                     <div className="crew-task-metric">
-                      <span>Ausgabe</span>
+                      <span>{tr("Output")}</span>
                       <strong>{outputModeLabel}</strong>
                     </div>
                     <div className="crew-task-metric">
-                      <span>Kontext teilen</span>
+                      <span>{tr("Context teilen")}</span>
                       <strong>{activeCrew.shareAllTaskOutputs ? 'Ja' : 'Nein'}</strong>
                     </div>
                   </div>
@@ -1374,7 +1365,7 @@ export default function CrewPanel() {
             ) : (
               <div className="crew-empty">
                 <div className="crew-empty-icon">👈</div>
-                <div className="crew-empty-text">Wähle eine Crew aus der Liste aus.</div>
+                <div className="crew-empty-text">{tr("Select a crew from the list.")}</div>
               </div>
             )}
           </div>
@@ -1383,4 +1374,3 @@ export default function CrewPanel() {
     </div>
   )
 }
-

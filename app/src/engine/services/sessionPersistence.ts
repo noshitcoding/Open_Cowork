@@ -54,7 +54,7 @@ function parseDbDate(value: string | undefined): number {
 function rowToSummary(row: DbSessionRow): SessionSummary {
   return {
     id: row.id,
-    title: row.title || 'Unbenannte Session',
+    title: row.title || 'Untitlede Session',
     threadId: row.threadId,
     cwd: '',
     messageCount: row.totalMessages ?? 0,
@@ -113,7 +113,7 @@ export async function loadSession(sessionId: string): Promise<SessionRecord | nu
     if (!row) return null
     return {
       id: row.id,
-      title: row.title || 'Unbenannte Session',
+      title: row.title || 'Untitlede Session',
       cwd: '',
       messages: [],
       totalUsage: { input_tokens: 0, output_tokens: 0 },
@@ -152,7 +152,7 @@ export async function deleteSession(sessionId: string): Promise<void> {
  */
 export function generateSessionTitle(messages: Message[]): string {
   const firstUser = messages.find(m => m.type === 'user')
-  if (!firstUser) return 'Neue Sitzung'
+  if (!firstUser) return 'New session'
 
   const text = firstUser.type === 'user'
     ? firstUser.content
@@ -161,7 +161,7 @@ export function generateSessionTitle(messages: Message[]): string {
         .join(' ')
     : ''
 
-  if (!text) return 'Neue Sitzung'
+  if (!text) return 'New session'
   return text.length > 60 ? text.slice(0, 60) + '...' : text
 }
 

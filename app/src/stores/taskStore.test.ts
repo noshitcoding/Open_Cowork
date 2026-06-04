@@ -36,7 +36,7 @@ describe('taskStore', () => {
     useTaskStore.getState().updateTaskStatus(id, 'running')
     const task = useTaskStore.getState().tasks[0]
     expect(task.status).toBe('failed')
-    expect(task.error).toBe('Task kann nicht ohne Schritte gestartet werden.')
+    expect(task.error).toBe('Task cannot be started without steps.')
   })
 
   it('sets task steps', () => {

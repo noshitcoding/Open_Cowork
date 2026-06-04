@@ -53,29 +53,29 @@ def validate_definition(payload: dict) -> dict:
     }
 
     if not normalized["name"]:
-        issues.append("Crew-Name fehlt.")
+        issues.append("Crew name is missing.")
     if not isinstance(normalized["agents"], list) or len(normalized["agents"]) == 0:
-        issues.append("Mindestens ein Agent ist erforderlich.")
+        issues.append("At least one agent is required.")
     if not isinstance(normalized["tasks"], list) or len(normalized["tasks"]) == 0:
-        issues.append("Mindestens ein Task ist erforderlich.")
+        issues.append("At least one task is required.")
 
     for index, agent in enumerate(normalized["agents"]):
         if not isinstance(agent, dict):
-            issues.append(f"Agent #{index + 1} hat kein gueltiges Objektformat.")
+            issues.append(f"Agent #{index + 1} does not have a valid object format.")
             continue
         if not str(agent.get("id") or "").strip():
-            issues.append(f"Agent #{index + 1} benoetigt eine id.")
+            issues.append(f"Agent #{index + 1} requires an id.")
         if not str(agent.get("name") or "").strip():
-            issues.append(f"Agent #{index + 1} benoetigt einen Namen.")
+            issues.append(f"Agent #{index + 1} requires a name.")
 
     for index, task in enumerate(normalized["tasks"]):
         if not isinstance(task, dict):
-            issues.append(f"Task #{index + 1} hat kein gueltiges Objektformat.")
+            issues.append(f"Task #{index + 1} does not have a valid object format.")
             continue
         if not str(task.get("id") or "").strip():
-            issues.append(f"Task #{index + 1} benoetigt eine id.")
+            issues.append(f"Task #{index + 1} requires an id.")
         if not str(task.get("agentId") or task.get("agent_id") or "").strip():
-            issues.append(f"Task #{index + 1} benoetigt einen zugewiesenen Agenten.")
+            issues.append(f"Task #{index + 1} requires an assigned agent.")
         if not str(task.get("description") or "").strip():
             issues.append(f"Task #{index + 1} benoetigt eine Beschreibung.")
 
@@ -447,7 +447,7 @@ def find_agent_payload(agent_payloads: list, agent_id: str) -> dict:
 
 
 RETIRED_OPENROUTER_MODELS = {
-    "tencent/hy3-preview:free": "Hy3 preview ist bei OpenRouter nicht mehr als free-Modell verfuegbar.",
+    "tencent/hy3-preview:free": "Hy3 preview is no longer available as a free model on OpenRouter.",
 }
 
 
@@ -488,15 +488,15 @@ def validate_runtime_provider_models(payload: dict, agent_payloads: list[dict]) 
 
     if invalid_models:
         raise ValueError(
-            "OpenRouter-Modell nicht verfuegbar: "
+            "OpenRouter model unavailable: "
             + "; ".join(invalid_models)
-            + " Bitte ein aktuelles Modell oder einen bezahlten/API-key-backed Provider auswaehlen."
+            + " Select a current model or a paid/API-key-backed provider."
         )
 
     if free_models and parse_int(payload.get("maxParallelTasks"), 1) > 1:
         payload["maxParallelTasks"] = 1
         payload["_rateLimitPolicyReason"] = (
-            "OpenRouter free-Modelle werden seriell ausgefuehrt, um 429 RateLimit-Fehler zu vermeiden."
+            "OpenRouter free models are executed serially to avoid 429 rate-limit errors."
         )
 
 
@@ -526,22 +526,22 @@ def classify_runtime_error(exc: Exception) -> str:
 
     if "rate_limit" in lowered or "ratelimit" in lowered or "429" in lowered:
         return (
-            "RateLimitError: Der Provider hat zu viele oder zu schnelle Anfragen abgelehnt. "
-            "Die Crew wurde gestoppt. Reduziere Max RPM/Parallelitaet oder nutze ein Provider-Profil mit eigenem API-Key. "
+            "RateLimitError: The provider rejected too many or too rapid requests. "
+            "The crew was stopped. Reduce max RPM/parallelism or use a provider profile with its own API key. "
             f"Original: {raw}"
         )
 
     if "model" in lowered and ("not found" in lowered or "404" in lowered):
         return (
-            "ModelNotFoundError: Das konfigurierte Modell ist beim Provider nicht verfuegbar. "
-            "Waehle ein aktuelles Modell in Crew/LLM-Profilen. "
+            "ModelNotFoundError: The configured model is not available from the provider. "
+            "Select a current model in Crew/LLM profiles. "
             f"Original: {raw}"
         )
 
     if "utf-8" in lowered or "unicode" in lowered:
         return (
-            "EncodingError: Die Runtime hat nicht-UTF-8-Ausgabe erhalten. "
-            "Die Ausgabe wird jetzt lossless gelesen; bitte erneut starten. "
+            "EncodingError: The runtime received non-UTF-8 output. "
+            "Output is now read losslessly; please start again. "
             f"Original: {raw}"
         )
 
@@ -551,7 +551,7 @@ def classify_runtime_error(exc: Exception) -> str:
 def normalize_model_name(provider: str, model: str) -> str:
     normalized = str(model or "").strip()
     if not normalized:
-        raise ValueError(f"Kein Modell fuer Provider '{provider}' konfiguriert.")
+        raise ValueError(f"No model configured for provider '{provider}'.")
     if provider == "openrouter":
         return normalized if normalized.startswith("openrouter/") else f"openrouter/{normalized}"
     if provider == "openai-compatible":
@@ -624,8 +624,8 @@ def build_agent(request: dict, agent_payload: dict):
 
     return Agent(
         role=str(agent_payload.get("role") or agent_payload.get("name") or "Crew Agent"),
-        goal=str(agent_payload.get("goal") or "Aufgaben in der Crew erfolgreich ausfuehren."),
-        backstory=backstory or "Ein spezialisierter Crew-Agent fuer Open_Cowork.",
+        goal=str(agent_payload.get("goal") or "Complete tasks successfully in the crew."),
+        backstory=backstory or "A specialized crew agent for Open_Cowork.",
         llm=build_llm(request, agent_payload),
         verbose=bool(agent_payload.get("verbose")),
         allow_delegation=bool(agent_payload.get("allowDelegation")),
@@ -644,15 +644,15 @@ def build_task_description(request: dict, task_payload: dict, agent_payload: dic
 
     additions = []
     if execution_guidelines:
-        additions.append(f"Crew-Richtlinien:\n{execution_guidelines}")
+        additions.append(f"Crew guidelines:\n{execution_guidelines}")
     if knowledge_focus:
         additions.append(f"Knowledge focus:\n{knowledge_focus}")
     if cwd:
-        additions.append(f"Arbeitsverzeichnis: {cwd}")
+        additions.append(f"Working directory: {cwd}")
     if governance_note:
-        additions.append(f"Governance-Kontext:\n{governance_note}")
+        additions.append(f"Governance context:\n{governance_note}")
     if memory_note:
-        additions.append(f"Crew-Memory und Wissen:\n{memory_note}")
+        additions.append(f"Crew memory and knowledge:\n{memory_note}")
 
     if additions:
         return f"{description}\n\n" + "\n\n".join(additions)
@@ -797,7 +797,7 @@ def execute_definition(payload: dict) -> dict:
         if manager_agent is None or agent_id != manager_agent_id
     ]
     if not crew_agents:
-        raise ValueError("Crew benoetigt mindestens einen aktiven Nicht-Manager-Agenten.")
+        raise ValueError("Crew requires at least one active non-manager agent.")
 
     crew_kwargs = {
         "agents": crew_agents,
@@ -849,7 +849,7 @@ def execute_definition(payload: dict) -> dict:
         run_id,
         agent_name="Runtime",
         phase="context",
-        summary="Runtime-Kontext geladen",
+        summary="Runtime context loaded",
         severity="info",
     )
     rate_limit_reason = str(payload.get("_rateLimitPolicyReason") or "").strip()
@@ -865,7 +865,7 @@ def execute_definition(payload: dict) -> dict:
             run_id,
             agent_name="Runtime",
             phase="status",
-            summary="Rate-Limit-Schutz aktiv",
+            summary="Rate-limit protection active",
             severity="warning",
         )
 
@@ -888,7 +888,7 @@ def execute_definition(payload: dict) -> dict:
                 f"Provider: {provider}",
                 f"Model: {model}",
                 f"Model override: {str(agent_payload.get('modelOverride') or '-').strip() or '-'}",
-                f"Delegation: {'erlaubt' if bool(agent_payload.get('allowDelegation')) else 'gesperrt'}",
+                f"Delegation: {'allowed' if bool(agent_payload.get('allowDelegation')) else 'blocked'}",
                 f"Tools: {format_value_list(agent_payload.get('tools') or [])}",
                 f"MCP: {format_value_list(agent_payload.get('mcpServerNames') or [])}",
             ]),
@@ -898,7 +898,7 @@ def execute_definition(payload: dict) -> dict:
             provider=provider,
             model=model,
             phase="agent",
-            summary=f"{agent_name} bereit",
+            summary=f"{agent_name} ready",
             severity="info",
         )
 
@@ -916,12 +916,12 @@ def execute_definition(payload: dict) -> dict:
             if str(value).strip()
         ])
         handoff_detail = "\n".join([
-            f"Task an Agent uebergeben: {agent_name}",
-            f"Beschreibung: {truncate_text(task_payload.get('description') or '', 900)}",
-            f"Erwartetes Ergebnis: {truncate_text(task_payload.get('expectedOutput') or '', 500)}",
-            f"Kontext/Dependencies: {', '.join(context_refs) if context_refs else '-'}",
-            f"Async: {'ja' if bool(task_payload.get('asyncExecution')) else 'nein'}",
-            f"Technische Agent-ID: {agent_id}",
+            f"Task handed to agent: {agent_name}",
+            f"Description: {truncate_text(task_payload.get('description') or '', 900)}",
+            f"Expected output: {truncate_text(task_payload.get('expectedOutput') or '', 500)}",
+            f"Context/dependencies: {', '.join(context_refs) if context_refs else '-'}",
+            f"Async: {'yes' if bool(task_payload.get('asyncExecution')) else 'no'}",
+            f"Technical agent ID: {agent_id}",
         ])
         record_execution_log(
             logs,
@@ -944,9 +944,9 @@ def execute_definition(payload: dict) -> dict:
             severity="info",
         )
         thinking_detail = "\n".join([
-            f"Arbeitsprotokoll: {agent_name} beginnt mit dem Task.",
+            f"Work log: {agent_name} starts the task.",
             f"Task: {task_title}",
-            f"Provider/Modell: {provider} / {model}",
+            f"Provider/model: {provider} / {model}",
         ])
         record_execution_log(
             logs,
@@ -962,7 +962,7 @@ def execute_definition(payload: dict) -> dict:
             model=model,
             task_title=task_title,
             phase="thinking",
-            summary=f"{agent_name} arbeitet an {task_title}",
+            summary=f"{agent_name} works on {task_title}",
             detail=thinking_detail,
             severity="info",
         )
@@ -975,12 +975,12 @@ def execute_definition(payload: dict) -> dict:
             runtime_agent_id,
             runtime_task_id,
             "crew_kickoff",
-            f"CrewAI startet: process={process_name}, agents={len(crew_agents)}, tasks={len(ordered_task_bindings)}",
+            f"CrewAI starts: process={process_name}, agents={len(crew_agents)}, tasks={len(ordered_task_bindings)}",
             stream_id,
             run_id,
             agent_name="Runtime",
             phase="status",
-            summary="CrewAI gestartet",
+            summary="CrewAI started",
             severity="info",
         )
         with contextlib.redirect_stdout(stdout_buffer), contextlib.redirect_stderr(stderr_buffer):

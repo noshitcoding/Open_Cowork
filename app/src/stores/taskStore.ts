@@ -130,7 +130,7 @@ export const useTaskStore = create<TaskState>()((set, get) => ({
   createTask: (prompt, title, threadId) => {
     const normalizedPrompt = prompt.trim()
     if (!normalizedPrompt) {
-      throw new Error('Task-Prompt darf nicht leer sein.')
+      throw new Error('Task prompt must not be empty.')
     }
 
     const id = generateId()
@@ -161,7 +161,7 @@ export const useTaskStore = create<TaskState>()((set, get) => ({
     if (status === 'running') {
       const task = get().tasks.find((entry) => entry.id === taskId)
       if (task && task.steps.length === 0) {
-        get().setTaskError(taskId, 'Task kann nicht ohne Schritte gestartet werden.')
+        get().setTaskError(taskId, 'Task cannot be started without steps.')
         return
       }
     }

@@ -321,9 +321,9 @@ export function compactConversation(
   }
 
   const summary = [
-    `[Komprimierter Chatverlauf — ${toSummarize.length} Nachrichten zusammengefasst]`,
+    `[Komprimierter Chatverlauf — ${toSummarize.length} Messages summarized]`,
     '',
-    'Zusammenfassung der bisherigen Konversation:',
+    'Summary der bisherigen Konversation:',
     ...summaryParts.slice(0, 20),
     '',
     toolUseSummaries.length > 0 ? `Ausgefuehrte Tools: ${toolUseSummaries.slice(0, 15).join(', ')}` : '',

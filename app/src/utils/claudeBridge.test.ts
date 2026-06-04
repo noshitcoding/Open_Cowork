@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+﻿import { describe, expect, it } from 'vitest'
 import { buildClaudeSystemAddendum } from './claudeBridge'
 
 describe('buildClaudeSystemAddendum', () => {
@@ -15,15 +15,15 @@ describe('buildClaudeSystemAddendum', () => {
 
   it('keeps relevant execution context when needed', () => {
     const result = buildClaudeSystemAddendum({
-      globalInstruction: 'Arbeite im Projektordner.',
+      globalInstruction: 'Work in the project folder.',
       planMode: true,
       permissionMode: 'plan',
       enabledTools: ['bash'],
     })
 
-    expect(result).toContain('Projekt-Instruktion: Arbeite im Projektordner.')
-    expect(result).toContain('Plan-Mode ist aktiv')
-    expect(result).toContain('Permission-Modus: plan')
-    expect(result).not.toContain('Aktive Tool-Familien:')
+    expect(result).toContain('Project instruction: Work in the project folder.')
+    expect(result).toContain('Plan mode is active')
+    expect(result).toContain('Permission-Mode: plan')
+    expect(result).not.toContain('Active Tool-Families:')
   })
 })

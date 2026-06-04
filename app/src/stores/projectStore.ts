@@ -169,7 +169,7 @@ function normalizeProject(raw: RawProject): Project | null {
 
   return {
     id: raw.id,
-    title: normalizeTitle(typeof raw.title === 'string' ? raw.title : undefined, 'Unbenanntes Projekt'),
+    title: normalizeTitle(typeof raw.title === 'string' ? raw.title : undefined, 'Untitled project'),
     instructions: typeof raw.instructions === 'string' ? raw.instructions : '',
     resources,
     threadIds,
@@ -339,7 +339,7 @@ export const useProjectStore = create<ProjectState>()((set) => ({
     const id = generateId('project')
     const project: Project = {
       id,
-      title: normalizeTitle(title, 'Neues Projekt'),
+      title: normalizeTitle(title, 'New project'),
       instructions,
       resources: [],
       threadIds: [],

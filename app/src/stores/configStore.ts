@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import type { TerminalPersistenceMode } from './terminalStore'
 
 export type OllamaConfig = {
   baseUrl: string
@@ -69,6 +70,7 @@ export type AppPreferences = {
   ollamaStreamAutosave: boolean
   dbCleanupOnStart: boolean
   taskBatchMultiSelectEnabled: boolean
+  terminalPersistenceMode: TerminalPersistenceMode
 }
 
 type ConfigState = {
@@ -135,7 +137,7 @@ function createBaseLlmProfile(provider: LlmProviderKind): LlmProfile {
     : provider === 'openai-compatible'
       ? {
           id: DEFAULT_LLM_PROFILE_IDS['openai-compatible'],
-          name: 'OpenAI-kompatibel',
+          name: 'OpenAI-compatible',
           provider,
           baseUrl: DEFAULT_OPENAI_COMPATIBLE_PROFILE.baseUrl,
           model: DEFAULT_OPENAI_COMPATIBLE_PROFILE.model,
@@ -318,6 +320,7 @@ const DEFAULT_PREFERENCES: AppPreferences = {
   ollamaStreamAutosave: true,
   dbCleanupOnStart: false,
   taskBatchMultiSelectEnabled: true,
+  terminalPersistenceMode: 'runtime',
 }
 
 const DEFAULT_MCP: McpServerConfig = {
@@ -357,7 +360,7 @@ function isLegacyLocalDocsServer(server: McpServerConfig): boolean {
   return command === 'open-cowork-docs-mcp' || name === 'local-docs'
 }
 
-function isLegacyScreenshotServer(server: McpServerConfig): boolean {
+function isLegacyscreenshotServer(server: McpServerConfig): boolean {
   const command = server.command.trim().toLowerCase()
   const name = server.name.trim().toLowerCase()
   return command === 'open-cowork-screenshot-mcp' || name === 'screenshot'
@@ -367,7 +370,7 @@ function migrateServer(server: McpServerConfig): McpServerConfig {
   if (
     !isLegacyFilesystemServer(server)
     && !isLegacyLocalDocsServer(server)
-    && !isLegacyScreenshotServer(server)
+    && !isLegacyscreenshotServer(server)
   ) {
     return server
   }
@@ -430,7 +433,7 @@ export const useConfigStore = create<ConfigState>()(
             ...state.llmProfiles,
             createDefaultLlmProfile(provider, {
               id,
-              name: `${provider === 'ollama' ? 'Ollama' : provider === 'openai-compatible' ? 'OpenAI-kompatibel' : 'OpenRouter'} ${state.llmProfiles.filter((profile) => profile.provider === provider).length + 1}`,
+              name: `${provider === 'ollama' ? 'Ollama' : provider === 'openai-compatible' ? 'OpenAI-compatible' : 'OpenRouter'} ${state.llmProfiles.filter((profile) => profile.provider === provider).length + 1}`,
             }),
           ],
           llmProfileModels: {

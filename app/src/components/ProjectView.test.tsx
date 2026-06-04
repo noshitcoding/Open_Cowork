@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+﻿import { fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import ProjectView from './ProjectView'
@@ -52,7 +52,7 @@ describe('ProjectView', () => {
         {
           id: 'project-1',
           title: 'Alpha',
-          instructions: 'Nutze kurze Antworten.',
+          instructions: 'Use short answers.',
           resources: [],
           threadIds: ['thread-1'],
           createdAt: 100,
@@ -66,11 +66,11 @@ describe('ProjectView', () => {
   it('edits project instructions', () => {
     renderProjectView()
 
-    const textarea = screen.getByLabelText('Projektanweisungen')
-    fireEvent.change(textarea, { target: { value: 'Arbeite strikt im Projektkontext.' } })
+    const textarea = screen.getByLabelText('Project instructions')
+    fireEvent.change(textarea, { target: { value: 'Work strictly in the project context.' } })
     fireEvent.blur(textarea)
 
-    expect(useProjectStore.getState().projects[0].instructions).toBe('Arbeite strikt im Projektkontext.')
+    expect(useProjectStore.getState().projects[0].instructions).toBe('Work strictly in the project context.')
   })
 
   it('adds link sources as project resources', () => {
@@ -94,10 +94,10 @@ describe('ProjectView', () => {
   it('can delete a project together with its chats', () => {
     renderProjectView()
 
-    fireEvent.click(screen.getByTitle('Projekt loeschen'))
-    expect(screen.getByRole('dialog', { name: 'Projekt loeschen' })).toBeInTheDocument()
+    fireEvent.click(screen.getByTitle('Delete project'))
+    expect(screen.getByRole('dialog', { name: 'Delete project' })).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Projekt und Chats loeschen' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Delete project and chats' }))
 
     expect(useProjectStore.getState().projects).toEqual([])
     expect(useChatStore.getState().threads).toEqual([])

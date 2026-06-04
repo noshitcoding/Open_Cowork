@@ -72,7 +72,7 @@ export const useProcessStore = create<ProcessState>()((set) => ({
         processId: `proc-${Date.now()}`,
         pid: null,
         status: 'unavailable',
-        message: 'Prozess-Verwaltung ist nur in der Desktop-App verfuegbar.',
+        message: 'Process management is only available in the desktop app.',
       })
     } catch (e) {
       return {
@@ -101,7 +101,7 @@ export const useProcessStore = create<ProcessState>()((set) => ({
         processId,
         pid: null,
         status: 'unavailable',
-        message: 'Prozess-Genehmigung ist nur in der Desktop-App verfuegbar.',
+        message: 'Process approval is only available in the desktop app.',
       })
     } catch (e) {
       return {

@@ -191,9 +191,9 @@ export const useSkillStore = create<SkillState>()((set) => ({
     try {
       return await safeInvoke<SkillAutoGenResult>('skill_auto_generate', {
         taskTitle, taskPrompt, taskStepsSummary, taskOutcome,
-      }, { generated: false, skill_name: null, reason: 'Auto-Generierung nur in Desktop-App verfuegbar.' })
+      }, { generated: false, skill_name: null, reason: 'Auto-Generierung nur in Desktop-App available.' })
     } catch {
-      return { generated: false, skill_name: null, reason: 'Skill-Auto-Generierung fehlgeschlagen.' }
+      return { generated: false, skill_name: null, reason: 'Skill-Auto-Generierung failed.' }
     }
   },
 

@@ -10,7 +10,7 @@ export const CHAT_PROVIDER_OPTIONS: ChatProviderKind[] = ['ollama', 'openai-comp
 
 export const CHAT_PROVIDER_LABELS: Record<ChatProviderKind, string> = {
   ollama: 'Ollama',
-  'openai-compatible': 'OpenAI-kompatibel',
+  'openai-compatible': 'OpenAI-compatible',
   openrouter: 'OpenRouter',
 }
 
@@ -167,12 +167,12 @@ export function getChatProviderState(
 
 export function getChatProviderFailureHint(provider: ChatProviderKind): string {
   if (provider === 'openai-compatible') {
-    return 'Pruefe unter Einstellungen das OpenAI-kompatible Profil, den Endpoint, den API-Key und das Modell.'
+    return 'Check the OpenAI-compatible profile, endpoint, API key, and model in Settings.'
   }
 
   if (provider === 'openrouter') {
-    return 'Pruefe unter Einstellungen das OpenRouter-Profil, den Endpoint, den API-Key und das Modell.'
+    return 'Check the OpenRouter profile, endpoint, API key, and model in Settings.'
   }
 
-  return 'Pruefe unter Einstellungen den Ollama-Endpoint, das Modell und den Timeout.'
+  return 'Check the Ollama endpoint, model, and timeout in Settings.'
 }

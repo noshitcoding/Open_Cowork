@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { checkOllamaConnection, listOllamaModels } from '../engine/api/ollamaClient'
 import { useConfigStore, type LlmProfile, type LlmProviderKind } from '../stores/configStore'
 import { hasTauriRuntime, safeInvoke } from '../utils/safeInvoke'
+import { tr } from '../i18n'
 
 type ExternalProviderHealthCheckResult = {
   reachable: boolean
@@ -35,7 +36,7 @@ const PROVIDER_ORDER: LlmProviderKind[] = ['ollama', 'openai-compatible', 'openr
 
 const PROVIDER_LABELS: Record<LlmProviderKind, string> = {
   ollama: 'Ollama',
-  'openai-compatible': 'OpenAI-kompatibel',
+  'openai-compatible': 'OpenAI-compatible',
   openrouter: 'OpenRouter',
 }
 
@@ -144,7 +145,7 @@ export default function LlmProfilesPanel() {
           loading: false,
           reachable,
           endpoint: profile.baseUrl,
-          message: reachable ? 'Verbunden' : 'Ollama ist nicht erreichbar.',
+          message: reachable ? 'Connected' : 'Ollama is not reachable.',
         },
       }))
     } catch (error) {
@@ -177,7 +178,7 @@ export default function LlmProfilesPanel() {
           loading: false,
           reachable: false,
           endpoint: profile.baseUrl,
-          message: 'Tauri-Runtime nicht verfuegbar – Funktion nur in der Desktop-App nutzbar.',
+          message: 'Tauri runtime is not available - feature can only be used in the desktop app.',
         },
       }))
       return
@@ -279,7 +280,7 @@ export default function LlmProfilesPanel() {
           loading: false,
           endpoint: profile.baseUrl,
           models: current[profile.id]?.models ?? llmProfileModels[profile.id] ?? [],
-          error: 'Tauri-Runtime nicht verfuegbar – Funktion nur in der Desktop-App nutzbar.',
+          error: 'Tauri runtime is not available - feature can only be used in the desktop app.',
         },
       }))
       return
@@ -310,10 +311,10 @@ export default function LlmProfilesPanel() {
           endpoint: result.endpoint,
           models: result.models,
           message: modelChanged
-            ? `Modell automatisch auf ${resolvedModel} gesetzt.`
+            ? `Model automatisch auf ${resolvedModel} gesetzt.`
             : undefined,
           error: !modelChanged && profile.model.trim() && result.models.length > 0 && !result.models.includes(profile.model.trim())
-            ? `Konfiguriertes Modell ${profile.model.trim()} ist nicht in der geladenen Modellliste.`
+            ? `Configured model ${profile.model.trim()} is not in the loaded model list.`
             : undefined,
         },
       }))
@@ -342,14 +343,14 @@ export default function LlmProfilesPanel() {
   return (
     <div className="panel">
       <div className="panel-heading-row">
-        <h2>🧩 LLM-Profile</h2>
+        <h2>{tr("🧩 LLM-Profile")}</h2>
         <div className="actions" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button type="button" className="btn-sm" onClick={() => handleAddProfile('ollama')}>+ Ollama</button>
-          <button type="button" className="btn-sm" onClick={() => handleAddProfile('openai-compatible')}>+ OpenAI-kompatibel</button>
-          <button type="button" className="btn-sm" onClick={() => handleAddProfile('openrouter')}>+ OpenRouter</button>
+          <button type="button" className="btn-sm" onClick={() => handleAddProfile('ollama')}>{tr("+ Ollama")}</button>
+          <button type="button" className="btn-sm" onClick={() => handleAddProfile('openai-compatible')}>{tr("+ OpenAI-compatible")}</button>
+          <button type="button" className="btn-sm" onClick={() => handleAddProfile('openrouter')}>{tr("+ OpenRouter")}</button>
         </div>
       </div>
-      <p className="hint-text">Mehrere Endpunkte parallel pflegen und pro Provider ein globales Standardprofil fuer Dropdowns und Fallbacks festlegen.</p>
+      <p className="hint-text">{tr("Maintain multiple endpoints in parallel and set one global default profile per provider for dropdowns and fallbacks.")}</p>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         {profilesByProvider.map(({ provider, profiles }) => (
@@ -357,7 +358,7 @@ export default function LlmProfilesPanel() {
             <div className="panel-heading-row" style={{ marginBottom: 12 }}>
               <div>
                 <strong>{PROVIDER_LABELS[provider]}</strong>
-                <div className="hint-text">Globales Standardprofil fuer diesen Provider</div>
+                <div className="hint-text">{tr("Global default profile for this provider")}</div>
               </div>
               <select
                 value={defaultLlmProfileIds[provider]}
@@ -371,7 +372,7 @@ export default function LlmProfilesPanel() {
             </div>
 
             {profiles.length === 0 ? (
-              <p className="panel-empty">Noch kein Profil fuer {PROVIDER_LABELS[provider]} angelegt.</p>
+              <p className="panel-empty">{tr("No profile for")}{PROVIDER_LABELS[provider]}{tr("angelegt.")}</p>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                 {profiles.map((profile) => {
@@ -390,39 +391,31 @@ export default function LlmProfilesPanel() {
                       <div className="panel-heading-row" style={{ marginBottom: 10 }}>
                         <div>
                           <strong>{profile.name}</strong>
-                          {isDefault && <span style={{ fontSize: 11, color: 'var(--accent)', marginLeft: 8 }}>Standardprofil</span>}
+                          {isDefault && <span style={{ fontSize: 11, color: 'var(--accent)', marginLeft: 8 }}>{tr("Default profile")}</span>}
                         </div>
                         <button
                           type="button"
                           className="btn-sm"
                           onClick={() => deleteLlmProfile(profile.id)}
                           disabled={!canDelete}
-                          title={canDelete ? 'Profil loeschen' : 'Standardprofil oder letztes Profil kann nicht geloescht werden'}
-                        >
-                          Loeschen
-                        </button>
+                          title={canDelete ? 'Delete profile' : 'Default profile or last profile cannot be deleted'}
+                        >{tr("Delete")}</button>
                       </div>
 
                       <div className="grid" style={{ gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' }}>
-                        <label>
-                          Profilname
-                          <input
+                        <label>{tr("Profile name")}<input
                             value={profile.name}
                             onChange={(event) => updateLlmProfile(profile.id, { name: event.target.value })}
                           />
                         </label>
-                        <label>
-                          Endpoint
-                          <input
+                        <label>{tr("Endpoint")}<input
                             value={profile.baseUrl}
                             onChange={(event) => updateLlmProfile(profile.id, { baseUrl: event.target.value })}
                             placeholder={PROVIDER_PLACEHOLDERS[profile.provider].baseUrl}
                             style={{ fontFamily: 'monospace' }}
                           />
                         </label>
-                        <label>
-                          Modell
-                          {models.length > 0 ? (
+                        <label>{tr("Model")}{models.length > 0 ? (
                             <select value={profile.model} onChange={(event) => updateLlmProfile(profile.id, { model: event.target.value })}>
                               {models.map((model) => <option key={model} value={model}>{model}</option>)}
                               {!models.includes(profile.model) && profile.model && <option value={profile.model}>{profile.model}</option>}
@@ -437,22 +430,18 @@ export default function LlmProfilesPanel() {
                           )}
                         </label>
                         {supportsApiKey(profile.provider) && (
-                          <label>
-                            API Key
-                            <input
+                          <label>{tr("API Key")}<input
                               type="password"
                               value={profile.apiKey}
                               onChange={(event) => updateLlmProfile(profile.id, { apiKey: event.target.value })}
-                              placeholder="sk-..."
+                              placeholder={tr("sk?...")}
                               style={{ fontFamily: 'monospace' }}
                             />
                           </label>
                         )}
                         {supportsApiKey(profile.provider) && (
                           <label className="toggle-row" style={{ alignSelf: 'end' }}>
-                            <span>
-                              SSL Verify / TLS-Zertifikate pruefen
-                              <span className="hint-text">Ausschalten fuer HTTPS mit Self-Signed-Zertifikaten.</span>
+                            <span>{tr("Check SSL verification / TLS certificates")}<span className="hint-text">{tr("Turn off for HTTPS with self-signed certificates.")}</span>
                             </span>
                             <button
                               type="button"
@@ -465,9 +454,7 @@ export default function LlmProfilesPanel() {
                             </button>
                           </label>
                         )}
-                        <label>
-                          Timeout (ms)
-                          <input
+                        <label>{tr("Timeout (ms)")}<input
                             type="number"
                             min={1000}
                             max={86400000}
@@ -477,9 +464,7 @@ export default function LlmProfilesPanel() {
                           />
                         </label>
                         {profile.provider === 'ollama' && (
-                          <label>
-                            Context Window
-                            <input
+                          <label>{tr("Context Window")}<input
                               type="number"
                               min={512}
                               max={262144}
@@ -490,9 +475,7 @@ export default function LlmProfilesPanel() {
                           </label>
                         )}
                         {profile.provider === 'ollama' && (
-                          <label>
-                            Temperature
-                            <input
+                          <label>{tr("Temperature")}<input
                               type="number"
                               min={0}
                               max={2}
@@ -506,15 +489,13 @@ export default function LlmProfilesPanel() {
 
                       <div className="actions" style={{ marginTop: 12 }}>
                         <button type="button" className="btn-sm" onClick={() => void handleHealthCheck(profile)}>
-                          {health?.loading ? 'Teste...' : 'Health Check'}
+                          {health?.loading ? tr('Testing...') : tr('Health check')}
                         </button>
                         <button type="button" className="btn-sm" onClick={() => void handleLoadModels(profile)}>
-                          {modelState?.loading ? 'Lade Modelle...' : 'Modelle laden'}
+                          {modelState?.loading ? 'Loading models...' : 'Load models'}
                         </button>
                         {!isDefault && (
-                          <button type="button" className="btn-sm" onClick={() => setDefaultLlmProfile(provider, profile.id)}>
-                            Als Standard
-                          </button>
+                          <button type="button" className="btn-sm" onClick={() => setDefaultLlmProfile(provider, profile.id)}>{tr("Set as default")}</button>
                         )}
                       </div>
 
@@ -525,7 +506,7 @@ export default function LlmProfilesPanel() {
                       )}
                       {models.length > 0 && (
                         <p className="hint-text" style={{ marginTop: 8 }}>
-                          {models.length} Modell(e) geladen{modelState?.endpoint ? ` von ${modelState.endpoint}` : ''}.
+                          {models.length}{tr("Model(e) loaded")}{modelState?.endpoint ? ` von ${modelState.endpoint}` : ''}.
                         </p>
                       )}
                       {modelState?.message && (

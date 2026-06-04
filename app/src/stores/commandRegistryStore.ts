@@ -84,22 +84,22 @@ function buildAllCommands(): SlashCommand[] {
   return [
     // ===== Navigation =====
     {
-      id: 'switch-work', command: '/ide', label: 'Zum Arbeitsbereich', description: 'Wechselt zum Hauptarbeitsbereich',
+      id: 'switch-work', command: '/ide', label: 'Go to workspace', description: 'Switches to the main workspace',
       category: 'navigation', execute: () => useUiStore.getState().setActiveMode('work'),
     },
     {
-      id: 'switch-settings', command: '/config', label: 'Einstellungen oeffnen', description: 'Alle Einstellungen und Konfigurationen',
+      id: 'switch-settings', command: '/config', label: 'Open settings', description: 'All settings and configuration',
       category: 'config', execute: () => useUiStore.getState().setActiveMode('settings'),
     },
     {
-      id: 'toggle-sidebar', command: '/focus', label: 'Fokus-Modus', description: 'Seitenleisten ein/ausblenden fuer Fokusarbeit',
+      id: 'toggle-sidebar', command: '/focus', label: 'Focus mode', description: 'Show or hide sidebars for focused work',
       category: 'display', execute: () => {
         const ui = useUiStore.getState()
         ui.toggleLeftSidebar()
       },
     },
     {
-      id: 'toggle-theme', command: '/theme', label: 'Theme wechseln', description: 'Zwischen Light/Dark Theme umschalten',
+      id: 'toggle-theme', command: '/theme', label: 'Switch theme', description: 'Switch between light and dark theme',
       category: 'display', execute: (args) => {
         const ui = useUiStore.getState()
         if (args === 'dark') ui.setTheme('dark')
@@ -110,7 +110,7 @@ function buildAllCommands(): SlashCommand[] {
 
     // ===== Workspace =====
     {
-      id: 'add-dir', command: '/add-dir', label: 'Ordner hinzufuegen', description: 'Neuen Arbeitsordner zur Allowlist hinzufuegen',
+      id: 'add-dir', command: '/add-dir', label: 'Add folder', description: 'Add a new working folder to the allowlist',
       category: 'workspace', execute: async (args) => {
         if (args?.trim()) {
           await safeInvokeVoid('fs_add_allowed_folder', { path: args.trim() })
@@ -118,7 +118,7 @@ function buildAllCommands(): SlashCommand[] {
       },
     },
     {
-      id: 'context', command: '/context', label: 'Kontext anzeigen', description: 'Aktuellen Thread-Kontext und Attachments anzeigen',
+      id: 'context', command: '/context', label: 'Show context', description: 'Show current thread context and attachments',
       category: 'workspace', execute: () => {
         const thread = useChatStore.getState()
         const active = thread.threads.find(t => t.id === thread.activeThreadId)
@@ -126,36 +126,36 @@ function buildAllCommands(): SlashCommand[] {
           const msgCount = active.messages.length
           const charCount = active.messages.reduce((a, m) => a + m.content.length, 0)
           useChatStore.getState().addMessage(active.id, {
-            role: 'system', content: `Kontext: ${msgCount} Nachrichten, ${charCount} Zeichen, Thread "${active.title}"`,
+            role: 'system', content: `Context: ${msgCount} messages, ${charCount} characters, Thread "${active.title}"`,
             timestamp: Date.now(),
           })
         }
       },
     },
     {
-      id: 'diff', command: '/diff', label: 'Diff anzeigen', description: 'Aenderungen seit letztem Backup anzeigen',
+      id: 'diff', command: '/diff', label: 'Show diff', description: 'Show changes since the latest backup',
       category: 'workspace', execute: () => {
         useChatStore.getState().addMessage(
           useChatStore.getState().activeThreadId ?? '',
-          { role: 'system', content: 'Diff-Ansicht: Nutze die Einstellungen um Backup-Diffs zu pruefen.', timestamp: Date.now() }
+          { role: 'system', content: 'Diff view: use settings to inspect backup diffs.', timestamp: Date.now() }
         )
       },
     },
     {
-      id: 'init', command: '/init', label: 'Projekt initialisieren', description: 'Initialisiert ein neues Open_Cowork Projekt im aktuellen Ordner',
+      id: 'init', command: '/init', label: 'Initialize project', description: 'Initializes a new Open_Cowork project in the current folder',
       category: 'workspace', execute: async () => {
-        await safeInvokeVoid('audit_event', { area: 'project', action: 'init', details: 'Projekt-Init gestartet' })
+        await safeInvokeVoid('audit_event', { area: 'project', action: 'init', details: 'Project init started' })
         const store = useChatStore.getState()
         if (store.activeThreadId) {
           store.addMessage(store.activeThreadId, {
-            role: 'system', content: 'Projekt initialisiert. Open_Cowork Konfiguration wurde erstellt.',
+            role: 'system', content: 'Project initialized. Open_Cowork configuration was created.',
             timestamp: Date.now(),
           })
         }
       },
     },
     {
-      id: 'rename', command: '/rename', label: 'Thread umbenennen', description: 'Aktuellen Chat-Thread umbenennen',
+      id: 'rename', command: '/rename', label: 'Rename thread', description: 'Rename the current chat thread',
       category: 'workspace', execute: (args) => {
         if (!args?.trim()) return
         const store = useChatStore.getState()
@@ -169,25 +169,25 @@ function buildAllCommands(): SlashCommand[] {
       },
     },
     {
-      id: 'branch', command: '/branch', label: 'Thread-Zweig', description: 'Erstellt einen neuen Thread-Zweig vom aktuellen Punkt',
+      id: 'branch', command: '/branch', label: 'Thread branch', description: 'Creates a new thread branch from the current point',
       category: 'workspace', execute: () => {
         const cs = useChatStore.getState()
         const active = cs.threads.find(t => t.id === cs.activeThreadId)
         if (active) {
-          cs.addThread(`Zweig: ${active.title}`)
+          cs.addThread(`Branch: ${active.title}`)
         }
       },
     },
 
     // ===== Agent Commands =====
     {
-      id: 'agents', command: '/agents', label: 'Agenten verwalten', description: 'Crew-Agenten anzeigen und verwalten',
+      id: 'agents', command: '/agents', label: 'Manage agents', description: 'Show and manage crew agents',
       category: 'agent', execute: () => {
         useCrewStore.getState().loadAgents()
       },
     },
     {
-      id: 'batch', command: '/batch', label: 'Batch-Ausfuehrung', description: 'Mehrere Aufgaben als Batch ausfuehren',
+      id: 'batch', command: '/batch', label: 'Batch execution', description: 'Run multiple tasks as a batch',
       category: 'agent', execute: async (args) => {
         if (!args?.trim()) return
         const tasks = args.split(';').map(t => t.trim()).filter(Boolean)
@@ -203,7 +203,7 @@ function buildAllCommands(): SlashCommand[] {
         if (cs.activeThreadId) {
           cs.addMessage(cs.activeThreadId, {
             role: 'system',
-            content: `Agentic Loop gestartet${args ? `: ${args}` : ''}. Agent wird autonom arbeiten bis Aufgabe erledigt.`,
+            content: `Agentic loop started${args ? `: ${args}` : ''}. Agent will work autonomously until the task is complete.`,
             timestamp: Date.now(),
           })
         }
@@ -211,93 +211,93 @@ function buildAllCommands(): SlashCommand[] {
       },
     },
     {
-      id: 'autofix-pr', command: '/autofix-pr', label: 'PR Auto-Fix', description: 'Automatisch Fehler in einem PR beheben',
+      id: 'autofix-pr', command: '/autofix-pr', label: 'PR auto-fix', description: 'Automatically fix issues in a PR',
       category: 'agent', execute: (args) => {
         const cs = useChatStore.getState()
         if (cs.activeThreadId) {
           cs.addMessage(cs.activeThreadId, {
-            role: 'system', content: `Autofix fuer PR: ${args ?? 'aktueller Branch'}. Analysiere und behebe Probleme.`,
+            role: 'system', content: `Autofix for PR: ${args ?? 'current branch'}. Analyze and fix issues.`,
             timestamp: Date.now(),
           })
         }
       },
     },
     {
-      id: 'ultraplan', command: '/ultraplan', label: 'Ultra-Planung', description: 'Erstellt einen detaillierten Multi-Step Plan',
+      id: 'ultraplan', command: '/ultraplan', label: 'Ultra planning', description: 'Creates a detailed multi-step plan',
       category: 'agent', execute: async (args) => {
         if (!args?.trim()) return
         const taskId = useTaskStore.getState().createTask(`Ultra-Plan: ${args}`, args, null)
         const cs = useChatStore.getState()
         if (cs.activeThreadId) {
           cs.addMessage(cs.activeThreadId, {
-            role: 'system', content: `Ultra-Plan erstellt (Task: ${taskId}). Detaillierte Schritt-fuer-Schritt Analyse folgt.`,
+            role: 'system', content: `Ultra plan created (Task: ${taskId}). Detailed step-by-step analysis follows.`,
             timestamp: Date.now(),
           })
         }
       },
     },
     {
-      id: 'ultrareview', command: '/ultrareview', label: 'Ultra-Review', description: 'Fuehrt ein umfassendes Code-Review durch',
+      id: 'ultrareview', command: '/ultrareview', label: 'Ultra review', description: 'Runs a comprehensive code review',
       category: 'agent', execute: (args) => {
         const cs = useChatStore.getState()
         if (cs.activeThreadId) {
           cs.addMessage(cs.activeThreadId, {
-            role: 'system', content: `Ultra-Review gestartet${args ? ` fuer: ${args}` : ''}. Umfassende Analyse: Architektur, Sicherheit, Performance, Best Practices.`,
+            role: 'system', content: `Ultra review started${args ? ` for: ${args}` : ''}. Comprehensive analysis: architecture, security, performance, best practices.`,
             timestamp: Date.now(),
           })
         }
       },
     },
     {
-      id: 'review', command: '/review', label: 'Code Review', description: 'Standard Code-Review durchfuehren',
+      id: 'review', command: '/review', label: 'Code review', description: 'Run standard code review',
       category: 'agent', execute: (args) => {
         const cs = useChatStore.getState()
         if (cs.activeThreadId) {
           cs.addMessage(cs.activeThreadId, {
-            role: 'system', content: `Code Review${args ? ` fuer: ${args}` : ''}. Pruefe Qualitaet, Fehler und Verbesserungen.`,
+            role: 'system', content: `Code review${args ? ` for: ${args}` : ''}. Check quality, bugs, and improvements.`,
             timestamp: Date.now(),
           })
         }
       },
     },
     {
-      id: 'security-review', command: '/security-review', label: 'Security Review', description: 'Sicherheitsanalyse des Codes',
+      id: 'security-review', command: '/security-review', label: 'Security review', description: 'Security analysis of the code',
       category: 'security', execute: (args) => {
         const cs = useChatStore.getState()
         if (cs.activeThreadId) {
           cs.addMessage(cs.activeThreadId, {
-            role: 'system', content: `Security Review${args ? ` fuer: ${args}` : ''}. OWASP Top 10, Injection, Auth, Crypto pruefen.`,
+            role: 'system', content: `Security review${args ? ` for: ${args}` : ''}. OWASP Top 10, Injection, Auth, check crypto.`,
             timestamp: Date.now(),
           })
         }
       },
     },
     {
-      id: 'passes', command: '/passes', label: 'Multi-Pass', description: 'Mehrfach-Durchlaeufe fuer komplexe Aufgaben',
+      id: 'passes', command: '/passes', label: 'Multi-Pass', description: 'Multiple passes for complex tasks',
       category: 'agent', execute: (args) => {
         const cs = useChatStore.getState()
         if (cs.activeThreadId) {
           cs.addMessage(cs.activeThreadId, {
-            role: 'system', content: `Multi-Pass Modus aktiviert (${args ?? '3'} Durchlaeufe). Iterative Verbesserung.`,
+            role: 'system', content: `Multi-pass mode enabled (${args ?? '3'} passes). Iterative improvement.`,
             timestamp: Date.now(),
           })
         }
       },
     },
     {
-      id: 'simplify', command: '/simplify', label: 'Code vereinfachen', description: 'Vereinfacht und bereinigt den ausgewaehlten Code',
+      id: 'simplify', command: '/simplify', label: 'Simplify code', description: 'Simplifies and cleans up the selected code',
       category: 'agent', execute: (args) => {
         const cs = useChatStore.getState()
         if (cs.activeThreadId) {
           cs.addMessage(cs.activeThreadId, {
-            role: 'system', content: `Code-Vereinfachung${args ? ` fuer: ${args}` : ''}. Reduziere Komplexitaet, entferne Redundanzen.`,
+            role: 'system', content: `Code simplification${args ? ` for: ${args}` : ''}. Reduce complexity and remove redundancy.`,
             timestamp: Date.now(),
           })
         }
       },
     },
     {
-      id: 'debug', command: '/debug', label: 'Debug Modus', description: 'Aktiviert erweiterte Debug-Informationen',
+      id: 'debug', command: '/debug', label: 'Debug mode', description: 'Enables extended debug information',
       category: 'debug', execute: () => {
         const config = useConfigStore.getState()
         config.setPreference('verboseMode', !config.preferences.verboseMode)
@@ -305,7 +305,7 @@ function buildAllCommands(): SlashCommand[] {
       },
     },
     {
-      id: 'doctor', command: '/doctor', label: 'System-Diagnose', description: 'Prueft Systemzustand und Konfiguration',
+      id: 'doctor', command: '/doctor', label: 'System diagnostics', description: 'Checks system health and configuration',
       category: 'debug', execute: async () => {
         const cs = useChatStore.getState()
         if (!cs.activeThreadId) return
@@ -313,12 +313,12 @@ function buildAllCommands(): SlashCommand[] {
           const health = await safeInvoke<{ status: string }>('ollama_health_check', { config: useConfigStore.getState().ollama })
           cs.addMessage(cs.activeThreadId, {
             role: 'system',
-            content: `System-Diagnose:\n- Ollama: ${health.status}\n- DB: aktiv\n- MCP: konfiguriert\n- Audit: aktiv`,
+            content: `System diagnostics:\n- Ollama: ${health.status}\n- DB: active\n- MCP: configured\n- Audit: active`,
             timestamp: Date.now(),
           })
         } catch {
           cs.addMessage(cs.activeThreadId, {
-            role: 'system', content: 'System-Diagnose: Ollama nicht erreichbar. Pruefe Konfiguration.',
+            role: 'system', content: 'System diagnostics: Ollama is not reachable. Check configuration.',
             timestamp: Date.now(),
           })
         }
@@ -327,7 +327,7 @@ function buildAllCommands(): SlashCommand[] {
 
     // ===== Model Commands =====
     {
-      id: 'model', command: '/model', label: 'Modell wechseln', description: 'Aktives LLM-Modell wechseln',
+      id: 'model', command: '/model', label: 'Switch model', description: 'Switch the active LLM model',
       category: 'model', execute: (args) => {
         if (args?.trim()) {
           useConfigStore.getState().setOllama({ model: args.trim() })
@@ -335,7 +335,7 @@ function buildAllCommands(): SlashCommand[] {
       },
     },
     {
-      id: 'effort', command: '/effort', label: 'Aufwand steuern', description: 'Antwort-Aufwand (Temperatur) anpassen: low/medium/high',
+      id: 'effort', command: '/effort', label: 'Control effort', description: 'Adjust answer effort (temperature): low/medium/high',
       category: 'model', execute: (args) => {
         const map: Record<string, number> = { low: 0.1, medium: 0.5, high: 0.9 }
         const temp = map[args ?? ''] ?? 0.2
@@ -343,7 +343,7 @@ function buildAllCommands(): SlashCommand[] {
       },
     },
     {
-      id: 'fast', command: '/fast', label: 'Schnell-Modus', description: 'Wechselt zum schnellsten verfuegbaren Modell',
+      id: 'fast', command: '/fast', label: 'Fast mode', description: 'Switches to the fastest available model',
       category: 'model', execute: () => {
         const models = useConfigStore.getState().availableModels
         const fast = models.find(m => m.includes('tiny') || m.includes('mini') || m.includes('3b')) ?? models[0]
@@ -351,7 +351,7 @@ function buildAllCommands(): SlashCommand[] {
       },
     },
     {
-      id: 'powerup', command: '/powerup', label: 'Power-Modus', description: 'Wechselt zum staerksten verfuegbaren Modell',
+      id: 'powerup', command: '/powerup', label: 'Power mode', description: 'Switches to the strongest available model',
       category: 'model', execute: () => {
         const models = useConfigStore.getState().availableModels
         const power = models.find(m => m.includes('70b') || m.includes('405b') || m.includes('llama3.1')) ?? models[models.length - 1]
@@ -359,13 +359,13 @@ function buildAllCommands(): SlashCommand[] {
       },
     },
     {
-      id: 'compact', command: '/compact', label: 'Kontext komprimieren', description: 'Komprimiert den Chat-Kontext fuer laengere Sessions',
+      id: 'compact', command: '/compact', label: 'Compact context', description: 'Compacts chat context for longer sessions',
       category: 'model', execute: () => {
         useCoworkStore.getState().setPolicyFlag('autoCompactLongContext', true)
         const cs = useChatStore.getState()
         if (cs.activeThreadId) {
           cs.addMessage(cs.activeThreadId, {
-            role: 'system', content: 'Kontext-Kompression aktiviert. Aeltere Nachrichten werden zusammengefasst.',
+            role: 'system', content: 'Context compression enabled. Older messages will be summarized.',
             timestamp: Date.now(),
           })
         }
@@ -374,7 +374,7 @@ function buildAllCommands(): SlashCommand[] {
 
     // ===== Memory Commands =====
     {
-      id: 'memory', command: '/memory', label: 'Gedaechtnis', description: 'Gedaechtnis-Eintraege verwalten und durchsuchen',
+      id: 'memory', command: '/memory', label: 'Memory', description: 'memory entries verwalten und durchsuchen',
       category: 'memory', execute: async (args) => {
         if (args?.trim()) {
           await useMemoryStore.getState().searchEntries(args.trim())
@@ -384,7 +384,7 @@ function buildAllCommands(): SlashCommand[] {
       },
     },
     {
-      id: 'recap', command: '/recap', label: 'Zusammenfassung', description: 'Zusammenfassung der aktuellen Session',
+      id: 'recap', command: '/recap', label: 'Summary', description: 'Summary of the current session',
       category: 'memory', execute: () => {
         const cs = useChatStore.getState()
         const active = cs.threads.find(t => t.id === cs.activeThreadId)
@@ -393,7 +393,7 @@ function buildAllCommands(): SlashCommand[] {
           const assistantMsgs = active.messages.filter(m => m.role === 'assistant')
           cs.addMessage(cs.activeThreadId, {
             role: 'system',
-            content: `Session-Recap:\n- ${userMsgs.length} Benutzer-Nachrichten\n- ${assistantMsgs.length} Antworten\n- Thread: "${active.title}"\n- Gestartet: ${new Date(active.createdAt).toLocaleString('de-DE')}`,
+            content: `Session-Recap:\n- ${userMsgs.length} Benutzer-messages\n- ${assistantMsgs.length} answers\n- Thread: "${active.title}"\n- Started: ${new Date(active.createdAt).toLocaleString('de-DE')}`,
             timestamp: Date.now(),
           })
         }
@@ -402,17 +402,17 @@ function buildAllCommands(): SlashCommand[] {
 
     // ===== Session Commands =====
     {
-      id: 'clear', command: '/clear', label: 'Chat leeren', description: 'Aktuellen Chat-Verlauf zuruecksetzen',
+      id: 'clear', command: '/clear', label: 'Clear chat', description: 'Reset current chat history',
       category: 'session', execute: () => {
         const cs = useChatStore.getState()
         if (cs.activeThreadId) {
           cs.deleteThread(cs.activeThreadId)
-          cs.addThread('Neuer Chat')
+          cs.addThread('New chat')
         }
       },
     },
     {
-      id: 'resume', command: '/resume', label: 'Fortsetzen', description: 'Letzte Session fortsetzen',
+      id: 'resume', command: '/resume', label: 'Resume', description: 'Resume latest session',
       category: 'session', execute: () => {
         const cs = useChatStore.getState()
         const latest = cs.threads.sort((a, b) => b.updatedAt - a.updatedAt)[0]
@@ -420,7 +420,7 @@ function buildAllCommands(): SlashCommand[] {
       },
     },
     {
-      id: 'rewind', command: '/rewind', label: 'Zurueckspulen', description: 'Letzte N Nachrichten entfernen',
+      id: 'rewind', command: '/rewind', label: 'Rewind', description: 'Letzte N messages entfernen',
       category: 'session', execute: (args) => {
         const count = Number.parseInt(args ?? '1', 10) || 1
         const cs = useChatStore.getState()
@@ -429,15 +429,15 @@ function buildAllCommands(): SlashCommand[] {
           cs.addMessage(cs.activeThreadId, {
             role: 'system',
             content: removed.pairsRemoved > 0
-              ? `Zurueckgespult: ${removed.pairsRemoved} Nachrichtenpaar(e) entfernt.`
-              : 'Keine passenden Nachrichten zum Zurueckspulen gefunden.',
+              ? `Rewound: ${removed.pairsRemoved} messagespaar(e) entfernt.`
+              : 'No matching messages found to rewind.',
             timestamp: Date.now(),
           })
         }
       },
     },
     {
-      id: 'exit', command: '/exit', label: 'Beenden', description: 'Aktuelle Session beenden',
+      id: 'exit', command: '/exit', label: 'Exit', description: 'End current session',
       category: 'session', execute: () => {
         useChatStore.getState().setActiveThread(null)
       },
@@ -445,39 +445,39 @@ function buildAllCommands(): SlashCommand[] {
 
     // ===== Tools =====
     {
-      id: 'mcp', command: '/mcp', label: 'MCP verwalten', description: 'MCP-Server und Tools konfigurieren',
+      id: 'mcp', command: '/mcp', label: 'Manage MCP', description: 'Configure MCP servers and tools',
       category: 'tools', execute: () => {
         useUiStore.getState().setActiveMode('settings')
       },
     },
     {
-      id: 'hooks', command: '/hooks', label: 'Hooks verwalten', description: 'Pre/Post-Execution Hooks konfigurieren',
+      id: 'hooks', command: '/hooks', label: 'Manage hooks', description: 'Configure pre/post-execution hooks',
       category: 'tools', execute: () => {
         useConfigStore.getState().setPreferences({})
       },
     },
     {
-      id: 'sandbox', command: '/sandbox', label: 'Sandbox-Modus', description: 'Isolierte Ausfuehrungsumgebung aktivieren',
+      id: 'sandbox', command: '/sandbox', label: 'Sandbox mode', description: 'Enable isolated execution environment',
       category: 'tools', execute: () => {
         useCoworkStore.getState().setPolicyFlag('strictPolicyEnforcement', true)
         useConfigStore.getState().setPreference('readOnlyFsMode', true)
         const cs = useChatStore.getState()
         if (cs.activeThreadId) {
           cs.addMessage(cs.activeThreadId, {
-            role: 'system', content: 'Sandbox-Modus aktiviert: Nur-Lese-Zugriff, strenge Policy.',
+            role: 'system', content: 'Sandbox mode enabled: read-only access, strict policy.',
             timestamp: Date.now(),
           })
         }
       },
     },
     {
-      id: 'terminal-setup', command: '/terminal-setup', label: 'Terminal einrichten', description: 'Terminal-Backend konfigurieren',
+      id: 'terminal-setup', command: '/terminal-setup', label: 'Set up terminal', description: 'Configure terminal backend',
       category: 'tools', execute: async () => {
         await useTerminalStore.getState().ensureLocalBackend()
       },
     },
     {
-      id: 'web-setup', command: '/web-setup', label: 'Web-Zugriff Setup', description: 'Web-Recherche und URL-Zugriff konfigurieren',
+      id: 'web-setup', command: '/web-setup', label: 'Web access setup', description: 'Configure web research and URL access',
       category: 'tools', execute: () => {
         useCoworkStore.getState().setPolicyFlag('allowWebFetch', true)
         useCoworkStore.getState().setPolicyFlag('allowWebSearch', true)
@@ -486,7 +486,7 @@ function buildAllCommands(): SlashCommand[] {
 
     // ===== Config Commands =====
     {
-      id: 'color', command: '/color', label: 'Farbschema', description: 'Farbschema anpassen',
+      id: 'color', command: '/color', label: 'Color scheme', description: 'Color scheme anpassen',
       category: 'display', execute: (args) => {
         if (args === 'dark' || args === 'light') {
           useUiStore.getState().setTheme(args)
@@ -494,13 +494,13 @@ function buildAllCommands(): SlashCommand[] {
       },
     },
     {
-      id: 'keybindings', command: '/keybindings', label: 'Tastenkuerzel', description: 'Tastenkuerzel anzeigen und bearbeiten',
+      id: 'keybindings', command: '/keybindings', label: 'Keyboard shortcuts', description: 'Show and edit keyboard shortcuts',
       category: 'config', execute: () => {
         useUiStore.getState().setShortcutsOverlayOpen(true)
       },
     },
     {
-      id: 'less-permission-prompts', command: '/less-permission-prompts', label: 'Weniger Berechtigungsfragen', description: 'Reduziert Bestaetigungs-Dialoge',
+      id: 'less-permission-prompts', command: '/less-permission-prompts', label: 'Fewer permission prompts', description: 'Reduces confirmation dialogs',
       category: 'config', execute: () => {
         useConfigStore.getState().setPreferences({
           autoApproveSafeTools: true,
@@ -510,7 +510,7 @@ function buildAllCommands(): SlashCommand[] {
       },
     },
     {
-      id: 'privacy-settings', command: '/privacy-settings', label: 'Datenschutz', description: 'Datenschutz- und Telemetrie-Einstellungen',
+      id: 'privacy-settings', command: '/privacy-settings', label: 'Privacy', description: 'Privacy- und Telemetrie-Einstellungen',
       category: 'config', execute: () => {
         useConfigStore.getState().setPreference('telemetryEnabled', false)
       },
@@ -518,7 +518,7 @@ function buildAllCommands(): SlashCommand[] {
 
     // ===== Insights & Stats =====
     {
-      id: 'stats', command: '/stats', label: 'Statistiken', description: 'Nutzungsstatistiken und Metriken anzeigen',
+      id: 'stats', command: '/stats', label: 'Statistics', description: 'Show usage statistics and metrics',
       category: 'debug', execute: async () => {
         await useInsightsStore.getState().loadSummary()
         const summary = useInsightsStore.getState().summary
@@ -526,7 +526,7 @@ function buildAllCommands(): SlashCommand[] {
         if (cs.activeThreadId && summary) {
           cs.addMessage(cs.activeThreadId, {
             role: 'system',
-            content: `Statistiken:\n- Events: ${summary.totalEvents}\n- Sessions: ${summary.totalSessions}\n- Nachrichten: ${summary.totalMessagesSent}\n- Token (est.): ${summary.totalTokensEst}\n- Skills: ${summary.skillUsageCount}\n- Memory: ${summary.memoryEntryCount}`,
+            content: `Statistics:\n- Events: ${summary.totalEvents}\n- Sessions: ${summary.totalSessions}\n- messages: ${summary.totalMessagesSent}\n- Token (est.): ${summary.totalTokensEst}\n- Skills: ${summary.skillUsageCount}\n- Memory: ${summary.memoryEntryCount}`,
             timestamp: Date.now(),
           })
         }
@@ -540,7 +540,7 @@ function buildAllCommands(): SlashCommand[] {
       },
     },
     {
-      id: 'cost', command: '/cost', label: 'Kosten', description: 'Geschaetzte Kosten der aktuellen Session',
+      id: 'cost', command: '/cost', label: 'Costs', description: 'Estimated costs of the current session',
       category: 'debug', execute: async () => {
         const summary = useInsightsStore.getState().summary
           ?? (await useInsightsStore.getState().loadSummary(), useInsightsStore.getState().summary)
@@ -549,18 +549,18 @@ function buildAllCommands(): SlashCommand[] {
           const tokens = summary?.totalTokensEst ?? 0
           cs.addMessage(cs.activeThreadId, {
             role: 'system',
-            content: `Kosten-Schaetzung:\n- Token gesamt: ${tokens}\n- Lokales Modell: 0 EUR (Ollama)\n- Geschaetzte API-Kosten: ~${(tokens * 0.000002).toFixed(4)} EUR`,
+            content: `Cost estimate:\n- Total tokens: ${tokens}\n- Local model: 0 EUR (Ollama)\n- Estimated API costs: ~${(tokens * 0.000002).toFixed(4)} EUR`,
             timestamp: Date.now(),
           })
         }
       },
     },
     {
-      id: 'usage', command: '/usage', label: 'Nutzung', description: 'Detaillierte Nutzungsstatistik',
+      id: 'usage', command: '/usage', label: 'Usage', description: 'Detaillierte Usagesstatistik',
       category: 'debug', execute: () => useInsightsStore.getState().loadSummary(),
     },
     {
-      id: 'status', command: '/status', label: 'Status', description: 'Aktuellen System-Status anzeigen',
+      id: 'status', command: '/status', label: 'Status', description: 'Show current system status',
       category: 'debug', execute: async () => {
         const cs = useChatStore.getState()
         if (!cs.activeThreadId) return
@@ -568,13 +568,13 @@ function buildAllCommands(): SlashCommand[] {
         const backends = useTerminalStore.getState().backends
         cs.addMessage(cs.activeThreadId, {
           role: 'system',
-          content: `Status:\n- Threads: ${cs.threads.length}\n- Prozesse: ${procs.length}\n- Backends: ${backends.length}\n- Modell: ${useConfigStore.getState().ollama.model}`,
+          content: `Status:\n- Threads: ${cs.threads.length}\n- Processes: ${procs.length}\n- Backends: ${backends.length}\n- Model: ${useConfigStore.getState().ollama.model}`,
           timestamp: Date.now(),
         })
       },
     },
     {
-      id: 'statusline', command: '/statusline', label: 'Statuszeile', description: 'Kompakte Statuszeile ein/ausblenden',
+      id: 'statusline', command: '/statusline', label: 'Status line', description: 'Kompakte Status line ein/ausblenden',
       category: 'display', execute: () => {
         useConfigStore.getState().setPreference('compactMode', !useConfigStore.getState().preferences.compactMode)
       },
@@ -582,7 +582,7 @@ function buildAllCommands(): SlashCommand[] {
 
     // ===== Export =====
     {
-      id: 'export', command: '/export', label: 'Exportieren', description: 'Chat oder Daten exportieren (JSON/MD/TXT)',
+      id: 'export', command: '/export', label: 'Export', description: 'Export chat or data (JSON/MD/TXT)',
       category: 'export', execute: (args) => {
         const cs = useChatStore.getState()
         const active = cs.threads.find(t => t.id === cs.activeThreadId)
@@ -594,7 +594,7 @@ function buildAllCommands(): SlashCommand[] {
           navigator.clipboard.writeText(data).catch(() => {})
           if (cs.activeThreadId) {
             cs.addMessage(cs.activeThreadId, {
-              role: 'system', content: `Export (${format}) in Zwischenablage kopiert.`,
+              role: 'system', content: `Export (${format}) copied to clipboard.`,
               timestamp: Date.now(),
             })
           }
@@ -602,7 +602,7 @@ function buildAllCommands(): SlashCommand[] {
       },
     },
     {
-      id: 'copy', command: '/copy', label: 'Kopieren', description: 'Letzte Antwort in Zwischenablage kopieren',
+      id: 'copy', command: '/copy', label: 'Copy', description: 'Copy latest answer to clipboard',
       category: 'export', execute: () => {
         const cs = useChatStore.getState()
         const active = cs.threads.find(t => t.id === cs.activeThreadId)
@@ -617,17 +617,17 @@ function buildAllCommands(): SlashCommand[] {
 
     // ===== Memory =====
     {
-      id: 'skills', command: '/skills', label: 'Skills', description: 'Gelernte Skills anzeigen und verwalten',
+      id: 'skills', command: '/skills', label: 'Skills', description: 'Show and manage learned skills',
       category: 'memory', execute: () => useSkillStore.getState().loadSkills(),
     },
     {
-      id: 'tasks', command: '/tasks', label: 'Aufgaben', description: 'Offene Aufgaben anzeigen',
+      id: 'tasks', command: '/tasks', label: 'Tasks', description: 'Offene Tasks anzeigen',
       category: 'agent', execute: () => useTaskStore.getState().loadFromDb(),
     },
 
     // ===== Plugins =====
     {
-      id: 'plugin', command: '/plugin', label: 'Plugin verwalten', description: 'Plugins installieren und konfigurieren',
+      id: 'plugin', command: '/plugin', label: 'Manage plugin', description: 'Install and configure plugins',
       category: 'plugins', execute: (args) => {
         if (args === 'examples' || args === 'install') {
           useCoworkStore.getState().installPluginExamples()
@@ -635,7 +635,7 @@ function buildAllCommands(): SlashCommand[] {
       },
     },
     {
-      id: 'reload-plugins', command: '/reload-plugins', label: 'Plugins neu laden', description: 'Alle Plugins neu laden',
+      id: 'reload-plugins', command: '/reload-plugins', label: 'Reload plugins', description: 'Alle Reload plugins',
       category: 'plugins', execute: () => {
         useCoworkStore.getState().installPluginExamples()
       },
@@ -643,55 +643,55 @@ function buildAllCommands(): SlashCommand[] {
 
     // ===== Local Backend =====
     {
-      id: 'ollama-settings', command: '/ollama', label: 'Ollama Einstellungen', description: 'Lokalen Ollama-Endpoint und Laufzeitparameter konfigurieren',
+      id: 'ollama-settings', command: '/ollama', label: 'Ollama settings', description: 'Configure local Ollama endpoint and runtime parameters',
       category: 'config', execute: () => useUiStore.getState().setActiveMode('settings'),
     },
     {
-      id: 'local-model', command: '/local-model', label: 'Lokales Modell', description: 'Aktives Ollama-Modell pruefen oder in den Einstellungen wechseln',
+      id: 'local-model', command: '/local-model', label: 'Local model', description: 'Check active Ollama model or switch it in settings',
       category: 'model', execute: () => useUiStore.getState().setActiveMode('settings'),
     },
     {
-      id: 'local-runtime', command: '/local-runtime', label: 'Lokale Runtime', description: 'Lokalen Desktop- und Ollama-Betrieb bestaetigen',
+      id: 'local-runtime', command: '/local-runtime', label: 'Local runtime', description: 'Confirm local desktop and Ollama operation',
       category: 'config', execute: () => useUiStore.getState().setActiveMode('settings'),
     },
 
     // ===== Display & UX =====
     {
-      id: 'stickers', command: '/stickers', label: 'Sticker', description: 'Sticker-Reaktionen ein/ausblenden',
+      id: 'stickers', command: '/stickers', label: 'Sticker', description: 'Show or hide sticker reactions',
       category: 'display', execute: () => {
         const cs = useChatStore.getState()
         if (cs.activeThreadId) {
           cs.addMessage(cs.activeThreadId, {
-            role: 'system', content: '🎉 Sticker-Modus aktiviert!',
+            role: 'system', content: '🎉 Sticker mode enabled!',
             timestamp: Date.now(),
           })
         }
       },
     },
     {
-      id: 'tui', command: '/tui', label: 'TUI Modus', description: 'Terminal UI Ansicht aktivieren',
+      id: 'tui', command: '/tui', label: 'TUI mode', description: 'Enable terminal UI view',
       category: 'display', execute: () => {
         useConfigStore.getState().setPreference('compactMode', true)
       },
     },
     {
-      id: 'desktop', command: '/desktop', label: 'Desktop-Integration', description: 'Desktop-Features und Tray-Icon konfigurieren',
+      id: 'desktop', command: '/desktop', label: 'Desktop integration', description: 'Configure desktop features and tray icon',
       category: 'config', execute: () => useUiStore.getState().setActiveMode('settings'),
     },
     {
-      id: 'mobile', command: '/mobile', label: 'Mobile-Optimierung', description: 'Mobile/Touch-Ansicht aktivieren',
+      id: 'mobile', command: '/mobile', label: 'Mobile optimization', description: 'Enable mobile/touch view',
       category: 'display', execute: () => {
         useConfigStore.getState().setPreference('compactMode', true)
         useConfigStore.getState().setPreference('fontScale', 110)
       },
     },
     {
-      id: 'voice', command: '/voice', label: 'Spracheingabe', description: 'Spracheingabe aktivieren (via Browser API)',
+      id: 'voice', command: '/voice', label: 'Voice input', description: 'Enable voice input (via Browser API)',
       category: 'display', execute: () => {
         const cs = useChatStore.getState()
         if (cs.activeThreadId) {
           cs.addMessage(cs.activeThreadId, {
-            role: 'system', content: 'Spracheingabe: Nutze die Browser SpeechRecognition API. Feature wird in kuenftige Versionen integriert.',
+            role: 'system', content: 'Voice input: Nutze die Browser SpeechRecognition API. Feature wird in kuenftige Versionen integriert.',
             timestamp: Date.now(),
           })
         }
@@ -700,7 +700,7 @@ function buildAllCommands(): SlashCommand[] {
 
     // ===== Crew AI Commands =====
     {
-      id: 'crew-create', command: '/crew', label: 'Crew erstellen', description: 'Neue AI-Crew mit Agenten erstellen',
+      id: 'crew-create', command: '/crew', label: 'Create crew', description: 'Create a new AI crew with agents',
       category: 'crew', execute: (args) => {
         if (args?.trim()) {
           useCrewStore.getState().createCrew(uid(), args.trim(), [])
@@ -708,13 +708,13 @@ function buildAllCommands(): SlashCommand[] {
       },
     },
     {
-      id: 'team-onboarding', command: '/team-onboarding', label: 'Team-Onboarding', description: 'Neuen Team-Mitgliedern Kontext geben',
+      id: 'team-onboarding', command: '/team-onboarding', label: 'Team onboarding', description: 'Give new team members context',
       category: 'crew', execute: (args) => {
         const cs = useChatStore.getState()
         if (cs.activeThreadId) {
           cs.addMessage(cs.activeThreadId, {
             role: 'system',
-            content: `Team-Onboarding${args ? ` fuer ${args}` : ''}: Projekt-Kontext, Konventionen und Setup-Anleitung werden generiert.`,
+            content: `Team onboarding${args ? ` for ${args}` : ''}: Project context, conventions, and setup guide will be generated.`,
             timestamp: Date.now(),
           })
         }
@@ -723,7 +723,7 @@ function buildAllCommands(): SlashCommand[] {
 
     // ===== Session Management =====
     {
-      id: 'schedule', command: '/schedule', label: 'Zeitplan', description: 'Aufgabe zeitlich planen',
+      id: 'schedule', command: '/schedule', label: 'Schedule', description: 'Schedule a task',
       category: 'session', execute: async (args) => {
         if (args?.trim()) {
           const parsed = parseScheduledTaskInput(args)
@@ -749,7 +749,7 @@ function buildAllCommands(): SlashCommand[] {
 
     // ===== Misc =====
     {
-      id: 'btw', command: '/btw', label: 'Nebenbei', description: 'Kontext-Info hinzufuegen ohne Hauptaufgabe zu aendern',
+      id: 'btw', command: '/btw', label: 'By the way', description: 'Add context info without changing the main task',
       category: 'agent', execute: (args) => {
         if (!args?.trim()) return
         useMemoryStore.getState().upsertEntry({
@@ -758,59 +758,59 @@ function buildAllCommands(): SlashCommand[] {
       },
     },
     {
-      id: 'chrome', command: '/chrome', label: 'Chrome Integration', description: 'Chrome-Browser Integration steuern',
+      id: 'chrome', command: '/chrome', label: 'Chrome integration', description: 'Control Chrome browser integration',
       category: 'tools', execute: () => {
         useCoworkStore.getState().toggleConnector('chrome', true)
       },
     },
     {
-      id: 'feedback', command: '/feedback', label: 'Feedback', description: 'Feedback zur aktuellen Antwort geben',
+      id: 'feedback', command: '/feedback', label: 'Feedback', description: 'Give feedback on the current answer',
       category: 'session', execute: (args) => {
         void safeInvokeVoid('audit_event', {
-          area: 'feedback', action: 'user_feedback', details: args ?? 'Kein Kommentar',
+          area: 'feedback', action: 'user_feedback', details: args ?? 'No comment',
         })
       },
     },
     {
-      id: 'heapdump', command: '/heapdump', label: 'Heap Dump', description: 'Speicher-Snapshot fuer Debugging erstellen',
+      id: 'heapdump', command: '/heapdump', label: 'Heap Dump', description: 'Create memory snapshot for debugging',
       category: 'debug', execute: async () => {
         const snapshot = await useMemoryStore.getState().createSnapshot()
         const cs = useChatStore.getState()
         if (cs.activeThreadId) {
           cs.addMessage(cs.activeThreadId, {
             role: 'system',
-            content: `Heap Dump erstellt: ${snapshot.total_entries} Memory-Eintraege, ${snapshot.total_profile_keys} Profil-Keys`,
+            content: `Heap dump created: ${snapshot.total_entries} memory entries, ${snapshot.total_profile_keys} Profil-Keys`,
             timestamp: Date.now(),
           })
         }
       },
     },
     {
-      id: 'install-github-app', command: '/install-github-app', label: 'GitHub App installieren', description: 'GitHub Integration einrichten',
+      id: 'install-github-app', command: '/install-github-app', label: 'Install GitHub app', description: 'Set up GitHub integration',
       category: 'tools', execute: () => {
         const cs = useChatStore.getState()
         if (cs.activeThreadId) {
           cs.addMessage(cs.activeThreadId, {
-            role: 'system', content: 'GitHub App Installation: Konfiguriere einen MCP-Server fuer GitHub oder nutze einen GitHub Personal Access Token.',
+            role: 'system', content: 'GitHub app installation: configure an MCP server for GitHub or use a GitHub personal access token.',
             timestamp: Date.now(),
           })
         }
       },
     },
     {
-      id: 'install-slack-app', command: '/install-slack-app', label: 'Slack App installieren', description: 'Slack Integration einrichten',
+      id: 'install-slack-app', command: '/install-slack-app', label: 'Install Slack app', description: 'Set up Slack integration',
       category: 'tools', execute: () => {
         const cs = useChatStore.getState()
         if (cs.activeThreadId) {
           cs.addMessage(cs.activeThreadId, {
-            role: 'system', content: 'Slack Integration: Konfiguriere einen MCP-Server fuer Slack oder nutze Webhooks.',
+            role: 'system', content: 'Slack integration: configure an MCP server for Slack or use webhooks.',
             timestamp: Date.now(),
           })
         }
       },
     },
     {
-      id: 'teleport', command: '/teleport', label: 'Teleport', description: 'Schnell zu einer bestimmten Datei/Ordner springen',
+      id: 'teleport', command: '/teleport', label: 'Teleport', description: 'Jump quickly to a specific file/folder',
       category: 'navigation', execute: (args) => {
         if (args?.trim()) {
           useUiStore.getState().setWorkingPath(args.trim(), 'file')
@@ -818,46 +818,46 @@ function buildAllCommands(): SlashCommand[] {
       },
     },
     {
-      id: 'remote-control', command: '/remote-control', label: 'Fernsteuerung', description: 'Remote-Steuerung aktivieren',
+      id: 'remote-control', command: '/remote-control', label: 'Remote control', description: 'Enable remote control',
       category: 'config', execute: () => {
         const cs = useChatStore.getState()
         if (cs.activeThreadId) {
           cs.addMessage(cs.activeThreadId, {
-            role: 'system', content: 'Remote Control: Feature fuer kuenftige Versionen vorgesehen.',
+            role: 'system', content: 'Remote control: feature planned for future versions.',
             timestamp: Date.now(),
           })
         }
       },
     },
     {
-      id: 'remote-env', command: '/remote-env', label: 'Remote-Umgebung', description: 'Remote-Ausfuehrungsumgebung konfigurieren',
+      id: 'remote-env', command: '/remote-env', label: 'Remote environment', description: 'Configure remote execution environment',
       category: 'config', execute: () => useUiStore.getState().setActiveMode('settings'),
     },
     {
-      id: 'extra-usage', command: '/extra-usage', label: 'Extra-Nutzung', description: 'Erweiterte Nutzungslimits aktivieren',
+      id: 'extra-usage', command: '/extra-usage', label: 'Extra Usage', description: 'Enable extended usage limits',
       category: 'config', execute: () => {
         useConfigStore.getState().setPreference('maxToolCallsPerLoop', 50)
       },
     },
     {
-      id: 'release-notes', command: '/release-notes', label: 'Release Notes', description: 'Aktuelle Release Notes anzeigen',
+      id: 'release-notes', command: '/release-notes', label: 'Release Notes', description: 'Show current release notes',
       category: 'config', execute: () => {
         const cs = useChatStore.getState()
         if (cs.activeThreadId) {
           cs.addMessage(cs.activeThreadId, {
-            role: 'system', content: 'Open_Cowork v1.0\n- 100+ Slash-Commands\n- 5 Standard-Persoenlichkeiten\n- CrewAI Multi-Agent\n- Memory Engine\n- Full Claude Code Kompatibilitaet',
+            role: 'system', content: 'Open_Cowork v1.0\n- 100+ Slash-Commands\n- 5 Standard-Persoenlichkeiten\n- CrewAI Multi-Agent\n- Memory Engine\n- Full Claude Code compatibility',
             timestamp: Date.now(),
           })
         }
       },
     },
     {
-      id: 'upgrade', command: '/upgrade', label: 'Upgrade', description: 'Auf neueste Version aktualisieren',
+      id: 'upgrade', command: '/upgrade', label: 'Upgrade', description: 'Update to the latest version',
       category: 'config', execute: () => {
         const cs = useChatStore.getState()
         if (cs.activeThreadId) {
           cs.addMessage(cs.activeThreadId, {
-            role: 'system', content: 'Upgrade: Pruefe auf Updates... Aktuelle Version ist auf dem neuesten Stand.',
+            role: 'system', content: 'Upgrade: checking for updates... The current version is up to date.',
             timestamp: Date.now(),
           })
         }

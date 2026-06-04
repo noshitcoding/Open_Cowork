@@ -156,7 +156,7 @@ describe('MCPTool compatibility', () => {
 
     expect(typeof result.data).toBe('string')
     expect(result.data).not.toContain('imageDataUrl')
-    expect(result.data).toContain('Koordinatenhinweis')
+    expect(result.data).toContain('coordinate hint')
     expect(result.data).toContain('50px')
     expect(result.newMessages).toBeTruthy()
     expect(result.newMessages?.[0]).toMatchObject({
@@ -183,13 +183,13 @@ describe('MCPTool compatibility', () => {
       scaleFactor: 1,
     })
 
-    const tool = getAllTools().find((entry) => entry.name === 'DesktopScreenshot')
+    const tool = getAllTools().find((entry) => entry.name === 'Desktopscreenshot')
     expect(tool).toBeTruthy()
 
     const result = await tool!.call({}, { runId: 'run-4' } as never)
 
     expect(invokeMock).toHaveBeenCalledWith('desktop_capture_primary_annotated_screenshot')
-    expect(result.data).toContain('Koordinatenraster')
+    expect(result.data).toContain('coordinate grid')
     expect(result.newMessages?.[0]).toMatchObject({
       type: 'attachment',
       attachmentType: 'tool_result',

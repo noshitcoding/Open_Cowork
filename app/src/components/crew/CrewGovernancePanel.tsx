@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useCrewControlPlaneStore } from '../../stores/crewControlPlaneStore'
 import { useCrewStore, type CrewGovernanceMode } from '../../stores/crewStore'
+import { tr } from '../../i18n'
 
 const GOVERNANCE_MODES: Array<{
   value: CrewGovernanceMode
@@ -9,23 +10,23 @@ const GOVERNANCE_MODES: Array<{
 }> = [
   {
     value: 'allow-all',
-    title: 'Alles erlauben',
-    description: 'Crew startet ohne Rueckfrage. Bereits vorhandene manuelle Freigaben bleiben trotzdem wirksam.',
+    title: 'Allow all',
+    description: 'Crew starts without a question. Existing manual approvals still remain effective.',
   },
   {
     value: 'ask-risky',
-    title: 'Nur bei riskanten Aktionen fragen',
-    description: 'Rueckfrage nur bei riskanten Tools, MCP-Zugriffen oder Delegation.',
+    title: 'Ask only for risky actions',
+    description: 'Ask only for risky tools, MCP access, or delegation.',
   },
   {
     value: 'ask-all',
-    title: 'Immer vor Aktionen fragen',
-    description: 'Jeder Crew-Start wird zuerst softwareseitig pausiert und erst nach Freigabe fortgesetzt.',
+    title: 'Always ask before actions',
+    description: 'Every crew start is first paused by the software and continues only after approval.',
   },
   {
     value: 'read-only',
-    title: 'Nur lesen',
-    description: 'Erlaubt nur Lesezugriffe wie read_file, grep, glob, web_fetch und web_search.',
+    title: 'Read only',
+    description: 'Allow only read access such as read_file, grep, glob, web_fetch, and web_search.',
   },
 ]
 
@@ -36,20 +37,20 @@ type Props = {
 function formatTimestamp(value: string | null): string {
   if (!value) return '—'
   const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString('de-DE')
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString('en-US')
 }
 
 function formatApprovalType(value: string): string {
-  if (value === 'run_gate') return 'Startfreigabe'
-  if (value === 'tool_gate') return 'Tool-Freigabe'
-  if (value === 'delegation_gate') return 'Delegations-Freigabe'
+  if (value === 'run_gate') return 'Start approval'
+  if (value === 'tool_gate') return 'Tool approval'
+  if (value === 'delegation_gate') return 'Delegation approval'
   return value
 }
 
 function formatApprovalStatus(value: string): string {
-  if (value === 'approved') return 'genehmigt'
-  if (value === 'rejected') return 'abgelehnt'
-  if (value === 'pending') return 'offen'
+  if (value === 'approved') return 'approved'
+  if (value === 'rejected') return 'rejected'
+  if (value === 'pending') return 'pending'
   return value
 }
 
@@ -78,7 +79,7 @@ export default function CrewGovernancePanel({ activeCrewId }: Props) {
   const handleModeSelect = (mode: CrewGovernanceMode) => {
     updateCrew(activeCrewId, { governanceMode: mode })
     const definition = GOVERNANCE_MODES.find((entry) => entry.value === mode)
-    setNotice(definition ? { crewId: activeCrewId, message: `Governance-Modus gesetzt: ${definition.title}.` } : null)
+    setNotice(definition ? { crewId: activeCrewId, message: `Governance mode set: ${definition.title}.` } : null)
   }
 
   const handleResolveApproval = async (approvalId: string, status: 'approved' | 'rejected') => {
@@ -87,7 +88,7 @@ export default function CrewGovernancePanel({ activeCrewId }: Props) {
       crewId: activeCrewId,
       status,
       resolvedBy: 'manual-panel',
-      resolutionNote: status === 'approved' ? 'Manuell genehmigt' : 'Manuell abgelehnt',
+      resolutionNote: status === 'approved' ? 'Manually approved' : 'Manually rejected',
     })
 
     if (!useCrewControlPlaneStore.getState().error) {
@@ -95,8 +96,8 @@ export default function CrewGovernancePanel({ activeCrewId }: Props) {
         {
           crewId: activeCrewId,
           message: status === 'approved'
-            ? 'Freigabe erteilt. Falls ein Crew-Run pausiert war, wird er jetzt im Hintergrund fortgesetzt.'
-            : 'Freigabe abgelehnt.',
+            ? 'Approval granted. If a crew run was paused, it will now continue in the background.'
+            : 'Approval rejected.',
         },
       )
     }
@@ -105,17 +106,17 @@ export default function CrewGovernancePanel({ activeCrewId }: Props) {
   return (
     <div className="card crew-overview-card">
       <div className="crew-overview-copy">
-        <div className="crew-overview-kicker">Governance</div>
-        <strong className="crew-overview-title">Freigaben & Schutzmodus</strong>
+        <div className="crew-overview-kicker">{tr("Governance")}</div>
+        <strong className="crew-overview-title">{tr("Approvals and protection mode")}</strong>
       </div>
 
       {error && <div className="crew-inline-feedback error">{error}</div>}
       {notice?.crewId === activeCrewId && <div className="crew-inline-feedback">{notice.message}</div>}
 
       <div className="crew-stat-card crew-emphasis-card">
-        <div className="crew-stat-label">Aktiver Modus</div>
+        <div className="crew-stat-label">{tr("Active mode")}</div>
         <div className="crew-stat-value">{activeModeDefinition.title}</div>
-        <div className="crew-stat-meta">{activeModeDefinition.description}</div>
+        <div className="crew-stat-meta">{tr(activeModeDefinition.description)}</div>
       </div>
 
       <div className="crew-choice-grid">
@@ -129,16 +130,16 @@ export default function CrewGovernancePanel({ activeCrewId }: Props) {
               onClick={() => handleModeSelect(mode.value)}
             >
               <strong>{mode.title}</strong>
-              <span>{mode.description}</span>
+              <span>{tr(mode.description)}</span>
             </button>
           )
         })}
       </div>
 
       <div>
-        <div className="crew-stat-label" style={{ marginBottom: 8 }}>Offene / letzte Freigaben</div>
+        <div className="crew-stat-label" style={{ marginBottom: 8 }}>{tr("Open / latest approvals")}</div>
         {approvals.length === 0 ? (
-          <div className="crew-inline-feedback">Noch keine Freigaben fuer diese Crew vorhanden.</div>
+          <div className="crew-inline-feedback">{tr("No approvals available for this crew yet.")}</div>
         ) : (
           <div className="crew-stack-list">
             {approvals.slice(0, 6).map((approval) => (
@@ -147,18 +148,16 @@ export default function CrewGovernancePanel({ activeCrewId }: Props) {
                   <strong>{formatApprovalType(approval.approvalType)}</strong>
                   <span style={{ color: approval.status === 'approved' ? 'var(--success)' : approval.status === 'rejected' ? 'var(--danger)' : 'var(--warning)' }}>{formatApprovalStatus(approval.status)}</span>
                 </div>
-                <div className="crew-stat-meta">
-                  Angefragt: {formatTimestamp(approval.requestedAt)}
+                <div className="crew-stat-meta">{tr("Angefragt:")}{formatTimestamp(approval.requestedAt)}
                 </div>
                 {approval.resolvedAt && (
-                  <div className="crew-stat-meta">
-                    Entschieden: {formatTimestamp(approval.resolvedAt)}
+                  <div className="crew-stat-meta">{tr("Entschieden:")}{formatTimestamp(approval.resolvedAt)}
                   </div>
                 )}
                 {approval.status === 'pending' && (
                   <div className="crew-button-row">
-                    <button type="button" className="btn-sm crew-action-btn" disabled={loading} onClick={() => void handleResolveApproval(approval.id, 'approved')}>Genehmigen</button>
-                    <button type="button" className="btn-sm crew-action-btn" disabled={loading} onClick={() => void handleResolveApproval(approval.id, 'rejected')}>Ablehnen</button>
+                    <button type="button" className="btn-sm crew-action-btn" disabled={loading} onClick={() => void handleResolveApproval(approval.id, 'approved')}>{tr("Approve")}</button>
+                    <button type="button" className="btn-sm crew-action-btn" disabled={loading} onClick={() => void handleResolveApproval(approval.id, 'rejected')}>{tr("Reject")}</button>
                   </div>
                 )}
               </div>

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { safeInvoke } from '../utils/safeInvoke'
+import { tr } from '../i18n'
 
 type RuntimeInstructionRow = {
   id: string
@@ -81,59 +82,45 @@ export default function RuntimeInstructionsPanel() {
   return (
     <div className="panel">
       <div className="panel-heading-row">
-        <h2>Runtime-Instruktionen</h2>
-        <button type="button" className="btn-sm" onClick={() => void loadItems()}>
-          Aktualisieren
-        </button>
+        <h2>{tr("Runtime instructions")}</h2>
+        <button type="button" className="btn-sm" onClick={() => void loadItems()}>{tr("Refresh")}</button>
       </div>
 
       {error && <p style={{ color: 'var(--danger)', fontSize: 12 }}>{error}</p>}
 
       <div className="card" style={{ marginBottom: 12 }}>
         <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', marginBottom: 8 }}>
-          <label>
-            Titel
-            <input value={form.title} onChange={(event) => setForm((current) => ({ ...current, title: event.target.value }))} />
+          <label>{tr("Title")}<input value={form.title} onChange={(event) => setForm((current) => ({ ...current, title: event.target.value }))} />
           </label>
-          <label>
-            Scope
-            <select value={form.scopeType} onChange={(event) => setForm((current) => ({ ...current, scopeType: event.target.value }))}>
-              <option value="global">Global</option>
-              <option value="workspace">Workspace</option>
-              <option value="folder">Folder</option>
+          <label>{tr("Scope")}<select value={form.scopeType} onChange={(event) => setForm((current) => ({ ...current, scopeType: event.target.value }))}>
+              <option value="global">{tr("Global")}</option>
+              <option value="workspace">{tr("Workspace")}</option>
+              <option value="folder">{tr("Folder")}</option>
             </select>
           </label>
-          <label style={{ gridColumn: '1 / -1' }}>
-            Scope Ref
-            <input
+          <label style={{ gridColumn: '1 / -1' }}>{tr("Scope Ref")}<input
               value={form.scopeRef}
               onChange={(event) => setForm((current) => ({ ...current, scopeRef: event.target.value }))}
-              placeholder="Optional, z.B. C:/Pfad/zum/Projekt"
+              placeholder={tr("Optional, e.g. C:/path/to/project")}
             />
           </label>
-          <label>
-            Prioritaet
-            <input value={form.priority} onChange={(event) => setForm((current) => ({ ...current, priority: event.target.value }))} />
+          <label>{tr("Priority")}<input value={form.priority} onChange={(event) => setForm((current) => ({ ...current, priority: event.target.value }))} />
           </label>
         </div>
-        <label style={{ display: 'block', marginBottom: 8 }}>
-          Inhalt
-          <textarea
+        <label style={{ display: 'block', marginBottom: 8 }}>{tr("Content")}<textarea
             rows={4}
             value={form.content}
             onChange={(event) => setForm((current) => ({ ...current, content: event.target.value }))}
             style={{ width: '100%', resize: 'vertical' }}
           />
         </label>
-        <button type="button" className="btn-sm" onClick={handleSave}>
-          Speichern
-        </button>
+        <button type="button" className="btn-sm" onClick={handleSave}>{tr("Save")}</button>
       </div>
 
       {loading ? (
-        <p className="panel-empty">Laden...</p>
+        <p className="panel-empty">{tr("Loading...")}</p>
       ) : items.length === 0 ? (
-        <p className="panel-empty">Keine Runtime-Instruktionen vorhanden.</p>
+        <p className="panel-empty">{tr("No runtime instructions available.")}</p>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {items.map((item) => (
@@ -147,9 +134,7 @@ export default function RuntimeInstructionsPanel() {
                     {` • priority ${item.priority}`}
                   </div>
                 </div>
-                <button type="button" className="btn-sm" onClick={() => void handleDelete(item.id)}>
-                  Loeschen
-                </button>
+                <button type="button" className="btn-sm" onClick={() => void handleDelete(item.id)}>{tr("Delete")}</button>
               </div>
               <pre style={{ whiteSpace: 'pre-wrap', marginTop: 8, fontSize: 11, background: 'var(--bg-primary)', padding: 8, borderRadius: 'var(--radius-sm)' }}>
                 {item.content}

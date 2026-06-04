@@ -79,10 +79,10 @@ export class ToolOrchestrator {
         results.push({
           type: 'tool_result',
           tool_use_id: block.id,
-          content: `Tool "${block.name}" nicht gefunden.`,
+          content: `Tool "${block.name}" not found.`,
           is_error: true,
         })
-        yield { type: 'tool_error', toolUseId: block.id, toolName: block.name, error: 'Tool nicht gefunden' }
+        yield { type: 'tool_error', toolUseId: block.id, toolName: block.name, error: 'Tool not found' }
         continue
       }
 
@@ -92,10 +92,10 @@ export class ToolOrchestrator {
         results.push({
           type: 'tool_result',
           tool_use_id: block.id,
-          content: `Tool "${tool.name}" abgelehnt: ${permission.reason}`,
+          content: `Tool "${tool.name}" denied: ${permission.reason}`,
           is_error: true,
         })
-        yield { type: 'tool_error', toolUseId: block.id, toolName: tool.name, error: `Abgelehnt: ${permission.reason}` }
+        yield { type: 'tool_error', toolUseId: block.id, toolName: tool.name, error: `Denied: ${permission.reason}` }
         continue
       }
 
@@ -138,7 +138,7 @@ export class ToolOrchestrator {
             }
           } else {
             const error = String(settled.reason)
-            results.push({ type: 'tool_result', tool_use_id: block.id, content: `Fehler: ${error}`, is_error: true })
+            results.push({ type: 'tool_result', tool_use_id: block.id, content: `Error: ${error}`, is_error: true })
             yield { type: 'tool_error', toolUseId: block.id, toolName: tool.name, error }
           }
         }
@@ -211,7 +211,7 @@ export class ToolOrchestrator {
         toolResult: {
           type: 'tool_result',
           tool_use_id: block.id,
-          content: `Fehler: ${msg}`,
+          content: `Error: ${msg}`,
           is_error: true,
         },
         durationMs: Date.now() - startTime,

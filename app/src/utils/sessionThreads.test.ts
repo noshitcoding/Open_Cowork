@@ -17,7 +17,7 @@ describe('sessionThreads', () => {
       {
         type: 'user',
         uuid: 'user-1',
-        content: [{ type: 'tool_result', tool_use_id: 'tool-1', content: 'Datei A\nDatei B' }],
+        content: [{ type: 'tool_result', tool_use_id: 'tool-1', content: 'File A\nFile B' }],
         timestamp: 2,
       },
     ]
@@ -28,7 +28,7 @@ describe('sessionThreads', () => {
     expect(mapped[0]?.content).toContain('C:/workspace')
     expect(mapped[0]?.content).not.toBe('[assistant]')
     expect(mapped[0]?.debugContent).toContain('"tool_use"')
-    expect(mapped[1]?.content).toContain('Tool-Ergebnis: Datei A')
+    expect(mapped[1]?.content).toContain('Tool-Result: File A')
     expect(mapped[1]?.content).not.toBe('[user]')
     expect(mapped[1]?.debugContent).toContain('"tool_result"')
     expect(mapped[1]?.role).toBe('assistant')
@@ -61,7 +61,7 @@ describe('sessionThreads', () => {
     const serialized = serializeChatMessageForStorage({
       id: 'assistant-1',
       role: 'assistant',
-      content: 'Antwort',
+      content: 'answer',
       timestamp: 10,
       thinkingContent: 'Gedanke',
       verboseContent: 'Verbose',
@@ -84,7 +84,7 @@ describe('sessionThreads', () => {
     })
 
     expect(hydrated.id).toBe('db-message-1')
-    expect(hydrated.content).toBe('Antwort')
+    expect(hydrated.content).toBe('answer')
     expect(hydrated.thinkingContent).toBe('Gedanke')
     expect(hydrated.verboseContent).toBe('Verbose')
     expect(hydrated.liveToolCalls?.[0]?.toolName).toBe('Read')

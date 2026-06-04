@@ -45,7 +45,7 @@ describe('InsightsPanel', () => {
       expect(screen.getByText('Sessions')).toBeInTheDocument()
     })
     expect(screen.getByText('2')).toBeInTheDocument()
-    expect(screen.getByText(/0\.0\s+min/)).toBeInTheDocument()
+    expect(screen.getByText((_content, element) => element?.textContent === '0.0min')).toBeInTheDocument()
   })
 
   it('accepts snake_case event payloads from Rust', async () => {

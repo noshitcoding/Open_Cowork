@@ -1,4 +1,4 @@
-import { convertFileSrc } from '@tauri-apps/api/core'
+﻿import { convertFileSrc } from '@tauri-apps/api/core'
 import type { ContentBlockImage } from '../engine'
 
 export const MAX_CHAT_ATTACHMENTS = 25
@@ -102,16 +102,16 @@ export function formatAttachmentContext(attachments: ChatAttachment[]): string {
   if (attachments.length === 0) return ''
 
   const lines = attachments.map((item, index) => {
-    const label = item.kind === 'folder' ? 'Ordner' : 'Datei'
+    const label = item.kind === 'folder' ? 'Folder' : 'File'
     return `${index + 1}. ${label}: ${item.path}`
   })
 
-  return [`Verbundene Pfade (${attachments.length}):`, ...lines].join('\n')
+  return [`Connected paths (${attachments.length}):`, ...lines].join('\n')
 }
 
-const ATTACHMENT_CONTEXT_BLOCK_REGEX = /(?:^|\n)Verbundene Pfade \(\d+\):\n((?:\d+\.\s+(?:Datei|Ordner):[^\n]*(?:\n|$))+)/i
+const ATTACHMENT_CONTEXT_BLOCK_REGEX = /(?:^|\n)(?:Connected paths|Connectede Pfade) \(\d+\):\n((?:\d+\.\s+(?:File|Folder):[^\n]*(?:\n|$))+)/i
 
-const GENERATED_ATTACHMENT_SECTION_REGEX = /(?:^|\n\n)(?:Datei-Metadaten \(ohne Volltext\):|Retrieval-Kontext \(selektiv gelesen\):|Nicht analysierbare Anhaenge:)/i
+const GENERATED_ATTACHMENT_SECTION_REGEX = /(?:^|\n\n)(?:File metadata \(without full text\):|Retrieval context \(selective read\):|File-Metadaten \(ohne Volltext\):|Retrieval-Context \(selektiv geread\):|Unprocessable attachments:)/i
 
 function stripGeneratedAttachmentSections(content: string): string {
   const trimmed = content.trim()
@@ -141,10 +141,10 @@ export function extractAttachmentsFromContent(content: string): {
     .map((line) => line.trim())
     .filter(Boolean)
     .map((line) => {
-      const entry = line.match(/^\d+\.\s+(Datei|Ordner):\s*(.+)$/i)
+      const entry = line.match(/^\d+\.\s+(File|Folder):\s*(.+)$/i)
       if (!entry) return null
       return {
-        kind: entry[1].toLowerCase() === 'ordner' ? 'folder' : 'file',
+        kind: entry[1].toLowerCase() === 'folder' ? 'folder' : 'file',
         path: entry[2].trim(),
       } satisfies ChatAttachment
     })
@@ -246,9 +246,9 @@ function blobToDataUrl(blob: Blob): Promise<string> {
         return
       }
 
-      reject(new Error('Datei konnte nicht als Data-URL gelesen werden.'))
+      reject(new Error('File could not be read as a data URL.'))
     }
-    reader.onerror = () => reject(reader.error ?? new Error('Datei konnte nicht gelesen werden.'))
+    reader.onerror = () => reject(reader.error ?? new Error('File could not be read.'))
     reader.readAsDataURL(blob)
   })
 }
@@ -274,7 +274,7 @@ async function readAttachmentDataUrl(attachment: ChatAttachment): Promise<string
 
   const response = await fetch(previewSrc)
   if (!response.ok) {
-    throw new Error(`Bild konnte nicht geladen werden (${response.status}).`)
+    throw new Error(`Image could not be loaded (${response.status}).`)
   }
 
   const blob = await response.blob()

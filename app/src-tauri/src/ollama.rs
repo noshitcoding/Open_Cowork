@@ -289,7 +289,7 @@ pub async fn generate_plan(
     let payload = serde_json::json!({
         "model": config.model,
         "prompt": format!(
-            "Erzeuge eine kurze, umsetzbare Schrittfolge auf Deutsch. Gib nur nummerierte Schritte aus.\n\nAufgabe:\n{}",
+            "Erzeuge eine kurze, umsetzbare Schrittfolge auf English. Gib nur nummerierte Schritte aus.\n\nTask:\n{}",
             prompt
         ),
         "stream": false,
@@ -730,14 +730,14 @@ fn build_chat_prompt(prompt: &str, history: &[ChatMessage]) -> String {
     }
 
     format!(
-        "Du bist Open_Cowork, ein lokaler Assistenz-Agent. Antworte knapp, klar und auf Deutsch.\n\
-    Wenn die Aufgabe riskante oder destruktive Aktionen enthalten koennte, schlage einen Plan vor und kennzeichne das als approval-beduerftig.\n\
+        "You are Open_Cowork, a local assistant agent. Answer concisely, clearly, and in English.\n\
+    If the task could contain risky or destructive actions, suggest a plan and mark it as requiring approval.\n\
     WICHTIGE REGELN:\n\
-    - Gib niemals Platzhalter- oder Warte-Antworten wie 'ich analysiere', 'bitte warten', 'kommt gleich' oder aehnliches aus.\n\
-    - Gib immer direkt eine finale, inhaltliche Antwort in genau dieser Nachricht.\n\
+    - Never output placeholder or waiting answers such as 'I am analyzing', 'please wait', 'coming soon', or similar text.\n\
+    - Always provide a final substantive answer directly in this message.\n\
     - Erfinde niemals Dokumentinhalte.\n\
-    - Wenn nur ein Dateipfad vorhanden ist, aber kein extrahierter Dokumenttext im Prompt steht, sage klar, dass der Inhalt nicht vorliegt und bitte um dokumentierten Textauszug oder aktivierte Dateianalyse.\n\n\
-    Kontextverlauf:\n{}\nNutzer: {}\n\nAntwort:",
+    - If only a file path is available but no extracted document text is in the prompt, clearly state that the content is not available and ask for a documented text excerpt or enabled file analysis.\n\n\
+    Context history:\n{}\nUser: {}\n\nAnswer:",
         history_text, prompt
     )
 }
@@ -863,13 +863,13 @@ mod tests {
 
     #[test]
     fn parse_steps_extracts_numbered_lines() {
-        let raw = "1. Projekt initialisieren\n2) Ollama konfigurieren\n- Tests ausfuehren";
+        let raw = "1. Initialize project\n2) Ollama konfigurieren\n- Tests ausfuehren";
         let parsed = parse_steps(raw);
 
         assert_eq!(
             parsed,
             vec![
-                "Projekt initialisieren".to_string(),
+                "Initialize project".to_string(),
                 "Ollama konfigurieren".to_string(),
                 "Tests ausfuehren".to_string()
             ]
@@ -878,10 +878,10 @@ mod tests {
 
     #[test]
     fn parse_steps_falls_back_to_raw_text() {
-        let raw = "Freitext ohne Zeilenumbrueche";
+        let raw = "Free text without line breaks";
         let parsed = parse_steps(raw);
 
-        assert_eq!(parsed, vec!["Freitext ohne Zeilenumbrueche".to_string()]);
+        assert_eq!(parsed, vec!["Free text without line breaks".to_string()]);
     }
 
     #[test]

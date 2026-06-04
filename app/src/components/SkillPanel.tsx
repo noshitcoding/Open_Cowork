@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useSkillStore, type Skill } from '../stores/skillStore'
+import { tr } from '../i18n'
 
 function randomId() {
   return `skill-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -53,11 +54,11 @@ export default function SkillPanel() {
 
   return (
     <div className="panel">
-      <h2>⚡ Skills & Lernverlauf</h2>
+      <h2>{tr("⚡ Skills & Learning history")}</h2>
 
       <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-        <button type="button" className={`btn-sm${tab === 'skills' ? ' active' : ''}`} onClick={() => setTab('skills')}>Skills</button>
-        <button type="button" className={`btn-sm${tab === 'learnings' ? ' active' : ''}`} onClick={() => setTab('learnings')}>Lernverlauf</button>
+        <button type="button" className={`btn-sm${tab === 'skills' ? ' active' : ''}`} onClick={() => setTab('skills')}>{tr("Skills")}</button>
+        <button type="button" className={`btn-sm${tab === 'learnings' ? ' active' : ''}`} onClick={() => setTab('learnings')}>{tr("Learning history")}</button>
       </div>
 
       {error && <p style={{ color: 'var(--danger)', fontSize: 12 }}>{error}</p>}
@@ -65,50 +66,40 @@ export default function SkillPanel() {
       {tab === 'skills' && (
         <>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 12 }}>
-            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{skills.length} Skills registriert</span>
-            <button type="button" className="btn-sm" onClick={() => setShowAdd(!showAdd)}>+ Neuer Skill</button>
+            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{skills.length}{tr("Skills registriert")}</span>
+            <button type="button" className="btn-sm" onClick={() => setShowAdd(!showAdd)}>{tr("+ New skill")}</button>
           </div>
 
           {showAdd && (
             <div className="card" style={{ marginBottom: 12 }}>
               <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', marginBottom: 8 }}>
-                <label>
-                  Name
-                  <input type="text" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+                <label>{tr("Name")}<input type="text" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
                 </label>
-                <label>
-                  Modus
-                  <select value={form.runMode} onChange={(e) => setForm({ ...form, runMode: e.target.value })}>
-                    <option value="execute">Ausfuehren</option>
-                    <option value="plan">Planen</option>
-                    <option value="hybrid">Hybrid</option>
+                <label>{tr("Mode")}<select value={form.runMode} onChange={(e) => setForm({ ...form, runMode: e.target.value })}>
+                    <option value="execute">{tr("Ausfuehren")}</option>
+                    <option value="plan">{tr("Planen")}</option>
+                    <option value="hybrid">{tr("Hybrid")}</option>
                   </select>
                 </label>
               </div>
-              <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13, marginBottom: 8 }}>
-                Beschreibung
-                <input type="text" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })}
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13, marginBottom: 8 }}>{tr("Description")}<input type="text" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })}
                   style={{ padding: '6px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)', fontSize: 13 }} />
               </label>
-              <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13, marginBottom: 8 }}>
-                Prompt-Template
-                <textarea value={form.promptTemplate} onChange={(e) => setForm({ ...form, promptTemplate: e.target.value })} rows={3}
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13, marginBottom: 8 }}>{tr("Prompt-Template")}<textarea value={form.promptTemplate} onChange={(e) => setForm({ ...form, promptTemplate: e.target.value })} rows={3}
                   style={{ padding: '6px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)', fontSize: 13, resize: 'vertical' }} />
               </label>
-              <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13, marginBottom: 8 }}>
-                Trigger-Pattern (optional)
-                <input type="text" value={form.triggerPattern} onChange={(e) => setForm({ ...form, triggerPattern: e.target.value })}
-                  placeholder="z.B. *test*, *deploy*"
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13, marginBottom: 8 }}>{tr("Trigger-Pattern (optional)")}<input type="text" value={form.triggerPattern} onChange={(e) => setForm({ ...form, triggerPattern: e.target.value })}
+                  placeholder={tr("e.g. *test*, *deploy*")}
                   style={{ padding: '6px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)', fontSize: 13 }} />
               </label>
-              <button type="button" className="btn-sm" onClick={handleAdd}>Speichern</button>
+              <button type="button" className="btn-sm" onClick={handleAdd}>{tr("Save")}</button>
             </div>
           )}
 
           {loading ? (
-            <p className="panel-empty">Laden...</p>
+            <p className="panel-empty">{tr("Loading...")}</p>
           ) : skills.length === 0 ? (
-            <p className="panel-empty">Noch keine Skills erstellt</p>
+            <p className="panel-empty">{tr("No skills created yet")}</p>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {skills.map((skill: Skill) => (
@@ -117,42 +108,38 @@ export default function SkillPanel() {
                     <div style={{ flex: 1 }}>
                       <div style={{ fontWeight: 600, fontSize: 14 }}>
                         {skill.name}
-                        {skill.auto_generated && <span style={{ fontSize: 10, marginLeft: 6, color: 'var(--info)', fontWeight: 400 }}>auto</span>}
+                        {skill.auto_generated && <span style={{ fontSize: 10, marginLeft: 6, color: 'var(--info)', fontWeight: 400 }}>{tr("auto")}</span>}
                       </div>
                       <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>{skill.description}</div>
                       <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-                        <span>Modus: {skill.run_mode}</span>
-                        <span>Nutzung: {skill.usage_count}x</span>
-                        <span>Erfolg: {skill.success_count}/{skill.usage_count}</span>
-                        <span>Qualitaet: {skill.avg_quality.toFixed(1)}</span>
-                        {skill.trigger_pattern && <span>Trigger: {skill.trigger_pattern}</span>}
+                        <span>{tr("Mode:")}{skill.run_mode}</span>
+                        <span>{tr("Nutzung:")}{skill.usage_count}{tr("x")}</span>
+                        <span>{tr("Erfolg:")}{skill.success_count}/{skill.usage_count}</span>
+                        <span>{tr("quality:")}{skill.avg_quality.toFixed(1)}</span>
+                        {skill.trigger_pattern && <span>{tr("Trigger:")}{skill.trigger_pattern}</span>}
                       </div>
                     </div>
                     <div style={{ display: 'flex', gap: 4 }}>
                       <button type="button" className="btn-sm" onClick={() => {
                         setImproveId(skill.id)
                         setImproveTemplate(skill.prompt_template)
-                      }} title="Verbessern">✏️</button>
+                      }} title={tr("Verbessern")}>✏️</button>
                       <button type="button" onClick={() => { deleteSkill(skill.id); loadSkills() }}
-                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger)', fontSize: 14 }}>×</button>
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger)', fontSize: 14 }}>{tr("×")}</button>
                     </div>
                   </div>
 
                   {improveId === skill.id && (
                     <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border-light)' }}>
-                      <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13, marginBottom: 8 }}>
-                        Neues Prompt-Template
-                        <textarea value={improveTemplate} onChange={(e) => setImproveTemplate(e.target.value)} rows={3}
+                      <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13, marginBottom: 8 }}>{tr("New prompt template")}<textarea value={improveTemplate} onChange={(e) => setImproveTemplate(e.target.value)} rows={3}
                           style={{ padding: '6px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)', fontSize: 13, resize: 'vertical' }} />
                       </label>
-                      <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13, marginBottom: 8 }}>
-                        Grund
-                        <input type="text" value={improveReason} onChange={(e) => setImproveReason(e.target.value)}
+                      <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13, marginBottom: 8 }}>{tr("Grund")}<input type="text" value={improveReason} onChange={(e) => setImproveReason(e.target.value)}
                           style={{ padding: '6px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)', fontSize: 13 }} />
                       </label>
                       <div style={{ display: 'flex', gap: 8 }}>
-                        <button type="button" className="btn-sm" onClick={handleImprove}>Uebernehmen</button>
-                        <button type="button" className="btn-sm" onClick={() => setImproveId(null)}>Abbrechen</button>
+                        <button type="button" className="btn-sm" onClick={handleImprove}>{tr("Uebernehmen")}</button>
+                        <button type="button" className="btn-sm" onClick={() => setImproveId(null)}>{tr("Cancel")}</button>
                       </div>
                     </div>
                   )}
@@ -166,19 +153,19 @@ export default function SkillPanel() {
       {tab === 'learnings' && (
         <>
           {loading ? (
-            <p className="panel-empty">Laden...</p>
+            <p className="panel-empty">{tr("Loading...")}</p>
           ) : learnings.length === 0 ? (
-            <p className="panel-empty">Noch keine Lerneintraege</p>
+            <p className="panel-empty">{tr("No learning entries yet")}</p>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {learnings.map((l) => (
                 <div key={l.id} className="card">
                   <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 2 }}>
-                    {l.outcome_type} &middot; Conf: {l.confidence.toFixed(2)} &middot; {new Date(l.created_at).toLocaleString('de-DE')}
+                    {l.outcome_type}{tr("&middot; Conf:")}{l.confidence.toFixed(2)}{tr("&middot;")}{new Date(l.created_at).toLocaleString('en-US')}
                   </div>
                   <div style={{ fontSize: 13 }}>{l.description}</div>
                   {l.learned_pattern && (
-                    <div style={{ fontSize: 12, color: 'var(--info)', marginTop: 4 }}>Pattern: {l.learned_pattern}</div>
+                    <div style={{ fontSize: 12, color: 'var(--info)', marginTop: 4 }}>{tr("Pattern:")}{l.learned_pattern}</div>
                   )}
                 </div>
               ))}

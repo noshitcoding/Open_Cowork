@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+﻿import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { useChatStore, getActiveThread } from './chatStore'
 
 const invokeMock = vi.fn(async (_command: string, _args?: unknown): Promise<unknown> => undefined)
@@ -56,22 +56,22 @@ describe('chatStore', () => {
     const id = useChatStore.getState().addThread('Test')
     useChatStore.getState().addMessage(id, {
       role: 'user',
-      content: 'Frage 1',
+      content: 'question 1',
       timestamp: Date.now(),
     })
     useChatStore.getState().addMessage(id, {
       role: 'assistant',
-      content: 'Antwort 1',
+      content: 'answer 1',
       timestamp: Date.now() + 1,
     })
     useChatStore.getState().addMessage(id, {
       role: 'user',
-      content: 'Frage 2',
+      content: 'question 2',
       timestamp: Date.now() + 2,
     })
     useChatStore.getState().addMessage(id, {
       role: 'assistant',
-      content: 'Antwort 2',
+      content: 'answer 2',
       timestamp: Date.now() + 3,
     })
 
@@ -81,9 +81,9 @@ describe('chatStore', () => {
     expect(result.pairsRemoved).toBe(1)
     expect(result.messagesRemoved).toBe(2)
     expect(thread.messages.map((message) => message.content)).toEqual([
-      'Open_Cowork ist bereit. Sende eine Aufgabe, um Planung und Ausfuehrung im Chatmodus zu starten.',
-      'Frage 1',
-      'Antwort 1',
+      'Open_Cowork is ready. Send a task to start planning and execution in chat mode.',
+      'question 1',
+      'answer 1',
     ])
   })
 
@@ -117,12 +117,12 @@ describe('chatStore', () => {
       content: '',
       timestamp: Date.now(),
       streaming: true,
-      thinkingContent: 'denke noch nach',
+      thinkingContent: 'still thinking',
     })
 
     useChatStore.getState().setActiveThread(secondThreadId)
     useChatStore.getState().updateMessage(firstThreadId, assistantMessageId, {
-      thinkingContent: 'denke noch nach\nnaechster gedanke',
+      thinkingContent: 'still thinking\nnext thought',
     })
     useChatStore.getState().setActiveThread(firstThreadId)
 
@@ -130,7 +130,7 @@ describe('chatStore', () => {
     const assistantMessage = activeThread?.messages.find((message) => message.id === assistantMessageId)
 
     expect(activeThread?.id).toBe(firstThreadId)
-    expect(assistantMessage?.thinkingContent).toBe('denke noch nach\nnaechster gedanke')
+    expect(assistantMessage?.thinkingContent).toBe('still thinking\nnext thought')
     expect(assistantMessage?.streaming).toBe(true)
   })
 

@@ -44,10 +44,10 @@ export async function executeCommand(input: string, context: ToolUseContext): Pr
   if (!parsed) return null
 
   const cmd = findCommand(parsed.command)
-  if (!cmd) return `Unbekannter Befehl: /${parsed.command}. Tippe /help fuer alle Befehle.`
+  if (!cmd) return `Unknown Command: /${parsed.command}. Type /help for alle commands.`
 
   if (cmd.isAvailable && !cmd.isAvailable()) {
-    return `Befehl /${parsed.command} ist momentan nicht verfuegbar.`
+    return `Command /${parsed.command} is currently not available.`
   }
 
   const result = await cmd.call(parsed.args, context)
@@ -58,8 +58,8 @@ export async function executeCommand(input: string, context: ToolUseContext): Pr
 
 const helpCommand: Command = {
   name: '/help',
-  description: 'Zeigt alle verfuegbaren Befehle an.',
-  shortDescription: 'Hilfe',
+  description: 'Shows all available commands.',
+  shortDescription: 'Help',
   category: 'session',
   examples: ['/help', '/help config'],
   async call(args) {
@@ -68,7 +68,7 @@ const helpCommand: Command = {
       : getAllCommands()
 
     if (commands.length === 0) {
-      return `Keine Befehle in Kategorie "${args}" gefunden.`
+      return `No commands found in category "${args}".`
     }
 
     const grouped = new Map<string, Command[]>()
@@ -78,7 +78,7 @@ const helpCommand: Command = {
       grouped.get(cat)!.push(cmd)
     }
 
-    const lines: string[] = ['### Verfuegbare Befehle\n']
+    const lines: string[] = ['### Verfuegbare commands\n']
     for (const [category, cmds] of grouped) {
       lines.push(`**${category}**`)
       for (const cmd of cmds) {
@@ -92,8 +92,8 @@ const helpCommand: Command = {
 
 const clearCommand: Command = {
   name: '/clear',
-  description: 'Loescht den Chatverlauf der aktuellen Sitzung.',
-  shortDescription: 'Chat leeren',
+  description: 'Deletes the chat history of the current session.',
+  shortDescription: 'Clear chat',
   category: 'session',
   async call(_args, context) {
     // The UI layer handles the actual clearing
@@ -107,115 +107,115 @@ const clearCommand: Command = {
 
 const modelCommand: Command = {
   name: '/model',
-  description: 'Zeigt oder wechselt das aktuelle Modell.',
-  shortDescription: 'Modell anzeigen/wechseln',
+  description: 'Shows or changes the current model.',
+  shortDescription: 'Show/change model',
   category: 'config',
   examples: ['/model', '/model claude-sonnet-4-20250514'],
   async call(args, context) {
     if (!args) {
-      return `Aktuelles Modell: ${context.model}`
+      return `Current model: ${context.model}`
     }
     // Model switch is handled by the engine config
-    return `Modell gewechselt zu: ${args}`
+    return `Model changed to: ${args}`
   },
 }
 
 const statusCommand: Command = {
   name: '/status',
-  description: 'Zeigt den aktuellen Status der Sitzung.',
-  shortDescription: 'Session-Status',
+  description: 'Shows the current session status.',
+  shortDescription: 'Session status',
   category: 'session',
   async call(_args, context) {
     const state = context.getAppState()
     return [
-      '### Sitzungsstatus',
-      `- **Modell:** ${context.model}`,
+      '### Session status',
+      `- **Model:** ${context.model}`,
       `- **CWD:** ${state.cwd}`,
       `- **Turns:** ${state.turnCount}`,
       `- **Tokens:** ${state.totalTokens.input} input / ${state.totalTokens.output} output`,
-      `- **Kosten:** $${state.totalCostUsd.toFixed(4)}`,
-      `- **Plan-Modus:** ${state.planMode ? 'Aktiv' : 'Inaktiv'}`,
-      `- **Aktive Tasks:** ${state.activeTasks.length}`,
+      `- **Costs:** $${state.totalCostUsd.toFixed(4)}`,
+      `- **Plan mode:** ${state.planMode ? 'Active' : 'Inactive'}`,
+      `- **Active Tasks:** ${state.activeTasks.length}`,
     ].join('\n')
   },
 }
 
 const planCommand: Command = {
   name: '/plan',
-  description: 'Wechselt in den Plan-Modus (nur Vorschlaege, keine Ausfuehrung).',
-  shortDescription: 'Plan-Modus',
+  description: 'Switches to plan mode (suggestions only, no execution).',
+  shortDescription: 'Plan-Mode',
   category: 'planning',
   async call(_args, context) {
     const state = context.getAppState()
     const newPlanMode = !state.planMode
     context.setAppState(prev => ({ ...prev, planMode: newPlanMode }))
     return newPlanMode
-      ? '📋 Plan-Modus aktiviert. Aenderungen werden nur vorgeschlagen.'
-      : '🔧 Plan-Modus deaktiviert. Aenderungen werden ausgefuehrt.'
+      ? '📋 Plan mode enabled. Changes will only be suggested.'
+      : '🔧 Plan mode disabled. Changes will be executed.'
   },
 }
 
 const compactCommand: Command = {
   name: '/compact',
-  description: 'Komprimiert den Chatverlauf um Token zu sparen.',
-  shortDescription: 'Chat komprimieren',
+  description: 'Compacts chat history to save tokens.',
+  shortDescription: 'Compact chat',
   category: 'session',
   async call(_args) {
     // Compaction is handled by the memory system
-    return 'Chat-Verlauf wird komprimiert...'
+    return 'Chat history is being compacted...'
   },
 }
 
 const costCommand: Command = {
   name: '/cost',
-  description: 'Zeigt die bisherigen API-Kosten dieser Sitzung.',
-  shortDescription: 'Kosten anzeigen',
+  description: 'Shows the API costs accumulated in this session.',
+  shortDescription: 'Show costs',
   category: 'session',
   async call(_args, context) {
     const state = context.getAppState()
     return [
-      '### API-Kosten',
-      `- **Gesamt:** $${state.totalCostUsd.toFixed(4)}`,
-      `- **Input-Tokens:** ${state.totalTokens.input.toLocaleString()}`,
-      `- **Output-Tokens:** ${state.totalTokens.output.toLocaleString()}`,
+      '### API costs',
+      `- **Total:** $${state.totalCostUsd.toFixed(4)}`,
+      `- **Input tokens:** ${state.totalTokens.input.toLocaleString()}`,
+      `- **Output tokens:** ${state.totalTokens.output.toLocaleString()}`,
     ].join('\n')
   },
 }
 
 const debugCommand: Command = {
   name: '/debug',
-  description: 'Aktiviert/deaktiviert den Debug-Modus.',
-  shortDescription: 'Debug-Modus',
+  description: 'Enables/disables debug mode.',
+  shortDescription: 'Debug-Mode',
   category: 'debug',
   async call(_args, context) {
     const newDebug = !context.debug
-    return `Debug-Modus: ${newDebug ? 'Aktiviert' : 'Deaktiviert'}`
+    return `Debug mode: ${newDebug ? 'enabled' : 'disabled'}`
   },
 }
 
 const cwdCommand: Command = {
   name: '/cwd',
-  description: 'Zeigt oder wechselt das Arbeitsverzeichnis.',
-  shortDescription: 'Arbeitsverzeichnis',
+  description: 'Shows or changes the working directory.',
+  shortDescription: 'Working directory',
   category: 'navigation',
   examples: ['/cwd', '/cwd /home/user/project'],
   async call(args, context) {
     if (!args) {
-      return `Arbeitsverzeichnis: ${context.cwd}`
+      return `Working directory: ${context.cwd}`
     }
     context.setAppState(prev => ({ ...prev, cwd: args }))
-    return `Arbeitsverzeichnis gewechselt zu: ${args}`
+    return `Working directory changed to: ${args}`
   },
 }
 
 const agentsCommand: Command = {
   name: '/agents',
-  description: 'Listet verfuegbare Agenten auf.',
-  shortDescription: 'Agenten anzeigen',
+  description: 'Lists available agents.',
+  shortDescription: 'Show agents',
   category: 'agents',
   async call(_args, context) {
     if (context.agentDefinitions.length === 0) {
-      return 'Keine Agenten konfiguriert.'
+      return 'No Agenten configured.'
     }
     const lines = context.agentDefinitions.map(a =>
       `- **${a.name}** (${a.type}): ${a.description}`,
@@ -226,8 +226,8 @@ const agentsCommand: Command = {
 
 const toolsCommand: Command = {
   name: '/tools',
-  description: 'Listet verfuegbare Tools auf.',
-  shortDescription: 'Tools anzeigen',
+  description: 'Lists available tools.',
+  shortDescription: 'Show tools',
   category: 'tools',
   async call(_args, context) {
     const lines = context.tools.map(t =>
@@ -239,16 +239,16 @@ const toolsCommand: Command = {
 
 const mcpCommand: Command = {
   name: '/mcp',
-  description: 'Zeigt MCP-Server-Verbindungen und Tools.',
-  shortDescription: 'MCP-Server',
+  description: 'Shows MCP server connections and tools.',
+  shortDescription: 'MCP servers',
   category: 'mcp',
   async call(_args, context) {
     if (context.mcpConnections.length === 0) {
-      return 'Keine MCP-Server verbunden.'
+      return 'No MCP servers connected.'
     }
-    const lines: string[] = ['### MCP-Server']
+    const lines: string[] = ['### MCP servers']
     for (const conn of context.mcpConnections) {
-      lines.push(`\n**${conn.name}** (${conn.serverType}) — ${conn.connected ? '✅ Verbunden' : '❌ Getrennt'}`)
+      lines.push(`\n**${conn.name}** (${conn.serverType}) — ${conn.connected ? '✅ Connected' : '❌ Getrennt'}`)
       if (conn.tools.length > 0) {
         lines.push('  Tools: ' + conn.tools.map(t => t.name).join(', '))
       }
@@ -259,30 +259,30 @@ const mcpCommand: Command = {
 
 const memoryCommand: Command = {
   name: '/memory',
-  description: 'Zeigt oder bearbeitet den Gedaechtnisspeicher.',
-  shortDescription: 'Gedaechtnis',
+  description: 'Shows or edits the memory store.',
+  shortDescription: 'Memory',
   category: 'memory',
   examples: ['/memory', '/memory add key=value'],
   async call(args, context) {
     if (!args) {
       return context.memoryContent
-        ? `### Gedaechtnis-Inhalt\n${context.memoryContent}`
-        : 'Kein Gedaechtnisinhalt geladen.'
+        ? `### Memory content\n${context.memoryContent}`
+        : 'No memory content loaded.'
     }
-    return `Gedaechtnis-Befehl: ${args}`
+    return `Memory command: ${args}`
   },
 }
 
 const permissionsCommand: Command = {
   name: '/permissions',
-  description: 'Zeigt aktuelle Berechtigungsregeln.',
-  shortDescription: 'Berechtigungen',
+  description: 'Shows current permission rules.',
+  shortDescription: 'Permissions',
   category: 'security',
   async call(_args, context) {
     const p = context.permissionContext
     const lines = [
-      `### Berechtigungen (Modus: ${p.mode})`,
-      `\n**Erlaubte Verzeichnisse:** ${p.allowedDirectories.length > 0 ? p.allowedDirectories.join(', ') : 'Keine'}`,
+      `### Permissions (mode: ${p.mode})`,
+      `\n**Allowed directories:** ${p.allowedDirectories.length > 0 ? p.allowedDirectories.join(', ') : 'No'}`,
     ]
     if (p.allowRules.length > 0) {
       lines.push(`\n**Allow-Regeln:** ${p.allowRules.map(r => `${r.pattern} (${r.source})`).join(', ')}`)
@@ -296,8 +296,8 @@ const permissionsCommand: Command = {
 
 const exportCommand: Command = {
   name: '/export',
-  description: 'Exportiert den aktuellen Chat als Markdown.',
-  shortDescription: 'Chat exportieren',
+  description: 'Exports the current chat as Markdown.',
+  shortDescription: 'Export chat',
   category: 'export',
   async call(_args, context) {
     const lines: string[] = ['# Chat-Export\n']

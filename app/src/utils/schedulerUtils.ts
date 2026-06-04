@@ -15,7 +15,7 @@ const WEEKDAY_PREFIXES = new Set([
   'sunday',
 ])
 
-export const SCHEDULE_HELP_TEXT = 'Nutze: /schedule <ausdruck> <aufgabe>\nBeispiele: /schedule daily 09:00 Taeglicher Report | /schedule every 30 min Repository pruefen | /schedule every 1h Inbox pruefen | /schedule monday 08:30 Weekly Sync'
+export const SCHEDULE_HELP_TEXT = 'Use: /schedule <expression> <task>\nExamples: /schedule daily 09:00 Daily report | /schedule every 30 min Check repository | /schedule every 1h Check inbox | /schedule monday 08:30 Weekly Sync'
 
 export type ParsedScheduleInput = {
   scheduleExpr: string

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useMemoryStore, type MemoryEntry } from '../stores/memoryStore'
+import { tr } from '../i18n'
 
 function randomId() {
   return `mem-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -63,13 +64,13 @@ export default function MemoryPanel() {
 
   return (
     <div className="panel">
-      <h2>🧠 Agent-Gedaechtnis</h2>
+      <h2>{tr("🧠 Agent memory")}</h2>
 
       <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
         {(['entries', 'profile', 'providers', 'hints'] as const).map((t) => (
           <button type="button" key={t} className={`btn-sm${tab === t ? ' active' : ''}`}
             onClick={() => setTab(t)}>
-            {t === 'entries' ? 'Eintraege' : t === 'profile' ? 'Profil' : t === 'providers' ? 'Provider' : 'Hints'}
+            {t === 'entries' ? tr('Entries') : t === 'profile' ? tr('Profile') : t === 'providers' ? tr('Provider') : tr('Hints')}
           </button>
         ))}
       </div>
@@ -82,7 +83,7 @@ export default function MemoryPanel() {
           <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
             <input
               type="text"
-              placeholder="Gedaechtnis durchsuchen..."
+              placeholder={tr("Search memory...")}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
@@ -90,44 +91,36 @@ export default function MemoryPanel() {
             />
             <select value={filterScope} onChange={(e) => setFilterScope(e.target.value)}
               style={{ padding: '6px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)', fontSize: 13 }}>
-              <option value="">Alle Scopes</option>
-              <option value="agent">Agent</option>
-              <option value="user">User</option>
-              <option value="session">Session</option>
-              <option value="shared">Shared</option>
+              <option value="">{tr("All Scopes")}</option>
+              <option value="agent">{tr("Agent")}</option>
+              <option value="user">{tr("User")}</option>
+              <option value="session">{tr("Session")}</option>
+              <option value="shared">{tr("Shared")}</option>
             </select>
-            <button type="button" className="btn-sm" onClick={() => setShowAdd(!showAdd)}>+ Neu</button>
+            <button type="button" className="btn-sm" onClick={() => setShowAdd(!showAdd)}>{tr("New")}</button>
           </div>
 
           {/* Add form */}
           {showAdd && (
             <div className="card" style={{ marginBottom: 12 }}>
               <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', marginBottom: 8 }}>
-                <label>
-                  Scope
-                  <select value={newEntry.scope} onChange={(e) => setNewEntry({ ...newEntry, scope: e.target.value })}>
-                    <option value="agent">Agent</option>
-                    <option value="user">User</option>
-                    <option value="session">Session</option>
-                    <option value="shared">Shared</option>
+                <label>{tr("Scope")}<select value={newEntry.scope} onChange={(e) => setNewEntry({ ...newEntry, scope: e.target.value })}>
+                    <option value="agent">{tr("Agent")}</option>
+                    <option value="user">{tr("User")}</option>
+                    <option value="session">{tr("Session")}</option>
+                    <option value="shared">{tr("Shared")}</option>
                   </select>
                 </label>
-                <label>
-                  Kategorie
-                  <input type="text" value={newEntry.category} onChange={(e) => setNewEntry({ ...newEntry, category: e.target.value })} />
+                <label>{tr("Category")}<input type="text" value={newEntry.category} onChange={(e) => setNewEntry({ ...newEntry, category: e.target.value })} />
                 </label>
               </div>
-              <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13, marginBottom: 8 }}>
-                Key
-                <input type="text" value={newEntry.key} onChange={(e) => setNewEntry({ ...newEntry, key: e.target.value })}
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13, marginBottom: 8 }}>{tr("Key")}<input type="text" value={newEntry.key} onChange={(e) => setNewEntry({ ...newEntry, key: e.target.value })}
                   style={{ padding: '6px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)', fontSize: 13 }} />
               </label>
-              <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13, marginBottom: 8 }}>
-                Inhalt
-                <textarea value={newEntry.content} onChange={(e) => setNewEntry({ ...newEntry, content: e.target.value })} rows={3}
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13, marginBottom: 8 }}>{tr("Content")}<textarea value={newEntry.content} onChange={(e) => setNewEntry({ ...newEntry, content: e.target.value })} rows={3}
                   style={{ padding: '6px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)', fontSize: 13, resize: 'vertical' }} />
               </label>
-              <button type="button" className="btn-sm" onClick={handleAdd}>Speichern</button>
+              <button type="button" className="btn-sm" onClick={handleAdd}>{tr("Save")}</button>
             </div>
           )}
 
@@ -135,39 +128,37 @@ export default function MemoryPanel() {
           <div style={{ display: 'flex', gap: 8, marginBottom: 12, alignItems: 'center', flexWrap: 'wrap' }}>
             <select value={compactScope} onChange={(e) => setCompactScope(e.target.value)}
               style={{ padding: '4px 8px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)', fontSize: 12 }}>
-              <option value="agent">Agent</option>
-              <option value="user">User</option>
-              <option value="session">Session</option>
+              <option value="agent">{tr("Agent")}</option>
+              <option value="user">{tr("User")}</option>
+              <option value="session">{tr("Session")}</option>
             </select>
             <input type="number" value={compactMinConf} onChange={(e) => setCompactMinConf(Number(e.target.value))} min={0} max={1} step={0.1}
               style={{ width: 60, padding: '4px 8px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)', fontSize: 12 }} />
-            <button type="button" className="btn-sm" onClick={handleCompact}>Komprimieren</button>
-            <button type="button" className="btn-sm" onClick={handleSnapshot}>📸 Snapshot</button>
+            <button type="button" className="btn-sm" onClick={handleCompact}>{tr("Compact")}</button>
+            <button type="button" className="btn-sm" onClick={handleSnapshot}>{tr("📸 Snapshot")}</button>
             {compactResult && <span style={{ fontSize: 11, color: 'var(--success)' }}>{compactResult}</span>}
           </div>
 
           {/* Entries list */}
           {loading ? (
-            <p className="panel-empty">Laden...</p>
+            <p className="panel-empty">{tr("Loading...")}</p>
           ) : displayEntries.length === 0 ? (
-            <p className="panel-empty">Keine Eintraege gefunden</p>
+            <p className="panel-empty">{tr("No entries found")}</p>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {displayEntries.map((entry: MemoryEntry) => (
                 <div key={entry.id} className="card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 2 }}>
-                      {entry.scope} / {entry.category} &middot; Conf: {entry.confidence.toFixed(2)} &middot; Zugriffe: {entry.access_count}
+                      {entry.scope} / {entry.category}{tr("&middot; Conf:")}{entry.confidence.toFixed(2)}{tr("&middot; Zugriffe:")}{entry.access_count}
                     </div>
                     <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 2 }}>{entry.key}</div>
                     <div style={{ fontSize: 12, color: 'var(--text-secondary)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
                       {entry.content.length > 200 ? `${entry.content.slice(0, 200)}...` : entry.content}
                     </div>
                   </div>
-                  <button type="button" onClick={() => deleteEntry(entry.id)} title="Loeschen"
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger)', fontSize: 14 }}>
-                    ×
-                  </button>
+                  <button type="button" onClick={() => deleteEntry(entry.id)} title={tr("Delete")}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger)', fontSize: 14 }}>{tr("×")}</button>
                 </div>
               ))}
             </div>
@@ -175,9 +166,8 @@ export default function MemoryPanel() {
 
           {lastSnapshot && (
             <div className="card" style={{ marginTop: 12, fontSize: 12 }}>
-              <strong>Letzter Snapshot:</strong> {lastSnapshot.total_entries} Eintraege, {lastSnapshot.total_profile_keys} Profil-Keys
-              <br />
-              <span style={{ color: 'var(--text-muted)' }}>Erstellt: {lastSnapshot.timestamp}</span>
+              <strong>{tr("Last snapshot:")}</strong> {lastSnapshot.total_entries}{tr("entries,")}{lastSnapshot.total_profile_keys}{tr("profile keys")}<br />
+              <span style={{ color: 'var(--text-muted)' }}>{tr("Created:")}{lastSnapshot.timestamp}</span>
             </div>
           )}
         </>
@@ -186,9 +176,9 @@ export default function MemoryPanel() {
       {tab === 'profile' && (
         <>
           <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-            <input type="text" placeholder="Key" value={profileKey} onChange={(e) => setProfileKey(e.target.value)}
+            <input type="text" placeholder={tr("Key")} value={profileKey} onChange={(e) => setProfileKey(e.target.value)}
               style={{ flex: 1, padding: '6px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)', fontSize: 13 }} />
-            <input type="text" placeholder="Wert" value={profileValue} onChange={(e) => setProfileValue(e.target.value)}
+            <input type="text" placeholder={tr("Wert")} value={profileValue} onChange={(e) => setProfileValue(e.target.value)}
               style={{ flex: 2, padding: '6px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)', fontSize: 13 }} />
             <button type="button" className="btn-sm" onClick={async () => {
               if (profileKey.trim() && profileValue.trim()) {
@@ -200,7 +190,7 @@ export default function MemoryPanel() {
             }}>+</button>
           </div>
           {profileEntries.length === 0 ? (
-            <p className="panel-empty">Kein Profil angelegt</p>
+            <p className="panel-empty">{tr("No Profil angelegt")}</p>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {profileEntries.map((p) => (
@@ -210,8 +200,8 @@ export default function MemoryPanel() {
                     <span style={{ fontSize: 12 }}>{p.value}</span>
                     <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 8 }}>({p.source}, {p.confidence.toFixed(1)})</span>
                   </div>
-                  <button type="button" onClick={() => { deleteProfile(p.key); loadProfile() }} title="Loeschen"
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger)', fontSize: 14 }}>×</button>
+                  <button type="button" onClick={() => { deleteProfile(p.key); loadProfile() }} title={tr("Delete")}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger)', fontSize: 14 }}>{tr("×")}</button>
                 </div>
               ))}
             </div>
@@ -223,22 +213,16 @@ export default function MemoryPanel() {
         <>
           <div className="card" style={{ marginBottom: 12 }}>
             <div className="grid" style={{ gridTemplateColumns: '1fr 1fr 2fr' }}>
-              <label>
-                Name
-                <input type="text" value={providerForm.name} onChange={(e) => setProviderForm({ ...providerForm, name: e.target.value })} />
+              <label>{tr("Name")}<input type="text" value={providerForm.name} onChange={(e) => setProviderForm({ ...providerForm, name: e.target.value })} />
               </label>
-              <label>
-                Typ
-                <select value={providerForm.type} onChange={(e) => setProviderForm({ ...providerForm, type: e.target.value })}>
-                  <option value="mem0">Mem0</option>
-                  <option value="honcho">Honcho</option>
-                  <option value="supermemory">Supermemory</option>
-                  <option value="custom">Custom</option>
+              <label>{tr("Type")}<select value={providerForm.type} onChange={(e) => setProviderForm({ ...providerForm, type: e.target.value })}>
+                  <option value="mem0">{tr("Mem0")}</option>
+                  <option value="honcho">{tr("Honcho")}</option>
+                  <option value="supermemory">{tr("Supermemory")}</option>
+                  <option value="custom">{tr("Custom")}</option>
                 </select>
               </label>
-              <label>
-                Config (JSON)
-                <input type="text" value={providerForm.config} onChange={(e) => setProviderForm({ ...providerForm, config: e.target.value })} />
+              <label>{tr("Config (JSON)")}<input type="text" value={providerForm.config} onChange={(e) => setProviderForm({ ...providerForm, config: e.target.value })} />
               </label>
             </div>
             <button type="button" className="btn-sm" style={{ marginTop: 8 }} onClick={async () => {
@@ -248,10 +232,10 @@ export default function MemoryPanel() {
                 setProviderForm({ name: '', type: 'mem0', config: '{}' })
                 loadProviders()
               }
-            }}>Provider hinzufuegen</button>
+            }}>{tr("Provider add")}</button>
           </div>
           {providers.length === 0 ? (
-            <p className="panel-empty">Keine Provider konfiguriert</p>
+            <p className="panel-empty">{tr("No Provider configured")}</p>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {providers.map((p) => (
@@ -259,10 +243,10 @@ export default function MemoryPanel() {
                   <div>
                     <strong>{p.name}</strong>{' '}
                     <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>({p.provider_type})</span>
-                    {!p.enabled && <span style={{ fontSize: 11, color: 'var(--warning)', marginLeft: 6 }}>deaktiviert</span>}
+                    {!p.enabled && <span style={{ fontSize: 11, color: 'var(--warning)', marginLeft: 6 }}>{tr("disabled")}</span>}
                   </div>
-                  <button type="button" onClick={() => { deleteProvider(p.id); loadProviders() }} title="Loeschen"
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger)', fontSize: 14 }}>×</button>
+                  <button type="button" onClick={() => { deleteProvider(p.id); loadProviders() }} title={tr("Delete")}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger)', fontSize: 14 }}>{tr("×")}</button>
                 </div>
               ))}
             </div>
@@ -273,13 +257,13 @@ export default function MemoryPanel() {
       {tab === 'hints' && (
         <>
           {hints.length === 0 ? (
-            <p className="panel-empty">Keine Hinweise verfuegbar</p>
+            <p className="panel-empty">{tr("No Hinweise available")}</p>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {hints.map((h, i) => (
                 <div key={i} className="card">
                   <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 2 }}>
-                    {h.scope} &middot; Relevanz: {h.relevance}
+                    {h.scope}{tr("&middot; Relevanz:")}{h.relevance}
                   </div>
                   <div style={{ fontWeight: 600, fontSize: 13 }}>{h.key}</div>
                   <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{h.content}</div>

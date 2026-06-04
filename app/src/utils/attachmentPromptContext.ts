@@ -164,8 +164,8 @@ export async function buildAttachmentPromptContext(
   }
   if (imageAttachments.length > 0) {
     baseSections.push([
-      `Bild-Anhaenge (${imageAttachments.length}):`,
-      ...imageAttachments.map((item, index) => `${index + 1}. Bild: ${getAttachmentDisplayName(item)}`),
+      `Image-attachments (${imageAttachments.length}):`,
+      ...imageAttachments.map((item, index) => `${index + 1}. Image: ${getAttachmentDisplayName(item)}`),
     ].join('\n'))
   }
   const baseContext = baseSections.join('\n\n')
@@ -173,7 +173,7 @@ export async function buildAttachmentPromptContext(
   const folderAttachments = contextualAttachments.filter((item) => item.kind === 'folder')
   const queryTerms = extractQueryTerms(retrievalQuery)
   const normalizedQuery = retrievalQuery.toLowerCase()
-  const wantsFullFileList = /alle\s+datei|vollstaendig(e|en)?\s+dateiliste|list(e)?\s+mit\s+allen\s+dateien|all\s+files|full\s+file\s+list/.test(normalizedQuery)
+  const wantsFullFileList = /alle\s+datei|complete(e|en)?\s+dateiliste|list(e)?\s+mit\s+allen\s+dateien|all\s+files|full\s+file\s+list/.test(normalizedQuery)
 
   if (fileAttachments.length === 0 && folderAttachments.length === 0) {
     return {
@@ -195,7 +195,7 @@ export async function buildAttachmentPromptContext(
     await allowFolderAttachments(attachments)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    failedFiles.push({ path: '(Ordner-Anhaenge)', error: `Ordnerfreigabe fehlgeschlagen: ${message}` })
+    failedFiles.push({ path: '(Folder-attachments)', error: `Folder permission failed: ${message}` })
   }
 
   for (const item of fileAttachments) {
@@ -212,13 +212,13 @@ export async function buildAttachmentPromptContext(
       const first = metadata.files[0]
       if (first) {
         metadataLines.push(
-          `- Datei ${getPathName(imported.originalPath)} | Groesse ${first.sizeBytes} B | Sprache ${first.language ?? 'unbekannt'}`,
+          `- File ${getPathName(imported.originalPath)} | Groesse ${first.sizeBytes} B | Sprache ${first.language ?? 'unknown'}`,
         )
         pushCandidate(
           {
             readPath: imported.importedPath,
             displayPath: imported.originalPath,
-            origin: `Datei-Anhang ${imported.originalPath}`,
+            origin: `File-attachment ${imported.originalPath}`,
             extension: first.extension,
             language: first.language,
             sizeBytes: first.sizeBytes,
@@ -229,7 +229,7 @@ export async function buildAttachmentPromptContext(
     } catch (error) {
       failedFiles.push({
         path: item.path,
-        error: `Import in App-Ordner fehlgeschlagen: ${error instanceof Error ? error.message : String(error)}`,
+        error: `Import into app folder failed: ${error instanceof Error ? error.message : String(error)}`,
       })
     }
   }
@@ -241,7 +241,7 @@ export async function buildAttachmentPromptContext(
         maxEntries: wantsFullFileList ? 50_000 : FOLDER_METADATA_LIMIT,
       })
       metadataLines.push(
-        `- Ordner ${folder.path} | Dateien gesamt ${metadata.totalFiles} | betrachtet ${metadata.returnedFiles}${metadata.truncated ? ' (gekuerzt)' : ''}`,
+        `- Folder ${folder.path} | total files ${metadata.totalFiles} | inspected ${metadata.returnedFiles}${metadata.truncated ? ' (truncated)' : ''}`,
       )
 
       if (wantsFullFileList && metadata.files.length > 0) {
@@ -253,7 +253,7 @@ export async function buildAttachmentPromptContext(
           {
             readPath: entry.path,
             displayPath: entry.path,
-            origin: `Ordner-Anhang ${folder.path}`,
+            origin: `Folder-attachment ${folder.path}`,
             extension: entry.extension,
             language: entry.language,
             sizeBytes: entry.sizeBytes,
@@ -282,11 +282,11 @@ export async function buildAttachmentPromptContext(
     retrievalLines.push(
       ...visibleRanked.map(
         ({ candidate, score }, index) =>
-          `${index + 1}. ${getPathName(candidate.displayPath)} | Score ${score} | Sprache ${candidate.language ?? 'unbekannt'} | ${candidate.origin}`,
+          `${index + 1}. ${getPathName(candidate.displayPath)} | Score ${score} | Sprache ${candidate.language ?? 'unknown'} | ${candidate.origin}`,
       ),
     )
     if (ranked.length > visibleRanked.length) {
-      retrievalLines.push(`... weitere ${ranked.length - visibleRanked.length} Kandidaten ausgeblendet`)
+      retrievalLines.push(`... ${ranked.length - visibleRanked.length} additional candidates hidden`)
     }
   }
 
@@ -302,7 +302,7 @@ export async function buildAttachmentPromptContext(
 
   for (const { candidate } of ranked) {
     if (wantsFullFileList) {
-      // Bei Voll-Listen-Abfragen reichen Metadaten; Volltext-Retrieval wird uebersprungen.
+      // For full-list queries, metadata is enough; full-text retrieval is skipped.
       continue
     }
 
@@ -330,7 +330,7 @@ export async function buildAttachmentPromptContext(
         })
         parsedFiles += 1
         if (fullRead.text.trim().length > 0) {
-          retrievalLines.push(`Volltext von ${candidate.displayPath}${fullRead.truncated ? ' (gekuerzt)' : ''}:`)
+          retrievalLines.push(`Volltext von ${candidate.displayPath}${fullRead.truncated ? ' (truncated)' : ''}:`)
           retrievalLines.push(fullRead.text)
         }
       } else {
@@ -368,10 +368,10 @@ export async function buildAttachmentPromptContext(
   }
 
   if (retrievalLines.length > 0) {
-    retrievalLines.push(`Iterative Vertiefung aktiv: ${deepReads} Datei(en) mit zweitem Read-Pass.`)
+    retrievalLines.push(`Iterative deepening active: ${deepReads} file(s) with a second read pass.`)
     if (skippedByReadLimit > 0) {
       retrievalLines.push(
-        `Retrieval aus Performancegruenden begrenzt: ${skippedByReadLimit} Datei(en) wurden in diesem Durchlauf uebersprungen.`,
+        `Retrieval limited for performance reasons: ${skippedByReadLimit} file(s) were skipped in this pass.`,
       )
     }
   }
@@ -379,16 +379,16 @@ export async function buildAttachmentPromptContext(
   const failedBlock =
     failedFiles.length > 0
       ? [
-          'Nicht analysierbare Anhaenge:',
+          'Unprocessable attachments:',
           ...failedFiles.map((entry) => `- ${entry.path}: ${entry.error}`),
         ].join('\n')
       : ''
 
   const metadataBlock =
-    metadataLines.length > 0 ? ['Datei-Metadaten (ohne Volltext):', ...metadataLines].join('\n') : ''
+    metadataLines.length > 0 ? ['File-Metadaten (ohne Volltext):', ...metadataLines].join('\n') : ''
 
   const analysisBlock =
-    retrievalLines.length > 0 ? ['Retrieval-Kontext (selektiv gelesen):', ...retrievalLines].join('\n') : ''
+    retrievalLines.length > 0 ? ['Retrieval-Context (selektiv geread):', ...retrievalLines].join('\n') : ''
 
   const context = [baseContext, metadataBlock, analysisBlock, failedBlock]
     .filter((part) => part.trim().length > 0)

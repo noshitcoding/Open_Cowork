@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { usePipelineStore } from '../stores/pipelineStore'
 import { useConfigStore } from '../stores/configStore'
+import { tr } from '../i18n'
 
 type ActiveTab = 'pipelines' | 'gateway'
 
@@ -59,37 +60,35 @@ export default function PipelinePanel() {
 
   return (
     <div className="panel">
-      <h2>🔗 RPC-Pipelines &amp; Tool-Gateway</h2>
+      <h2>{tr("🔗 RPC-Pipelines &amp; Tool-Gateway")}</h2>
 
       {error && <p style={{ color: 'var(--danger)', fontSize: 12 }}>{error}</p>}
 
       <div style={{ display: 'flex', gap: 4, marginBottom: 12 }}>
-        <button type="button" className={`btn-sm${tab === 'pipelines' ? ' active' : ''}`} onClick={() => setTab('pipelines')}>
-          Pipelines ({pipelines.length})
+        <button type="button" className={`btn-sm${tab === 'pipelines' ? ' active' : ''}`} onClick={() => setTab('pipelines')}>{tr("Pipelines (")}{pipelines.length})
         </button>
-        <button type="button" className={`btn-sm${tab === 'gateway' ? ' active' : ''}`} onClick={() => setTab('gateway')}>
-          Tool-Gateway ({toolGateway.length})
+        <button type="button" className={`btn-sm${tab === 'gateway' ? ' active' : ''}`} onClick={() => setTab('gateway')}>{tr("Tool-Gateway (")}{toolGateway.length})
         </button>
       </div>
 
       {tab === 'pipelines' && (
         <>
           <div className="card" style={{ marginBottom: 12, display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <input placeholder="Pipeline-Name" value={pName} onChange={(e) => setPName(e.target.value)} style={inputStyle} />
+            <input placeholder={tr("Pipeline name")} value={pName} onChange={(e) => setPName(e.target.value)} style={inputStyle} />
             <textarea
-              placeholder='Steps (JSON-Array, z.B. [{"tool":"grep","args":"..."},{"tool":"sed","args":"..."}])'
+              placeholder={tr("Steps (JSON array, e.g. [{\"tool\":\"grep\",\"args\":\"...\"},{\"tool\":\"sed\",\"args\":\"...\"}])")}
               value={pSteps} onChange={(e) => setPSteps(e.target.value)}
               rows={3}
               style={{ ...inputStyle, resize: 'vertical' }}
             />
-            <input placeholder="Beschreibung (optional)" value={pDescription} onChange={(e) => setPDescription(e.target.value)} style={inputStyle} />
-            <button type="button" className="btn-sm" onClick={handleAddPipeline}>Pipeline hinzufuegen</button>
+            <input placeholder={tr("Description (optional)")} value={pDescription} onChange={(e) => setPDescription(e.target.value)} style={inputStyle} />
+            <button type="button" className="btn-sm" onClick={handleAddPipeline}>{tr("Add pipeline")}</button>
           </div>
 
           {loading ? (
-            <p className="panel-empty">Laden...</p>
+            <p className="panel-empty">{tr("Loading...")}</p>
           ) : pipelines.length === 0 ? (
-            <p className="panel-empty">Keine Pipelines definiert</p>
+            <p className="panel-empty">{tr("No pipelines defined")}</p>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {pipelines.map((p) => (
@@ -103,7 +102,7 @@ export default function PipelinePanel() {
                   </div>
                   <div style={{ display: 'flex', gap: 6 }}>
                     <button type="button" className="btn-sm" onClick={() => void executePipeline(p.id, ollama.baseUrl, ollama.model)} disabled={executing === p.id}>
-                      {executing === p.id ? 'Laeuft...' : 'Start'}
+                      {executing === p.id ? 'Running...' : 'Start'}
                     </button>
                     <button type="button" className="btn-sm" onClick={() => deletePipeline(p.id)} style={{ color: 'var(--danger)' }}>✕</button>
                   </div>
@@ -114,14 +113,14 @@ export default function PipelinePanel() {
 
           {lastResult && (
             <div className="card" style={{ marginTop: 12 }}>
-              <strong>Letzte Ausfuehrung: {lastResult.pipelineId}</strong>
-              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>Status: {lastResult.status}</div>
+              <strong>{tr("Letzte Execution:")}{lastResult.pipelineId}</strong>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>{tr("Status:")}{lastResult.status}</div>
               {lastResult.error && <div style={{ fontSize: 12, color: 'var(--danger)', marginTop: 4 }}>{lastResult.error}</div>}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 10 }}>
                 {lastResult.stepResults.map((step) => (
                   <div key={`${step.step}-${step.tool}`} style={{ borderBottom: '1px solid var(--border-color)', paddingBottom: 8 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-                      <strong>Schritt {step.step}: {step.tool}</strong>
+                      <strong>{tr("Schritt")}{step.step}: {step.tool}</strong>
                       <span>{step.success ? 'ok' : 'fehler'}</span>
                     </div>
                     <pre style={{ whiteSpace: 'pre-wrap', marginTop: 6, fontSize: 11 }}>{step.result.slice(0, 320)}</pre>
@@ -136,21 +135,21 @@ export default function PipelinePanel() {
       {tab === 'gateway' && (
         <>
           <div className="card" style={{ marginBottom: 12, display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <input placeholder="Tool-Typ (z.B. mcp, rest, grpc)" value={gToolType} onChange={(e) => setGToolType(e.target.value)} style={inputStyle} />
-            <input placeholder="Name" value={gName} onChange={(e) => setGName(e.target.value)} style={inputStyle} />
+            <input placeholder={tr("Tool type (e.g. mcp, rest, grpc)")} value={gToolType} onChange={(e) => setGToolType(e.target.value)} style={inputStyle} />
+            <input placeholder={tr("Name")} value={gName} onChange={(e) => setGName(e.target.value)} style={inputStyle} />
             <textarea
-              placeholder='Konfiguration (JSON, z.B. {"endpoint":"http://...","auth":"..."})'
+              placeholder={tr("Configuration (JSON, e.g. {\"endpoint\":\"http://...\",\"auth\":\"...\"})")}
               value={gConfig} onChange={(e) => setGConfig(e.target.value)}
               rows={3}
               style={{ ...inputStyle, resize: 'vertical' }}
             />
-            <button type="button" className="btn-sm" onClick={handleAddGateway}>Gateway-Eintrag hinzufuegen</button>
+            <button type="button" className="btn-sm" onClick={handleAddGateway}>{tr("Add gateway entry")}</button>
           </div>
 
           {loading ? (
-            <p className="panel-empty">Laden...</p>
+            <p className="panel-empty">{tr("Loading...")}</p>
           ) : toolGateway.length === 0 ? (
-            <p className="panel-empty">Kein Tool-Gateway konfiguriert</p>
+            <p className="panel-empty">{tr("No Tool-Gateway configured")}</p>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {toolGateway.map((g) => (
@@ -159,7 +158,7 @@ export default function PipelinePanel() {
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <strong>{g.name}</strong>
                       <span style={{ fontSize: 11, padding: '1px 6px', borderRadius: 8, background: g.enabled ? 'var(--success)' : 'var(--danger)', color: '#fff' }}>
-                        {g.enabled ? 'aktiv' : 'inaktiv'}
+                        {g.enabled ? 'active' : 'inactive'}
                       </span>
                     </div>
                     <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{g.tool_type}</div>

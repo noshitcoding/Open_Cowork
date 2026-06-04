@@ -10,38 +10,38 @@ import {
 describe('webSearchSources', () => {
   it('parses web search tool output into structured sources', () => {
     const parsed = parseWebSearchSourcesFromToolResult([
-      '1. Wetter Stuttgart heute - Deutscher Wetterdienst',
+      '1. Wetter Stuttgart heute - Englisher Wetterdienst',
       'https://www.dwd.de/stuttgart',
-      'Vorhersage fuer heute mit Temperatur und Niederschlag.',
+      'Vorhersage for heute mit Temperatur und Niederschlag.',
       '',
       '2. Stuttgart Wetter | wetter.com',
       'https://www.wetter.com/stuttgart',
-      'Stundenweise Wetterdaten fuer Stuttgart.',
+      'Stundenweise Wetterdaten for Stuttgart.',
     ].join('\n'))
 
     expect(parsed).toEqual([
       {
-        title: 'Wetter Stuttgart heute - Deutscher Wetterdienst',
+        title: 'Wetter Stuttgart heute - Englisher Wetterdienst',
         url: 'https://www.dwd.de/stuttgart',
-        snippet: 'Vorhersage fuer heute mit Temperatur und Niederschlag.',
+        snippet: 'Vorhersage for heute mit Temperatur und Niederschlag.',
       },
       {
         title: 'Stuttgart Wetter | wetter.com',
         url: 'https://www.wetter.com/stuttgart',
-        snippet: 'Stundenweise Wetterdaten fuer Stuttgart.',
+        snippet: 'Stundenweise Wetterdaten for Stuttgart.',
       },
     ])
   })
 
-  it('appends a visible Quellen block only once', () => {
+  it('appends a visible sources block only once', () => {
     const sources = mergeWebSearchSources([], [
-      { title: 'DWD', url: 'https://www.dwd.de/stuttgart', snippet: 'Vorhersage fuer heute.' },
+      { title: 'DWD', url: 'https://www.dwd.de/stuttgart', snippet: 'Vorhersage for heute.' },
       { title: 'DWD', url: 'https://www.dwd.de/stuttgart', snippet: 'Duplikat.' },
     ])
 
     const withSources = appendWebSearchSources('Heute wird es mild und wechselhaft.', sources)
 
-    expect(withSources).toContain('Quellen:')
+    expect(withSources).toContain('Sources:')
     expect(withSources).toContain('https://www.dwd.de/stuttgart')
     expect(withSources.match(/https:\/\/www\.dwd\.de\/stuttgart/g)).toHaveLength(1)
     expect(appendWebSearchSources(withSources, sources)).toBe(withSources)
@@ -50,7 +50,7 @@ describe('webSearchSources', () => {
 
   it('extracts appended sources back into a compact structure', () => {
     const answer = appendWebSearchSources('Heute wird es mild und wechselhaft.', [
-      { title: 'DWD', url: 'https://www.dwd.de/stuttgart', snippet: 'Vorhersage fuer heute.' },
+      { title: 'DWD', url: 'https://www.dwd.de/stuttgart', snippet: 'Vorhersage for heute.' },
     ])
 
     const extracted = extractWebSearchSources(answer)
@@ -60,7 +60,7 @@ describe('webSearchSources', () => {
       {
         title: 'DWD',
         url: 'https://www.dwd.de/stuttgart',
-        snippet: 'Vorhersage fuer heute.',
+        snippet: 'Vorhersage for heute.',
       },
     ])
   })

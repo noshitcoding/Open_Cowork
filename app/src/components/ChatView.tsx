@@ -44,6 +44,7 @@ import {
   getChatProviderState,
   normalizeChatProvider,
 } from '../utils/chatProvider'
+import { tr } from '../i18n'
 
 function getParentDirectory(path: string): string {
   const normalized = path.trim()
@@ -170,15 +171,15 @@ function formatToolPayload(value: unknown): string {
 function getToolStatusLabel(status: LiveToolCallStatus): string {
   switch (status) {
     case 'requested':
-      return 'Tool Call erkannt'
+      return 'Tool call detected'
     case 'running':
-      return 'Tool laeuft'
+      return 'Tool is running'
     case 'approval':
-      return 'Freigabe erforderlich'
+      return 'Approval required'
     case 'waiting_input':
-      return 'Wartet auf Antwort'
+      return 'Waiting for answer'
     case 'completed':
-      return 'Abgeschlossen'
+      return 'Completed'
     case 'failed':
       return 'Fehlgeschlagen'
   }
@@ -191,7 +192,7 @@ function AskUserForm({ call, onRespond }: { call: LiveToolCall; onRespond: (answ
   const allowMultiple = call.allowMultiple ?? false
   const allowFreeform = call.allowFreeformInput ?? true
   const freeTextLabel = call.freeTextLabel || 'Freitext'
-  const freeTextPlaceholder = call.freeTextPlaceholder || 'Optional ergaenzen...'
+  const freeTextPlaceholder = call.freeTextPlaceholder || 'Add optional details...'
 
   const handleToggleOption = (value: string) => {
     if (allowMultiple) {
@@ -254,9 +255,7 @@ function AskUserForm({ call, onRespond }: { call: LiveToolCall; onRespond: (answ
         className="ask-user-submit"
         onClick={handleSubmit}
         disabled={!canSubmit}
-      >
-        Antwort senden
-      </button>
+      >{tr("Send answer")}</button>
     </div>
   )
 }
@@ -285,7 +284,7 @@ function LiveToolCalls({ calls, onAskUserRespond }: {
   if (!Array.isArray(calls) || calls.length === 0) return null
 
   return (
-    <div className="live-tool-call-list" aria-label="Live Tool Calls">
+    <div className="live-tool-call-list" aria-label={tr("Live Tool Calls")}>
       {calls.map((call) => {
         const inputPreview = formatToolPayload(call.input)
         const resultPreview = formatToolPayload(call.error ?? call.result)
@@ -316,13 +315,13 @@ function LiveToolCalls({ calls, onAskUserRespond }: {
                 <>
                   {inputPreview && (
                     <div className="live-tool-call-section">
-                      <div className="live-tool-call-section-label">Input</div>
+                      <div className="live-tool-call-section-label">{tr("Input")}</div>
                       <pre>{inputPreview}</pre>
                     </div>
                   )}
                   {resultPreview && (
                     <div className="live-tool-call-section">
-                      <div className="live-tool-call-section-label">{call.error ? 'Fehler' : 'Ergebnis'}</div>
+                      <div className="live-tool-call-section-label">{call.error ? 'Error' : 'Result'}</div>
                       <pre>{resultPreview}</pre>
                     </div>
                   )}
@@ -449,7 +448,7 @@ export default function ChatView() {
         setAvailableModels(models)
 
         if (!health.ok) {
-          setModelNotice(`Ollama-Endpunkt aktuell nicht erreichbar: ${ollama.baseUrl}`)
+          setModelNotice(`Ollama endpoint is currently unreachable: ${ollama.baseUrl}`)
           return
         }
 
@@ -459,14 +458,14 @@ export default function ChatView() {
             ...createChatProviderSelection(providerState),
             model: fallbackModel,
           })
-          setModelNotice(`Modell ${providerState.model} ist auf ${ollama.baseUrl} nicht verfuegbar. Wechsel zu ${fallbackModel} fuer diesen Chat.`)
+          setModelNotice(`Model ${providerState.model} is not available at ${ollama.baseUrl} Switching to ${fallbackModel} for this chat.`)
           return
         }
 
         setModelNotice(null)
       } catch {
         if (!cancelled) {
-          setModelNotice(`Modellliste konnte fuer ${ollama.baseUrl} nicht aktualisiert werden.`)
+          setModelNotice(`Model list for ${ollama.baseUrl} could not be refreshed.`)
         }
       }
     }
@@ -658,10 +657,10 @@ export default function ChatView() {
     }, createChatProviderSelection(providerState))
       .then(() => {
         const fallbackText = engineErrorMessage
-          ? `LLM-Anfrage fehlgeschlagen: ${engineErrorMessage}\n\n${getChatProviderFailureHint(providerState.provider)}`
+          ? `LLM request failed: ${engineErrorMessage}\n\n${getChatProviderFailureHint(providerState.provider)}`
           : usedToolNames.size > 0
-            ? `Die Engine hat Tools verwendet (${Array.from(usedToolNames).join(', ')}), aber keinen sichtbaren Abschlusstext geliefert.`
-            : 'Das Modell hat keine sichtbare Antwort geliefert. Bitte erneut versuchen oder Modell/Prompt prüfen.'
+            ? `The engine used tools (${Array.from(usedToolNames).join(', ')}), but no visible final text provided.`
+            : 'The model did not provide a visible response. Please try again or check the model/prompt.'
         const presentation = resolveAssistantPresentation(rawAssistantMessage, {
           verboseMode,
           thinkingContent: rawThinkingMessage,
@@ -689,7 +688,7 @@ export default function ChatView() {
     const text = inputRef.current?.value?.trim() ?? ''
     const hasAttachments = attachments.length > 0
     if ((!text && !hasAttachments) || busy || !activeThreadId) return
-    const fallbackAttachmentPrompt = 'Bitte analysiere die angehaengten Bilder oder Dateien und fuehre die Aufgabe aus.'
+    const fallbackAttachmentPrompt = 'Please analyze the attached images or files and complete the task.'
     const effectiveInput = text || fallbackAttachmentPrompt
 
     // Slash command detection: if input starts with / and matches a registered command
@@ -706,7 +705,7 @@ export default function ChatView() {
         })
         addMessage(activeThreadId, {
           role: 'assistant',
-          content: `⚡ Command ${cmdName} ausgefuehrt: ${matchedCmd.label}`,
+          content: `⚡ Command ${cmdName} executed: ${matchedCmd.label}`,
           timestamp: Date.now(),
         })
         executeSlashCommand(matchedCmd.id, cmdArgs || undefined)
@@ -793,7 +792,7 @@ export default function ChatView() {
       addLog({
         level: 'info',
         area: 'llm',
-        message: 'LLM-Anfrage gestartet',
+        message: 'LLM request started',
         details: {
           provider: providerState.provider,
           endpoint: providerState.endpoint,
@@ -824,7 +823,7 @@ export default function ChatView() {
         addLog({
           level: 'warn',
           area: 'file_safety',
-          message: 'Anhang-Analyse teilweise fehlgeschlagen',
+          message: 'Attachment analysis partially failed',
           details: {
             failures: attachmentBuild.failedFiles,
           },
@@ -978,7 +977,7 @@ export default function ChatView() {
             addLog({
               level: 'warn',
               area: 'llm',
-              message: `Freigabe erforderlich: ${event.request.toolName}`,
+              message: `Approval required: ${event.request.toolName}`,
               details: event.request,
             })
             break
@@ -994,7 +993,7 @@ export default function ChatView() {
             addLog({
               level: 'info',
               area: 'llm',
-              message: `Tool gestartet: ${event.toolName}`,
+              message: `Tool started: ${event.toolName}`,
               details: { toolName: event.toolName, input: event.input },
             })
             break
@@ -1049,12 +1048,12 @@ export default function ChatView() {
       }, createChatProviderSelection(providerState))
 
       const fallbackText = engineErrorMessage
-        ? `LLM-Anfrage fehlgeschlagen: ${engineErrorMessage}\n\n${getChatProviderFailureHint(providerState.provider)}`
+        ? `LLM request failed: ${engineErrorMessage}\n\n${getChatProviderFailureHint(providerState.provider)}`
         : approvalSummary
-          ? `Freigabe erforderlich: ${approvalSummary}`
+          ? `Approval required: ${approvalSummary}`
           : usedToolNames.size > 0
-            ? `Die Engine hat Tools verwendet (${Array.from(usedToolNames).join(', ')}), aber keinen sichtbaren Abschlusstext geliefert.`
-            : 'Das Modell hat keine sichtbare Antwort geliefert. Bitte erneut versuchen oder Modell/Prompt prüfen.'
+            ? `The engine used tools (${Array.from(usedToolNames).join(', ')}), but no visible final text provided.`
+            : 'The model did not provide a visible response. Please try again or check the model/prompt.'
       const presentation = resolveAssistantPresentation(rawAssistantMessage, {
         verboseMode,
         thinkingContent: rawThinkingMessage,
@@ -1072,7 +1071,7 @@ export default function ChatView() {
       addLog({
         level: 'info',
         area: 'llm',
-        message: 'LLM-Anfrage erfolgreich',
+        message: 'LLM request succeeded',
         details: {
           provider: providerState.provider,
           endpoint: providerState.endpoint,
@@ -1105,7 +1104,7 @@ export default function ChatView() {
       addLog({
         level: 'error',
         area: 'llm',
-        message: 'LLM-Anfrage fehlgeschlagen',
+        message: 'LLM request failed',
         details: {
           provider: providerState.provider,
           endpoint: providerState.endpoint,
@@ -1127,7 +1126,7 @@ export default function ChatView() {
           model: providerState.model,
         })
       }
-      const failureContent = `LLM-Anfrage fehlgeschlagen: ${message}\n\n${getChatProviderFailureHint(providerState.provider)}`
+      const failureContent = `LLM request failed: ${message}\n\n${getChatProviderFailureHint(providerState.provider)}`
       if (assistantMessageId) {
         updateMessage(activeThreadId, assistantMessageId, { content: failureContent, streaming: false }, { persist: true })
       } else {
@@ -1178,10 +1177,10 @@ export default function ChatView() {
 
   const handleReject = () => {
     if (approvalSteps.length === 0 || !activeThreadId) return
-    resolveEngineApproval({ allowed: false, reason: 'Vom Benutzer abgelehnt.' })
+    resolveEngineApproval({ allowed: false, reason: 'Declined by user.' })
     addMessage(activeThreadId, {
       role: 'system',
-      content: `Plan abgelehnt: ${approvalSteps.join(' | ')}`,
+      content: `Plan declined: ${approvalSteps.join(' | ')}`,
       timestamp: Date.now(),
     })
     clearApproval()
@@ -1197,7 +1196,7 @@ export default function ChatView() {
     addLog({
       level: 'info',
       area: 'llm',
-      message: 'Provider fuer diesen Chat gewechselt',
+      message: 'Provider changed for this chat',
       details: {
         provider: nextProvider,
         label: CHAT_PROVIDER_LABELS[nextProvider],
@@ -1216,7 +1215,7 @@ export default function ChatView() {
     addLog({
       level: 'info',
       area: 'llm',
-      message: 'Modell fuer diesen Chat gewechselt',
+      message: 'Model changed for this chat',
       details: {
         provider: providerState.provider,
         previousModel: providerState.model,
@@ -1231,7 +1230,7 @@ export default function ChatView() {
     setAttachments((prev) => {
       const merged = mergeAttachments(prev, newItems)
       if (merged.rejectedCount > 0) {
-        setAttachmentNotice('Maximal 25 verbundene Elemente pro Nachricht erreicht.')
+        setAttachmentNotice(tr("Maximal 25 verbundene Elemente pro Message erreicht."))
       } else {
         setAttachmentNotice(null)
       }
@@ -1244,9 +1243,9 @@ export default function ChatView() {
       directory: false,
       multiple: true,
       filters: [
-        { name: 'Dokumente', extensions: ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'odt', 'ods', 'odp', 'txt', 'rtf', 'csv'] },
-        { name: 'Bilder', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'] },
-        { name: 'Alle Dateien', extensions: ['*'] },
+        { name: 'Documents', extensions: ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'odt', 'ods', 'odp', 'txt', 'rtf', 'csv'] },
+        { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'] },
+        { name: 'All files', extensions: ['*'] },
       ],
     })
     const selectedPaths = normalizeDialogSelection(selected)
@@ -1270,7 +1269,7 @@ export default function ChatView() {
         setAttachmentNotice(null)
       })
       .catch(() => {
-        setAttachmentNotice('Bild aus Zwischenablage konnte nicht gelesen werden.')
+        setAttachmentNotice(tr("Could not read image from clipboard."))
       })
   }
 
@@ -1310,23 +1309,23 @@ export default function ChatView() {
       {/* Permission Config Panel */}
       {showPermissionConfig && (
         <div className="permission-config-panel">
-          <h3>Berechtigungseinstellungen für diesen Chat</h3>
+          <h3>{tr("Permission settings for this chat")}</h3>
           <div className="permission-config-row">
-            <label>Modus:</label>
+            <label>{tr("Mode:")}</label>
             <select value={permissionMode} onChange={(e) => setPermissionMode(e.target.value as PermissionMode)}>
-              <option value="default">Standard</option>
-              <option value="plan">Plan-Modus</option>
-              <option value="bypass">Bypass (alles erlauben)</option>
-              <option value="strict">Strikt (alles fragen)</option>
+              <option value="default">{tr("Standard")}</option>
+              <option value="plan">{tr("Plan-Mode")}</option>
+              <option value="bypass">{tr("Bypass (allow everything)")}</option>
+              <option value="strict">{tr("Strict (ask everything)")}</option>
             </select>
           </div>
           <div className="permission-config-row">
-            <label>Erlaubte Verzeichnisse:</label>
+            <label>{tr("Allowed directories:")}</label>
             <div className="directory-list">
               {allowedDirectories.map(dir => (
                 <span key={dir} className="directory-chip">
                   {dir}
-                  <button type="button" onClick={() => handleRemoveDirectory(dir)}>×</button>
+                  <button type="button" onClick={() => handleRemoveDirectory(dir)}>{tr("×")}</button>
                 </span>
               ))}
             </div>
@@ -1335,14 +1334,14 @@ export default function ChatView() {
                 type="text"
                 value={newDirectory}
                 onChange={(e) => setNewDirectory(e.target.value)}
-                placeholder="Neues Verzeichnis hinzufügen"
+                placeholder={tr("Add new directory")}
               />
-              <button type="button" onClick={handleAddDirectory}>Hinzufügen</button>
+              <button type="button" onClick={handleAddDirectory}>{tr("Add")}</button>
             </div>
           </div>
           <div className="permission-config-actions">
-            <button type="button" onClick={handleSavePermissionConfig}>Speichern</button>
-            <button type="button" onClick={() => setShowPermissionConfig(false)}>Abbrechen</button>
+            <button type="button" onClick={handleSavePermissionConfig}>{tr("Save")}</button>
+            <button type="button" onClick={() => setShowPermissionConfig(false)}>{tr("Cancel")}</button>
           </div>
         </div>
       )}
@@ -1351,9 +1350,7 @@ export default function ChatView() {
         type="button"
         className="permission-config-toggle"
         onClick={() => setShowPermissionConfig(!showPermissionConfig)}
-      >
-        🔒 Berechtigungen
-      </button>
+      >{tr("🔒 Permissions")}</button>
 
       <div className="chat-log" ref={logRef}>
         {visibleMessages.map((msg, index) => {
@@ -1429,13 +1426,13 @@ export default function ChatView() {
               )}
               {ollamaRequestPreview && (
                 <details className="message-debug">
-                  <summary>Ollama Request Preview</summary>
+                  <summary>{tr("Ollama Request Preview")}</summary>
                   <pre>{ollamaRequestPreview}</pre>
                 </details>
               )}
               {verboseMode && promptDebug && promptDebug !== content && (
                 <details className="message-debug">
-                  <summary>Verbose: interner Prompt</summary>
+                  <summary>{tr("Verbose: internal prompt")}</summary>
                   <pre>{promptDebug}</pre>
                 </details>
               )}
@@ -1447,7 +1444,7 @@ export default function ChatView() {
           <div className="cowork-msg assistant">
             <div className="msg-avatar">✦</div>
             <div className="msg-body">
-              <div className="msg-role">Open_Cowork</div>
+              <div className="msg-role">{tr("Open_Cowork")}</div>
               <div className="msg-content typing">
                 <span className="typing-dot" />
                 <span className="typing-dot" />
@@ -1462,7 +1459,7 @@ export default function ChatView() {
         <div className="approval-banner">
           <div className="approval-header">
             <span className="approval-icon">⚠️</span>
-            <span>Diese Schritte erfordern deine Freigabe:</span>
+            <span>{tr("These steps require your approval:")}</span>
           </div>
           <ol className="approval-steps">
             {approvalSteps.map((step, idx) => (
@@ -1470,12 +1467,8 @@ export default function ChatView() {
             ))}
           </ol>
           <div className="approval-actions">
-            <button type="button" className="btn-approve" onClick={handleApprove} disabled={busy}>
-              ✓ Freigeben
-            </button>
-            <button type="button" className="btn-reject" onClick={handleReject} disabled={busy}>
-              ✗ Ablehnen
-            </button>
+            <button type="button" className="btn-approve" onClick={handleApprove} disabled={busy}>{tr("✓ Approve")}</button>
+            <button type="button" className="btn-reject" onClick={handleReject} disabled={busy}>{tr("✗ Ablehnen")}</button>
           </div>
         </div>
       )}
@@ -1484,9 +1477,7 @@ export default function ChatView() {
 
       <form className="cowork-input" onSubmit={handleSend}>
         <div className="chat-input-toolbar">
-          <label>
-            Provider
-            <select
+          <label>{tr("Provider")}<select
               className="model-selector chat-model-selector"
               value={providerState.provider}
               onChange={(e) => handleProviderChange(e.target.value)}
@@ -1499,9 +1490,7 @@ export default function ChatView() {
               ))}
             </select>
           </label>
-          <label>
-            Modell
-            <select
+          <label>{tr("Model")}<select
               className="model-selector chat-model-selector"
               value={providerState.model}
               onChange={(e) => handleModelChange(e.target.value)}
@@ -1514,7 +1503,7 @@ export default function ChatView() {
                   </option>
                 ))
               ) : (
-                <option value={providerState.model}>{providerState.model || 'kein Modell gesetzt'}</option>
+                <option value={providerState.model}>{providerState.model || 'no model set'}</option>
               )}
               {selectableModels.length > 0 && providerState.model && !selectableModels.includes(providerState.model) && (
                 <option value={providerState.model}>{providerState.model}</option>
@@ -1530,34 +1519,30 @@ export default function ChatView() {
             >
               {modelNotice
                 ?? (providerState.provider === 'ollama' && modelCapabilities
-                  ? `Endpoint: ${providerState.endpoint} | Modellfamilie: ${modelCapabilities.family} | ${modelCapabilities.supportsTools ? 'Tool-Calls aktiviert' : 'Tool-Calls deaktiviert'}`
-                  : `Endpoint: ${providerState.endpoint || 'nicht gesetzt'} | Provider: ${providerState.label}`)}
+                  ? `Endpoint: ${providerState.endpoint} | Modelfamilie: ${modelCapabilities.family} | ${modelCapabilities.supportsTools ? 'Tool-Calls enabled' : 'Tool-Calls disabled'}`
+                  : `Endpoint: ${providerState.endpoint || 'not set'} | Provider: ${providerState.label}`)}
             </p>
           </label>
           <div className="attachment-actions">
-            <button type="button" className="btn-attach" onClick={handleAttachFiles} disabled={busy}>
-              Datei/Bild
-            </button>
+            <button type="button" className="btn-attach" onClick={handleAttachFiles} disabled={busy}>{tr("File/Image")}</button>
           </div>
         </div>
 
         <div className="chat-input-main">
           {attachments.length > 0 && (
-            <div className="attachment-list" aria-label="Verbundene Elemente">
+            <div className="attachment-list" aria-label={tr("Connected items")}>
               {attachments.map((item) => (
                   <span key={`${item.kind}-${item.path}`} className="attachment-chip" title={item.label ?? item.path}>
                   <span className="attachment-chip-label">
-                      {item.kind === 'folder' ? 'Ordner' : isImageAttachment(item) ? 'Bild' : 'Datei'}: {getAttachmentDisplayName(item)}
+                      {item.kind === 'folder' ? 'Folder' : isImageAttachment(item) ? 'Image' : 'File'}: {getAttachmentDisplayName(item)}
                   </span>
                   <button
                     type="button"
                     className="attachment-remove"
                     onClick={() => handleRemoveAttachment(item)}
-                      aria-label={`Anhang entfernen: ${getAttachmentDisplayName(item)}`}
+                      aria-label={`attachment entfernen: ${getAttachmentDisplayName(item)}`}
                     disabled={busy}
-                  >
-                    ×
-                  </button>
+                  >{tr("×")}</button>
                 </span>
               ))}
             </div>
@@ -1596,7 +1581,7 @@ export default function ChatView() {
           <textarea
             ref={inputRef}
             rows={2}
-            placeholder="Nachricht senden oder /command..."
+            placeholder={tr("Send message or /command...")}
             disabled={busy}
             onChange={(e) => handleInputChange(e.target.value)}
             onPaste={handleInputPaste}
@@ -1610,12 +1595,9 @@ export default function ChatView() {
         </div>
 
         {busy ? (
-          <button type="button" onClick={handleStop} className="btn-stop">
-            ⏹ Stopp
-          </button>
+          <button type="button" onClick={handleStop} className="btn-stop">{tr("⏹ Stopp")}</button>
         ) : (
-          <button type="submit" disabled={busy} className="btn-send">
-            Senden →
+          <button type="submit" disabled={busy} className="btn-send">{tr("Send")}{'->'}
           </button>
         )}
       </form>

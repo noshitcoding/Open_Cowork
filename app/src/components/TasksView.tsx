@@ -172,9 +172,9 @@ export function applyCrewDefaultModel(
 
 export function buildWorkTaskCrewGuidelines(crew: Crew, task: WorkTask): string {
   const workTaskContext = [
-    `Work-Task-Auftrag: ${deriveTaskName(task)}`,
+    `Work task request: ${deriveTaskName(task)}`,
     task.prompt.trim(),
-    task.expectedOutput.trim() ? `Erwartetes Gesamtergebnis:\n${task.expectedOutput.trim()}` : '',
+    task.expectedOutput.trim() ? `Expected overall result:\n${task.expectedOutput.trim()}` : '',
   ].filter(Boolean).join('\n\n')
 
   return [
@@ -188,7 +188,7 @@ export function buildCrewRuntimeTasks(crew: Crew, task: WorkTask, enabledAgentId
   const runnableCrewTasks = crewTasks.filter((crewTask) => enabledAgentIds.has(crewTask.agentId))
 
   if (crewTasks.length > 0 && runnableCrewTasks.length === 0) {
-    throw new Error('Keine ausfuehrbaren Crew-Tasks vorhanden: alle zugewiesenen Crew-Mitglieder sind deaktiviert oder fehlen.')
+    throw new Error('No executable crew tasks are available: all assigned crew members are disabled or missing.')
   }
 
   if (runnableCrewTasks.length > 0) {
@@ -196,7 +196,7 @@ export function buildCrewRuntimeTasks(crew: Crew, task: WorkTask, enabledAgentId
     return runnableCrewTasks.map((crewTask) => ({
       id: crewTask.id,
       description: crewTask.description,
-      expectedOutput: crewTask.expectedOutput || task.expectedOutput || 'Erstelle ein vollstaendiges Ergebnis.',
+      expectedOutput: crewTask.expectedOutput || task.expectedOutput || 'Create a complete result.',
       agentId: crewTask.agentId,
       context: crewTask.context.filter((contextId) => runnableTaskIds.has(contextId)),
       dependencies: crewTask.dependencies.filter((dependencyId) => runnableTaskIds.has(dependencyId)),
@@ -206,14 +206,14 @@ export function buildCrewRuntimeTasks(crew: Crew, task: WorkTask, enabledAgentId
 
   const agentId = resolveDefaultAgentId(crew)
   if (!agentId) {
-    throw new Error('Crew hat keinen Agenten.')
+    throw new Error('Crew has no agent.')
   }
 
   return [
     {
       id: task.id,
       description: task.prompt,
-      expectedOutput: task.expectedOutput || 'Erstelle ein vollstaendiges Ergebnis.',
+      expectedOutput: task.expectedOutput || 'Create a complete result.',
       agentId,
       context: [],
       dependencies: [],
@@ -240,13 +240,13 @@ function buildCrewRunOutput(response: CrewExecutionResponse, fallbackTaskId: str
     return renderedResults.join('\n\n---\n\n')
   }
 
-  return response.error ?? 'Crew-Lauf abgeschlossen ohne Textausgabe.'
+  return response.error ?? 'Crew run completed without text output.'
 }
 
 function formatTimestamp(ts: number | null | undefined): string {
   if (!ts) return '—'
   try {
-    return new Date(ts).toLocaleString('de-DE')
+    return new Date(ts).toLocaleString('en-US')
   } catch {
     return String(ts)
   }
@@ -280,10 +280,10 @@ function createCrewStreamId(): string {
 
 function buildTaskThreadSummary(task: WorkTask): string {
   const lines = [
-    `Task angelegt: ${deriveTaskName(task)}`,
-    `Runner: ${task.runner === 'crew' ? 'Crew' : 'Modell'}`,
+    `Task created: ${deriveTaskName(task)}`,
+    `Runner: ${task.runner === 'crew' ? 'Crew' : 'Model'}`,
     task.expectedOutput.trim() ? `Expected Output: ${task.expectedOutput.trim()}` : '',
-    task.workDir.trim() ? `Arbeitsordner: ${task.workDir.trim()}` : '',
+    task.workDir.trim() ? `Working folder: ${task.workDir.trim()}` : '',
   ].filter(Boolean)
 
   return lines.join('\n')
@@ -293,11 +293,11 @@ function buildTaskPromptMessage(task: WorkTask): string {
   const parts = [task.prompt.trim()]
 
   if (task.expectedOutput.trim()) {
-    parts.push(`Erwartetes Ergebnis:\n${task.expectedOutput.trim()}`)
+    parts.push(`Expected output:\n${task.expectedOutput.trim()}`)
   }
 
   if (task.workDir.trim()) {
-    parts.push(`Arbeitsordner:\n${task.workDir.trim()}`)
+    parts.push(`Working folder:\n${task.workDir.trim()}`)
   }
 
   return parts.filter(Boolean).join('\n\n')
@@ -305,16 +305,16 @@ function buildTaskPromptMessage(task: WorkTask): string {
 
 function getCrewLogActionLabel(action: string): string {
   switch (action) {
-    case 'run_started': return 'Lauf gestartet'
-    case 'runtime_context': return 'Runtime-Kontext'
-    case 'agent_ready': return 'Agent bereit'
-    case 'task_handoff': return 'Uebergabe'
-    case 'crew_kickoff': return 'CrewAI gestartet'
-    case 'runtime_stdout': return 'Runtime-Ausgabe'
-    case 'runtime_stderr': return 'Runtime-Fehlerausgabe'
-    case 'crew_finished': return 'CrewAI abgeschlossen'
-    case 'task_completed': return 'Task abgeschlossen'
-    case 'runtime_failed': return 'Runtime fehlgeschlagen'
+    case 'run_started': return 'Run started'
+    case 'runtime_context': return 'Runtime context'
+    case 'agent_ready': return 'Agent ready'
+    case 'task_handoff': return 'Handoff'
+    case 'crew_kickoff': return 'CrewAI started'
+    case 'runtime_stdout': return 'Runtime output'
+    case 'runtime_stderr': return 'Runtime error output'
+    case 'crew_finished': return 'CrewAI completed'
+    case 'task_completed': return 'Task completed'
+    case 'runtime_failed': return 'Runtime failed'
     default: return action
   }
 }
@@ -371,7 +371,7 @@ function classifyCrewLog(log: CrewExecutionLog, detail: string): CrewLiveEntryCa
   if (combined.includes('traceback') || combined.includes('error') || combined.includes('failed') || log.action.includes('stderr') || log.action.includes('failed')) {
     return 'error'
   }
-  if (combined.includes('thinking') || combined.includes('reasoning') || combined.includes('arbeitsprozess')) {
+  if (combined.includes('thinking') || combined.includes('reasoning') || combined.includes('work process')) {
     return 'thinking'
   }
   if (combined.includes('mcp')) {
@@ -432,7 +432,7 @@ function buildCrewLiveTitle(log: CrewExecutionLog, category: CrewLiveEntryCatego
   if (summary) return summary
 
   if (category === 'tool') {
-    return firstMatchingLine(detail, /^Tool:/i) ?? 'Tool-Ausfuehrung'
+    return firstMatchingLine(detail, /^Tool:/i) ?? 'Tool-Execution'
   }
   if (category === 'delegation') {
     if (log.sourceAgent?.trim() && log.targetAgent?.trim()) {
@@ -441,28 +441,28 @@ function buildCrewLiveTitle(log: CrewExecutionLog, category: CrewLiveEntryCatego
     return log.targetAgent?.trim() ? `Delegation an ${log.targetAgent.trim()}` : 'Delegation an Crew-Mitglied'
   }
   if (category === 'mcp') {
-    return 'MCP-Kontext oder MCP-Zugriff'
+    return 'MCP context or MCP access'
   }
   if (category === 'thinking') {
-    return `Arbeitsprozess: ${getDisplayAgentName(log, detail)}`
+    return `Work process: ${getDisplayAgentName(log, detail)}`
   }
   if (category === 'handoff') {
-    return `Task-Uebergabe an ${log.targetAgent?.trim() || getDisplayAgentName(log, detail)}`
+    return `Task-Handoff an ${log.targetAgent?.trim() || getDisplayAgentName(log, detail)}`
   }
   if (category === 'agent') {
-    return firstMatchingLine(detail, /^Agent:/i) ?? `${getDisplayAgentName(log, detail)} bereit`
+    return firstMatchingLine(detail, /^Agent:/i) ?? `${getDisplayAgentName(log, detail)} ready`
   }
   if (category === 'task') {
-    return 'Task-Ergebnis erhalten'
+    return 'Task result received'
   }
   if (category === 'result') {
-    return log.taskTitle?.trim() ? `Ergebnis: ${log.taskTitle.trim()}` : 'Task-Ergebnis erhalten'
+    return log.taskTitle?.trim() ? `Result: ${log.taskTitle.trim()}` : 'Task result received'
   }
   if (category === 'error') {
-    return 'Crew-Fehler'
+    return 'Crew error'
   }
   if (category === 'context') {
-    return 'Runtime-Kontext geladen'
+    return 'Runtime context loaded'
   }
   if (category === 'status') {
     return getCrewLogActionLabel(log.action)
@@ -515,11 +515,11 @@ function deriveCrewLiveAgentId(log: CrewExecutionLog, detail: string): string {
 function getLogDetailWithMetadata(log: CrewExecutionLog, baseDetail: string): string {
   const metadataLines = [
     log.provider?.trim() ? `Provider: ${log.provider.trim()}` : '',
-    log.model?.trim() ? `Modell: ${log.model.trim()}` : '',
+    log.model?.trim() ? `Model: ${log.model.trim()}` : '',
     log.taskTitle?.trim() ? `Task: ${log.taskTitle.trim()}` : '',
-    log.sourceAgent?.trim() ? `Quelle: ${log.sourceAgent.trim()}` : '',
-    log.targetAgent?.trim() ? `Ziel: ${log.targetAgent.trim()}` : '',
-    log.agentId?.trim() ? `Technische ID: ${log.agentId.trim()}` : '',
+    log.sourceAgent?.trim() ? `Source: ${log.sourceAgent.trim()}` : '',
+    log.targetAgent?.trim() ? `Target: ${log.targetAgent.trim()}` : '',
+    log.agentId?.trim() ? `Technical ID: ${log.agentId.trim()}` : '',
     log.providerReasoning?.trim() ? `Provider-Reasoning: ${log.providerReasoning.trim()}` : '',
   ].filter(Boolean)
 
@@ -605,7 +605,7 @@ export function buildCrewLiveMessageContent(state: CrewLiveState): string {
   return [
     'Crew Live Monitor',
     `Status: ${state.status}`,
-    `Angezeigte Ereignisse: ${state.entries.length}`,
+    `Displayed events: ${state.entries.length}`,
     latest ? `Letztes Ereignis: ${latest.title}` : '',
   ].filter(Boolean).join('\n')
 }
@@ -944,7 +944,7 @@ export default function TasksView() {
   const handleRunTask = async (task: WorkTask) => {
     const normalizedWorkDir = task.workDir.trim()
     if (normalizedWorkDir && !isAbsolutePath(normalizedWorkDir)) {
-      const message = 'Arbeitsordner muss absolut sein.'
+      const message = 'Working folder must be absolute.'
       updateTask(task.id, {
         status: 'failed',
         error: message,
@@ -971,9 +971,9 @@ export default function TasksView() {
     addChatMessage(threadId, {
       role: 'system',
       content: [
-        'Task-Lauf gestartet',
-        `Runner: ${task.runner === 'crew' ? 'Crew' : 'Modell'}`,
-        normalizedWorkDir ? `Arbeitsordner: ${normalizedWorkDir}` : '',
+        'Task-Run started',
+        `Runner: ${task.runner === 'crew' ? 'Crew' : 'Model'}`,
+        normalizedWorkDir ? `Working folder: ${normalizedWorkDir}` : '',
       ].filter(Boolean).join('\n'),
       visibleInChat: true,
       timestamp: startedAt,
@@ -1002,7 +1002,7 @@ export default function TasksView() {
         const response = await streamChatTurn(
           {
             prompt: task.prompt,
-            history: normalizedWorkDir ? [{ role: 'system', content: `Arbeitsverzeichnis: ${normalizedWorkDir}` }] : [],
+            history: normalizedWorkDir ? [{ role: 'system', content: `Working directory: ${normalizedWorkDir}` }] : [],
             config,
           },
           (chunk) => {
@@ -1070,7 +1070,7 @@ export default function TasksView() {
     let unlistenCrewLogs: (() => void) | null = null
     let crewLiveState: CrewLiveState = {
       streamId: crewStreamId,
-      title: `${deriveTaskName(taskForRun)} - Crew-Ausfuehrung`,
+      title: `${deriveTaskName(taskForRun)} - Crew-Execution`,
       status: 'running',
       entries: [],
       agentColors: {},
@@ -1111,18 +1111,18 @@ export default function TasksView() {
 
     try {
       if (!task.crewId) {
-        throw new Error('Bitte eine Crew auswaehlen.')
+        throw new Error('Please select a crew.')
       }
 
       const crew = crewsById.get(task.crewId)
       if (!crew) {
-        throw new Error('Crew nicht gefunden (evtl. geloescht).')
+        throw new Error('Crew not found (possibly deleted).')
       }
 
       const resolvedCrewAgents = resolveCrewAgentsWithProfiles(crew.agents, personalityProfiles)
       const enabledAgents = resolvedCrewAgents.filter((agent) => agent.enabled)
       if (enabledAgents.length === 0) {
-        throw new Error('Keine aktiven Crew-Mitglieder vorhanden.')
+        throw new Error('No active crew members available.')
       }
 
       const enabledAgentIds = new Set(enabledAgents.map((agent) => agent.id))
@@ -1251,7 +1251,7 @@ export default function TasksView() {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       const aborted = canceledTaskIdsRef.current.has(task.id) || abortController.signal.aborted
-      const waitingForApproval = message.trim().toLowerCase().startsWith('crew wartet auf freigabe:')
+      const waitingForApproval = message.trim().toLowerCase().startsWith('crew waiting for approval:')
       finishCrewLive(aborted ? 'canceled' : 'failed')
       addChatMessage(threadId, {
         role: 'assistant',
@@ -1461,20 +1461,20 @@ export default function TasksView() {
   return (
     <div className="settings-view">
       <h1>Tasks</h1>
-      <p className="hint-text">Tasks erstellen, Crew oder Modell zuordnen, starten und pro Task schedulen.</p>
+      <p className="hint-text">Create tasks, assign a crew or model, start them, and schedule each task.</p>
 
       <div className="panel">
-        <h2>➕ Neuer Task</h2>
+        <h2>➕ New Task</h2>
         <div className="grid">
           <label>
-            Titel (optional)
-            <input value={newTitle} onChange={(e) => setNewTitle(e.target.value)} placeholder="z.B. Weekly Report" />
+            Title (optional)
+            <input value={newTitle} onChange={(e) => setNewTitle(e.target.value)} placeholder="e.g. Weekly Report" />
           </label>
           <label>
-            Ausfuehrung
+            Execution
             <select value={newRunner} onChange={(e) => setNewRunner(e.target.value as WorkTaskRunner)}>
               <option value="crew">Crew</option>
-              <option value="model">Modell</option>
+              <option value="model">Model</option>
             </select>
           </label>
           {newRunner === 'crew' ? (
@@ -1482,7 +1482,7 @@ export default function TasksView() {
               Crew
               <select value={newCrewId} onChange={(e) => setNewCrewId(e.target.value)}>
                 {crews.length === 0 && (
-                  <option value="">Keine Crews vorhanden</option>
+                  <option value="">No crews available</option>
                 )}
                 {crews.map((crew) => (
                   <option key={crew.id} value={crew.id}>{crew.name}</option>
@@ -1491,28 +1491,28 @@ export default function TasksView() {
             </label>
           ) : (
             <label>
-              Modell (optional)
+              Model (optional)
               <input value={newModel} onChange={(e) => setNewModel(e.target.value)} placeholder={`Default: ${ollamaConfig.model || '—'}`} />
             </label>
           )}
           <label>
             Expected Output (optional)
-            <input value={newExpectedOutput} onChange={(e) => setNewExpectedOutput(e.target.value)} placeholder="z.B. Bullet-Report" />
+            <input value={newExpectedOutput} onChange={(e) => setNewExpectedOutput(e.target.value)} placeholder="e.g. Bullet report" />
           </label>
           <label style={{ gridColumn: '1 / -1' }}>
-            Arbeitsordner (optional, absolut)
+            Working folder (optional, absolute)
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <input value={newWorkDir} onChange={(e) => setNewWorkDir(e.target.value)} placeholder="C:\\Projekte\\mein-task" />
               <button type="button" className="btn-secondary" onClick={() => void handlePickNewWorkDir()}>
-                Ordner waehlen
+                Choose folder
               </button>
             </div>
             {normalizedNewWorkDir && !isAbsolutePath(normalizedNewWorkDir) ? (
-              <div className="hint-text">Der Arbeitsordner muss absolut sein.</div>
+              <div className="hint-text">Der Working folder must be absolute.</div>
             ) : null}
           </label>
           <label style={{ gridColumn: '1 / -1' }}>
-            Aufgabe
+            Task
             <textarea value={newPrompt} onChange={(e) => setNewPrompt(e.target.value)} rows={4} placeholder="Was soll der Task tun?" />
           </label>
         </div>
@@ -1522,7 +1522,7 @@ export default function TasksView() {
           </button>
         </div>
         {newRunner === 'crew' && crews.length === 0 && (
-          <p className="hint-text">Erstelle zuerst eine Crew in den Einstellungen, um Crew-Tasks auszufuehren.</p>
+          <p className="hint-text">Create a crew in settings first to run crew tasks.</p>
         )}
       </div>
 
@@ -1533,7 +1533,7 @@ export default function TasksView() {
         </div>
 
         {tasks.length === 0 ? (
-          <p className="hint-text">Noch keine Tasks. Erstelle oben deinen ersten Task.</p>
+          <p className="hint-text">No tasks yet. Create your first task above.</p>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             {tasks.map((task) => {
@@ -1549,7 +1549,7 @@ export default function TasksView() {
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                       <strong>{deriveTaskName(task)}</strong>
                       <span style={{ fontSize: 11, padding: '1px 6px', borderRadius: 8, background: 'var(--accent)', color: '#fff' }}>
-                        {task.runner === 'crew' ? 'Crew' : 'Modell'}
+                        {task.runner === 'crew' ? 'Crew' : 'Model'}
                       </span>
                       <span style={{ fontSize: 11, padding: '1px 6px', borderRadius: 8, background: task.status === 'completed' ? 'var(--success)' : task.status === 'failed' ? 'var(--danger)' : task.status === 'running' ? 'var(--accent)' : task.status === 'waiting_approval' ? 'var(--warning)' : task.status === 'canceled' ? 'var(--text-muted)' : 'var(--border-color)', color: task.status === 'idle' ? 'var(--text-secondary)' : '#fff' }}>
                         {task.status}
@@ -1568,39 +1568,39 @@ export default function TasksView() {
                         </button>
                       )}
                       <button type="button" className="btn-secondary" onClick={() => removeTask(task.id)} disabled={task.status === 'running'}>
-                        Loeschen
+                        Delete
                       </button>
                     </div>
                   </div>
 
                   <div className="grid" style={{ marginTop: 10 }}>
                     <label>
-                      Titel
+                      Title
                       <input value={task.title} onChange={(e) => updateTask(task.id, { title: e.target.value })} />
                     </label>
                     <label>
-                      Ausfuehrung
+                      Execution
                       <select value={task.runner} onChange={(e) => updateTask(task.id, { runner: e.target.value as WorkTaskRunner })}>
                         <option value="crew">Crew</option>
-                        <option value="model">Modell</option>
+                        <option value="model">Model</option>
                       </select>
                     </label>
                     {task.runner === 'crew' ? (
                       <label>
                         Crew
                         <select value={task.crewId ?? ''} onChange={(e) => updateTask(task.id, { crewId: e.target.value || null })}>
-                          <option value="">Crew waehlen</option>
+                          <option value="">Select crew</option>
                           {crews.map((crew) => (
                             <option key={crew.id} value={crew.id}>{crew.name}</option>
                           ))}
                         </select>
                         {task.crewId && !crewName ? (
-                          <div className="hint-text">Zugeordnete Crew existiert nicht mehr.</div>
+                          <div className="hint-text">Assigned crew no longer exists.</div>
                         ) : null}
                       </label>
                     ) : (
                       <label>
-                        Modell (optional)
+                        Model (optional)
                         <input
                           value={task.model}
                           onChange={(e) => updateTask(task.id, { model: e.target.value })}
@@ -1613,19 +1613,19 @@ export default function TasksView() {
                       <input value={task.expectedOutput} onChange={(e) => updateTask(task.id, { expectedOutput: e.target.value })} />
                     </label>
                     <label style={{ gridColumn: '1 / -1' }}>
-                      Arbeitsordner (absolut)
+                      Working folder (absolute)
                       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                         <input value={task.workDir} onChange={(e) => updateTask(task.id, { workDir: e.target.value })} placeholder="C:\\Projekte\\mein-task" />
                         <button type="button" className="btn-secondary" onClick={() => void handlePickTaskWorkDir(task)}>
-                          Ordner waehlen
+                          Choose folder
                         </button>
                       </div>
                       {task.workDir.trim() && !isAbsolutePath(task.workDir) ? (
-                        <div className="hint-text">Der Arbeitsordner muss absolut sein.</div>
+                        <div className="hint-text">Der Working folder must be absolute.</div>
                       ) : null}
                     </label>
                     <label style={{ gridColumn: '1 / -1' }}>
-                      Aufgabe
+                      Task
                       <textarea value={task.prompt} onChange={(e) => updateTask(task.id, { prompt: e.target.value })} rows={3} />
                     </label>
                   </div>
@@ -1634,47 +1634,47 @@ export default function TasksView() {
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
                       <strong>⏰ Scheduler</strong>
                       <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                        Letzter Lauf: {formatTimestamp(scheduled?.lastRunAt ?? null)} · Naechster Lauf: {formatTimestamp(scheduled?.nextRunAt ?? null)}
+                        Last run: {formatTimestamp(scheduled?.lastRunAt ?? null)} · Next run: {formatTimestamp(scheduled?.nextRunAt ?? null)}
                       </div>
                     </div>
 
                     <div className="grid" style={{ marginTop: 8 }}>
                       <label>
-                        Ausdruck
+                        Expression
                         <input
                           value={task.scheduleExpr}
                           onChange={(e) => updateTask(task.id, { scheduleExpr: e.target.value })}
-                          placeholder="z.B. daily 09:00"
+                          placeholder="e.g. daily 09:00"
                         />
                       </label>
                       <label style={{ display: 'flex', flexDirection: 'column' }}>
-                        Aktiv
+                        Active
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
                           <input
                             type="checkbox"
                             checked={task.scheduleEnabled}
                             onChange={(e) => void handleToggleSchedule(task, e.target.checked)}
                           />
-                          <span className="hint-text">Job {task.scheduleEnabled ? 'aktiv' : 'pausiert'}</span>
+                          <span className="hint-text">Job {task.scheduleEnabled ? 'active' : 'paused'}</span>
                         </div>
                       </label>
                     </div>
                     <div className="actions" style={{ marginTop: 10 }}>
                       <button type="button" className="btn-sm" onClick={() => void handleUpsertSchedule(task)} disabled={!task.scheduleExpr.trim()}>
-                        Speichern
+                        Save
                       </button>
                       <button type="button" className="btn-sm" onClick={() => void handleRemoveSchedule(task)} disabled={!scheduled && !task.scheduleExpr.trim()}>
-                        Entfernen
+                        Remove
                       </button>
                       {task.runner === 'crew' && !task.crewId ? (
-                        <span className="hint-text">(Crew erforderlich fuer Crew-Schedule)</span>
+                        <span className="hint-text">(Crew required for crew schedule)</span>
                       ) : null}
                     </div>
                     {task.runner === 'crew' && crewScheduleMetadata ? (
                       <div className="hint-text" style={{ marginTop: 8 }}>
                         {crewScheduleMetadata.snapshotSource === 'saved-version'
-                          ? `Quelle: gespeicherte Crew-Version v${crewScheduleMetadata.definitionVersionNumber ?? '—'}${crewScheduleMetadata.definitionSavedAt ? ` vom ${new Date(crewScheduleMetadata.definitionSavedAt).toLocaleString('de-DE')}` : ''}${crewScheduleMetadata.definitionChangeSummary ? ` · ${crewScheduleMetadata.definitionChangeSummary}` : ''}`
-                          : 'Quelle: aktueller Crew-Editor-Stand'}
+                          ? `Source: saved crew version v${crewScheduleMetadata.definitionVersionNumber ?? '—'}${crewScheduleMetadata.definitionSavedAt ? ` from ${new Date(crewScheduleMetadata.definitionSavedAt).toLocaleString('en-US')}` : ''}${crewScheduleMetadata.definitionChangeSummary ? ` · ${crewScheduleMetadata.definitionChangeSummary}` : ''}`
+                          : 'Source: current crew editor state'}
                       </div>
                     ) : null}
                   </div>
@@ -1695,9 +1695,9 @@ export default function TasksView() {
         <div className="panel">
           <div className="panel-heading-row">
             <h2>📦 Legacy: Templates</h2>
-            <span className="hint-text">{templates.length} Template(s) im alten Speicher</span>
+            <span className="hint-text">{templates.length} template(s) in legacy storage</span>
           </div>
-          <p className="hint-text">Diese Templates werden nicht mehr aktiv genutzt. Du kannst sie hier bei Bedarf aufraeumen.</p>
+          <p className="hint-text">These templates are no longer used actively. You can clean them up here if needed.</p>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {templates.map((template) => (
@@ -1706,7 +1706,7 @@ export default function TasksView() {
                 <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>{template.description}</div>
                 <div className="actions" style={{ marginTop: 10 }}>
                   <button type="button" className="btn-secondary" onClick={() => handleRemoveLegacyTemplate(template.id)}>
-                    Loeschen
+                    Delete
                   </button>
                 </div>
               </div>

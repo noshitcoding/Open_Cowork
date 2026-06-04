@@ -1,4 +1,4 @@
-// ── Query Engine (Core) ─────────────────────────────────────────────────────
+﻿// ── Query Engine (Core) ─────────────────────────────────────────────────────
 // Mirrors: claude-code-main/src/core/query.ts + QueryEngine.ts
 // The agentic loop: send messages → get response → execute tools → repeat
 // Enhanced with: auto-compaction, context management, retry logic,
@@ -371,7 +371,7 @@ export class QueryEngine {
 
           if (isPromptTooLong && retryAttempt < MAX_RETRIES && this.config.ollama) {
             retryAttempt++
-            yield { type: 'retry', reason: 'Kontext zu lang — komprimiere...', attempt: retryAttempt }
+            yield { type: 'retry', reason: 'Context zu lang — komprimiere...', attempt: retryAttempt }
 
             const compacted = await this.contextManager.handlePromptTooLong(
               conversation,
@@ -469,8 +469,8 @@ export class QueryEngine {
             }
 
             conversation.push(createUserMessage(
-              'Freigabe erteilt. Fuehre den zuletzt beschriebenen Plan jetzt direkt mit den verfuegbaren Tools aus. '
-              + 'Antworte nicht erneut mit einem Plan. Nutze Tool-Calls fuer die Ausfuehrung und gib danach nur das Ergebnis aus.',
+              'Approval granted. Execute the last described plan directly with the available tools. '
+              + 'Do not respond with another plan. Use tool calls for execution, then return only the result.',
             ))
             continue
           }
@@ -484,7 +484,7 @@ export class QueryEngine {
       // ── Execute Tools ────────────────────────────────────────────────────
       // Check budget before executing
       if (this.config.maxBudgetUsd && totalCostUsd >= this.config.maxBudgetUsd) {
-        yield { type: 'error', error: `Budget-Limit erreicht: $${totalCostUsd.toFixed(4)} / $${this.config.maxBudgetUsd}` }
+        yield { type: 'error', error: `Budget limit reached: $${totalCostUsd.toFixed(4)} / $${this.config.maxBudgetUsd}` }
         break
       }
 
@@ -503,7 +503,7 @@ export class QueryEngine {
           toolResults.push({
             type: 'tool_result',
             tool_use_id: block.id,
-            content: `Tool "${block.name}" nicht gefunden.`,
+            content: `Tool "${block.name}" not found.`,
             is_error: true,
           })
           continue
@@ -531,10 +531,10 @@ export class QueryEngine {
             toolResults.push({
               type: 'tool_result',
               tool_use_id: block.id,
-              content: `Tool "${tool.name}" abgelehnt: ${approved.reason}`,
+              content: `Tool "${tool.name}" denied: ${approved.reason}`,
               is_error: true,
             })
-            yield { type: 'tool_use_complete', toolUseId: block.id, toolName: tool.name, result: `Abgelehnt: ${approved.reason}` }
+            yield { type: 'tool_use_complete', toolUseId: block.id, toolName: tool.name, result: `Denied: ${approved.reason}` }
             continue
           }
         }
@@ -578,7 +578,7 @@ export class QueryEngine {
             toolResults.push({
               type: 'tool_result',
               tool_use_id: block.id,
-              content: `Fehler: ${r.reason}`,
+              content: `Error: ${r.reason}`,
               is_error: true,
             })
           }
@@ -618,10 +618,10 @@ export class QueryEngine {
           toolResults.push({
             type: 'tool_result',
             tool_use_id: block.id,
-            content: `Fehler: ${msg}`,
+            content: `Error: ${msg}`,
             is_error: true,
           })
-          yield { type: 'tool_use_complete', toolUseId: block.id, toolName: tool.name, result: `Fehler: ${msg}` }
+          yield { type: 'tool_use_complete', toolUseId: block.id, toolName: tool.name, result: `Error: ${msg}` }
         }
       }
 
@@ -684,17 +684,17 @@ export class QueryEngine {
       parts.push(`\n\nVerfuegbare Tools:\n${toolList}`)
       parts.push(
         '\n\nTool-Nutzung:\n'
-        + '- Wenn eine Aufgabe Dateioperationen verlangt, fuehre sie mit Tools direkt aus statt nur Schritte zu beschreiben.\n'
-        + '- Fuer Strukturarbeit nutze bevorzugt ListDir/Glob zum Verstehen und danach CreateDirectory, MovePath, CopyPath, Write oder Edit.\n'
-        + '- Bei Desktop-Aufgaben arbeite im Loop Beobachten -> Aktion -> Verifikation. Wenn ein Verifikations-Screenshot zeigt, dass das Ziel noch nicht erreicht ist, fuehre direkt den naechsten Tool-Call aus statt nur die Absicht zu beschreiben.\n'
-        + '- Behaupte bei Desktop-Steuerung nie, dass ein Klick, Schliessen, Fokuswechsel oder eine Eingabe erfolgreich war, bevor der aktuelle Verifikations-Screenshot das bestaetigt.\n'
-        + '- Wenn dein lokales Modell keine nativen Tool-Calls sendet, gib Tool-Aufrufe notfalls exakt als eigene Zeile im Format ToolName({"arg":"wert"}) aus.',
+        + '- If a task requires file operations, execute them directly with tools instead of only describing steps.\n'
+        + '- For structural work, prefer ListDir/Glob to understand the workspace, then CreateDirectory, MovePath, CopyPath, Write, or Edit.\n'
+        + '- For desktop tasks, work in the loop observe -> action -> verification. If a verification screenshot shows the target has not been reached, immediately run the next tool call instead of only describing intent.\n'
+        + '- For desktop control, never claim a click, close action, focus change, or input succeeded before the current verification screenshot confirms it.\n'
+        + '- If your local model does not send native tool calls, output tool calls exactly as their own line in the format ToolName({"arg":"value"}) if needed.',
       )
     }
 
     // Plan mode notice
     if (this.appState.planMode) {
-      parts.push('\n\n⚠ PLAN-MODUS AKTIV: Beschreibe nur, was du tun wuerdest. Fuehre keine Aenderungen aus.')
+      parts.push('\n\nWARNING: PLAN MODE ACTIVE: Only describe what you would do. Do not make changes.')
     }
 
     // Append custom system prompt
@@ -760,14 +760,14 @@ export class QueryEngine {
     if (!hasDesktopTools) return null
 
     const desktopIntent = /(desktop|bildschirm|screen|screenshot|fenster|window|dialog|papierkorb|kicad|click|klick|taste|keypress|tippe|type|scroll|focus|fokus|schlie(?:ss|ß)|close|oeffne|öffne|starte|launch)/i
-    const planLanguage = /(ich werde|werde ich|ich versuche|ich probiere|nun werde ich|als naechstes|als nächstes|sobald|danach werde ich|ich ziele|ich starte jetzt|werde nun)/i
+    const planLanguage = /(i will|i'll|i am going to|i'm going to|i see that|now i will|i will now|then continue|continue renaming|ich werde|werde ich|ich versuche|ich probiere|nun werde ich|als nexts|als nächstes|sobald|danach werde ich|ich ziele|ich starte jetzt|werde nun)/i
     const explicitToolCall = /[A-Za-z][A-Za-z0-9_]*\s*\(\s*\{/.test(normalizedAssistant)
 
     if ((!desktopIntent.test(normalizedUser) && !desktopIntent.test(normalizedAssistant)) || !planLanguage.test(normalizedAssistant) || explicitToolCall) {
       return null
     }
 
-    return 'Fuehre den naechsten Desktop-Schritt jetzt direkt mit den verfuegbaren Desktop-Tools aus. Bleibe im Loop Beobachten -> Aktion -> Verifikation: nutze den aktuellen Verifikations-Screenshot, pruefe ob das Ziel erreicht wurde, und wenn nicht, fuehre sofort den naechsten plausiblen Tool-Call aus. Antworte nicht erneut nur mit einer Absichtserklaerung.'
+    return 'Execute the next desktop step now using the available desktop tools. Stay in the observe -> action -> verification loop: use the current verification screenshot, check whether the target was reached, and if not, immediately run the next plausible tool call. Do not respond with only another statement of intent.'
   }
 
   private buildNarratedExecutionRecoveryMessage(
@@ -781,7 +781,7 @@ export class QueryEngine {
     const hasActionTools = this.tools.some((tool) => tool.category === 'desktop' || tool.category === 'shell' || tool.category === 'filesystem')
     if (!hasActionTools) return null
 
-    const planLanguage = /(ich werde|werde ich|ich versuche|ich probiere|nun werde ich|als naechstes|als nächstes|sobald|danach werde ich|ich starte jetzt|ich beginne jetzt|werde nun|ich werde nun)/i
+    const planLanguage = /(i will|i'll|i am going to|i'm going to|i see that|now i will|i will now|then restart|then continue|continue renaming|close .+ via powershell|rename .+ folder|ich werde|werde ich|ich versuche|ich probiere|nun werde ich|als nexts|als nächstes|sobald|danach werde ich|ich starte jetzt|ich beginne jetzt|werde nun|ich werde nun)/i
     const shellOrFilesystemIntent = /(powershell|shell|bash|cmd|prozess|stop-process|taskkill|dateisystem|filesystem|explorer|terminal|konsole|verzeichnis|directory|folder|path:|^[A-Z]:\\)/i
     const explicitToolCall = /[A-Za-z][A-Za-z0-9_]*\s*\(\s*\{/.test(normalizedAssistant)
 
@@ -793,7 +793,7 @@ export class QueryEngine {
       return null
     }
 
-    return 'Fuehre den zuletzt beschriebenen naechsten Schritt jetzt direkt mit den verfuegbaren Tools aus. Nutze Shell-, Datei- oder Desktop-Tools sofort statt den Plan weiter zu beschreiben. Wenn ein Schritt scheitert, probiere den naechsten plausiblen Tool-Call und verifiziere das Ergebnis, anstatt nur Absichten zu formulieren.'
+    return 'Execute the last described next step now using the available tools. Use shell, file, or desktop tools immediately instead of continuing to describe the plan. If a step fails, try the next plausible tool call and verify the result instead of only stating intent.'
   }
 
   private toAPIConversation(messages: Message[]): Array<{ role: 'user' | 'assistant'; content: string | ContentBlock[] }> {
@@ -969,7 +969,7 @@ export class QueryEngine {
     const prompt = String(block.input.prompt ?? '').trim()
 
     if (!requestedName || !prompt) {
-      return { data: 'Fehler: agent_name und prompt sind erforderlich.' }
+      return { data: 'Error: agent_name und prompt sind erforderlich.' }
     }
 
     const definition = (this.config.agentDefinitions ?? []).find((item) =>
@@ -977,7 +977,7 @@ export class QueryEngine {
     )
 
     if (!definition) {
-      return { data: `Fehler: Agent "${requestedName}" nicht gefunden.` }
+      return { data: `Error: Agent "${requestedName}" not found.` }
     }
 
     onProgress({
@@ -1008,10 +1008,10 @@ export class QueryEngine {
     }
 
     if (failure) {
-      return { data: `Sub-Agent fehlgeschlagen: ${failure}` }
+      return { data: `Sub-Agent failed: ${failure}` }
     }
 
-    const summarized = finalResult.trim() || `Sub-Agent "${definition.name}" abgeschlossen.`
+    const summarized = finalResult.trim() || `Sub-Agent "${definition.name}" abclosed.`
     return {
       data: summarized,
       newMessages: forwardedMessages,

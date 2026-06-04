@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+﻿import { describe, expect, it, vi } from 'vitest'
 import type { Tool, ToolResult } from '../types'
 
 const streamOllamaMessagesMock = vi.fn()
@@ -59,7 +59,7 @@ async function* onePlanOnlyTurn() {
     content: [
       {
         type: 'text',
-        text: 'Diese Aktion ist destruktiv (Dateiverschiebung).\n\n**Status:** approval-beduerftig\n\n**Plan:**\n1. Erstelle die Ordner a und b.\n2. Verschiebe die Dateien abwechselnd nach a und b.',
+        text: 'Diese Aktion ist destruktiv (Fileverschiebung).\n\n**Status:** approval-beduerftig\n\n**Plan:**\n1. Create die Folder a und b.\n2. Verschiebe die Files abwechselnd nach a und b.',
       },
     ],
     model: 'test-model',
@@ -77,7 +77,7 @@ async function* oneDesktopPlanOnlyTurn() {
     content: [
       {
         type: 'text',
-        text: 'Ich sehe, dass das Dialogfenster noch offen ist. Ich werde nun gezielt auf "Abbrechen" klicken und danach mit dem Umbenennen fortfahren.',
+        text: 'I see that the dialog window is still open. I will now click "Cancel" directly and then continue renaming.',
       },
     ],
     model: 'test-model',
@@ -119,7 +119,7 @@ async function* oneNarratedShellPlanTurn() {
     content: [
       {
         type: 'text',
-        text: 'Da die Klicks nicht greifen, werde ich jetzt KiCad per PowerShell beenden, den Projektordner umbenennen und das Projekt danach neu starten.',
+        text: 'Since the clicks are not taking effect, I will now close KiCad via PowerShell, rename the project folder, and then restart the project.',
       },
     ],
     model: 'test-model',
@@ -281,7 +281,7 @@ describe('QueryEngine approval event flow', () => {
     })
 
     const events: string[] = []
-    for await (const event of engine.query([], 'sortiere die dateien in zwei ordner')) {
+    for await (const event of engine.query([], 'sort the files into two folders')) {
       events.push(event.type)
 
       if (event.type === 'approval_required') {
@@ -292,7 +292,7 @@ describe('QueryEngine approval event flow', () => {
     expect(streamOllamaMessagesMock).toHaveBeenCalledTimes(3)
     expect(events).toContain('approval_required')
     expect(events).toContain('tool_use_complete')
-    expect(seenLastUserTexts[1]).toContain('Freigabe erteilt')
+    expect(seenLastUserTexts[1]).toContain('Approval granted')
   })
 
   it('nudges desktop tasks back into tool execution when the model only narrates the next click', async () => {
@@ -360,7 +360,7 @@ describe('QueryEngine approval event flow', () => {
     expect(streamOllamaMessagesMock).toHaveBeenCalledTimes(3)
     expect(events).toContain('approval_required')
     expect(events).toContain('tool_use_complete')
-    expect(seenLastUserTexts[1]).toContain('Fuehre den naechsten Desktop-Schritt jetzt direkt')
+    expect(seenLastUserTexts[1]).toContain('Execute the next desktop step now')
   })
 
   it('nudges narrated shell fallback plans back into actual tool execution', async () => {
@@ -421,6 +421,6 @@ describe('QueryEngine approval event flow', () => {
 
     expect(streamOllamaMessagesMock).toHaveBeenCalledTimes(3)
     expect(events).toContain('tool_use_complete')
-    expect(seenLastUserTexts[1]).toContain('Fuehre den zuletzt beschriebenen naechsten Schritt jetzt direkt')
+    expect(seenLastUserTexts[1]).toContain('Execute the last described next step now')
   })
 })

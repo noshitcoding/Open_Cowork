@@ -9,6 +9,7 @@ import type { EngineBackend, EngineConfig, QueryEngine } from '../engine/core/qu
 import type { EngineEvent } from '../engine/core/queryEngine'
 import { getAllCommands, registerBuiltinCommands } from '../engine/commands/registry'
 import { listOllamaModels, checkOllamaConnection } from '../engine/api/ollamaClient'
+import { DEFAULT_AGENTS } from '../engine/coordinator/agentCoordinator'
 import { buildSystemPromptWithMemory } from '../engine/memory/memorySystem'
 import type { ContextSnapshot } from '../engine/services/contextManager'
 import {
@@ -18,7 +19,6 @@ import {
   createUserMessage,
   EMPTY_USAGE,
   extractTextContent,
-  type AgentDefinition,
   type ApprovalResult,
   type AppState,
   type ContentBlock,
@@ -42,60 +42,21 @@ import { parsePersistedSessionMessage } from '../utils/sessionThreads'
 import { getChatProviderState, normalizeChatProvider, type ChatProviderKind, type ChatProviderSelection } from '../utils/chatProvider'
 import type { PermissionMode } from '../engine/types/tool'
 
-const DEFAULT_SYSTEM_PROMPT = `Du bist ein hilfreicher KI-Assistent in einer Desktop-Anwendung (Open Cowork). Du hast Zugriff auf verschiedene Tools um Dateien zu lesen, zu schreiben, zu suchen, Shell-Befehle auszufuehren, und mehr.
+const DEFAULT_SYSTEM_PROMPT = `You are a helpful AI assistant in the Open Cowork desktop app. You have access to tools for reading, writing, and searching files, running shell commands, and more.
 
-Wichtige Regeln:
-1. Fuehre Aenderungen direkt aus statt nur Vorschlaege zu machen, es sei denn der Plan-Modus ist aktiv.
-2. Lies Dateien bevor du sie aenderst, um den Kontext zu verstehen.
-3. Nutze Tools haeufig — lese, suche, und verifiziere.
-4. Gib klare, praezise Antworten.
-5. Bei Unsicherheit: frage den Benutzer mit dem AskUser-Tool.
-  Wenn das Ziel jedoch klar ist (z. B. Dateien sortieren/strukturieren), fuehre es selbststaendig aus und frage nur bei fehlenden kritischen Angaben oder bei destruktiven Schritten.
-6. Erstelle keine Dateien, die nicht benoetigt werden.
-7. Teste Aenderungen wenn moeglich (Build, Tests etc.).
-8. Fuer Dateiorganisation und Strukturarbeit nutze dedizierte Datei-Tools wie ListDir, CreateDirectory, MovePath und CopyPath statt nur Shell-Befehle zu beschreiben.
+Important rules:
+1. Execute changes directly instead of only making suggestions, unless plan mode is active.
+2. Before tool calls, briefly explain what you are doing.
+3. Never delete or overwrite important data without explicit confirmation.
+4. Give clear, precise answers.
+5. Ask follow-up questions only when required.
+   If the target is clear, complete it autonomously and ask only when critical information is missing or a destructive step is involved.
+6. Do not create files that are not needed.
 
-Du arbeitest in einem Windows-Umfeld mit PowerShell.`
+You work in a Windows environment with PowerShell.`
 
-const DEFAULT_AGENTS: AgentDefinition[] = [
-  {
-    id: 'coder',
-    name: 'Coder',
-    description: 'Spezialisiert auf Code-Implementierung und Debugging.',
-    type: 'coding',
-    tools: ['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep'],
-    maxTurns: 15,
-  },
-  {
-    id: 'researcher',
-    name: 'Researcher',
-    description: 'Spezialisiert auf Recherche und Analyse.',
-    type: 'research',
-    tools: ['Read', 'Glob', 'Grep', 'WebFetch', 'WebSearch', 'MemoryRead'],
-    maxTurns: 10,
-  },
-  {
-    id: 'reviewer',
-    name: 'Reviewer',
-    description: 'Spezialisiert auf Code-Review und Qualitaetssicherung.',
-    type: 'review',
-    tools: ['Read', 'Glob', 'Grep', 'Bash'],
-    maxTurns: 8,
-  },
-  {
-    id: 'planner',
-    name: 'Planner',
-    description: 'Spezialisiert auf Projektplanung und Aufgabenzerlegung.',
-    type: 'planning',
-    tools: ['Read', 'Glob', 'TaskCreate', 'TaskList', 'MemoryRead', 'MemoryWrite'],
-    maxTurns: 5,
-  },
-]
-
-// ── Types ──────────────────────────────────────────────────────────────────
-
-export type EngineStatus = 'idle' | 'streaming' | 'tool_running' | 'waiting_approval' | 'error'
 export type EngineProvider = ChatProviderKind
+export type EngineStatus = 'idle' | 'streaming' | 'tool_running' | 'waiting_approval' | 'error'
 
 export type ToolExecution = {
   id: string
@@ -154,11 +115,11 @@ function extractUserInputText(userInput: EngineUserInput): string {
 
   const imageCount = userInput.filter((block) => block.type === 'image').length
   if (!text && imageCount > 0) {
-    return imageCount === 1 ? '[1 Bild-Anhang]' : `[${imageCount} Bild-Anhaenge]`
+    return imageCount === 1 ? '[1 Image-attachment]' : `[${imageCount} Image-attachments]`
   }
 
   if (text && imageCount > 0) {
-    const suffix = imageCount === 1 ? '[1 Bild-Anhang]' : `[${imageCount} Bild-Anhaenge]`
+    const suffix = imageCount === 1 ? '[1 Image-attachment]' : `[${imageCount} Image-attachments]`
     return `${text}\n\n${suffix}`
   }
 
@@ -492,7 +453,7 @@ export const useEngineStore = create<EngineStoreState>()(
                 set({ status: 'idle', error: null })
                 state = get()
               } else {
-                throw new Error('Die Engine verarbeitet bereits eine andere Anfrage.')
+                throw new Error('The engine is already processing another request.')
               }
             }
 

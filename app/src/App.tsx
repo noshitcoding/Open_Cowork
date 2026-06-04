@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect } from 'react'
+import { lazy, useEffect } from 'react'
 import { MemoryRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { confirm as confirmDialog } from '@tauri-apps/plugin-dialog'
@@ -19,6 +19,7 @@ import { writeAuditEvent } from './utils/audit'
 import { seedDefaultPersonalities, seedDefaultMemory } from './utils/defaultSeeds'
 import { startScheduledWorker, stopScheduledWorker } from './engine/scheduledWorker'
 import { hasTauriRuntime, safeInvoke } from './utils/safeInvoke'
+import i18n from './i18n'
 import './App.css'
 
 const CoworkView = lazy(() => import('./components/CoworkView'))
@@ -57,15 +58,15 @@ function shouldConfirmAppClose(): boolean {
 async function confirmAppClose(): Promise<boolean> {
   const runningWork = hasRunningWork()
   const message = runningWork
-    ? 'Es laufen noch Tasks oder Chat-Antworten. Open Cowork wirklich schliessen? Laufende Ausfuehrungen koennen abgebrochen werden.'
-    : 'Moechtest du Open Cowork wirklich schliessen?'
+    ? i18n.t('close.runningWork')
+    : i18n.t('close.confirm')
 
   try {
     return await confirmDialog(message, {
-      title: 'Open Cowork schliessen',
+      title: i18n.t('close.title'),
       kind: runningWork ? 'warning' : 'info',
-      okLabel: 'Schliessen',
-      cancelLabel: 'Abbrechen',
+      okLabel: i18n.t('common.close'),
+      cancelLabel: i18n.t('common.cancel'),
     })
   } catch (error) {
     console.warn('Close confirmation dialog failed:', error)
@@ -79,26 +80,24 @@ async function confirmAppClose(): Promise<boolean> {
 
 function AppRoutes() {
   return (
-    <Suspense fallback={<div className="main-content" style={{ padding: 24 }}>Ansicht wird geladen...</div>}>
-      <Routes>
-        <Route path="/" element={<Layout />}>
-          <Route index element={<CoworkView />} />
-          <Route path="settings" element={
-            <div className="code-mode" style={{ overflow: 'auto', height: '100%' }}>
-              <SettingsView />
-            </div>
-          } />
-          <Route path="tasks" element={
-            <div className="code-mode" style={{ overflow: 'auto', height: '100%' }}>
-              <TasksView />
-            </div>
-          } />
-          <Route path="crew" element={<CrewView />} />
-          <Route path="projects" element={<ProjectView />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Route>
-      </Routes>
-    </Suspense>
+    <Routes>
+      <Route path="/" element={<Layout />}>
+        <Route index element={<CoworkView />} />
+        <Route path="settings" element={
+          <div className="code-mode" style={{ overflow: 'auto', height: '100%' }}>
+            <SettingsView />
+          </div>
+        } />
+        <Route path="tasks" element={
+          <div className="code-mode" style={{ overflow: 'auto', height: '100%' }}>
+            <TasksView />
+          </div>
+        } />
+        <Route path="crew" element={<CrewView />} />
+        <Route path="projects" element={<ProjectView />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Route>
+    </Routes>
   )
 }
 
@@ -117,8 +116,8 @@ function App() {
 
   useEffect(() => {
     const startedAt = performance.now()
-    loadChatFromDb()
-    loadTasksFromDb()
+    void loadChatFromDb().catch((error) => console.warn('[startup] Chat loading failed', error))
+    void loadTasksFromDb().catch((error) => console.warn('[startup] Task loading failed', error))
     void loadProjectsFromDb()
     void loadScheduledTasks()
     void loadScheduledRuns(20)
@@ -136,7 +135,7 @@ function App() {
     addLog({
       level: 'info',
       area: 'runtime',
-      message: 'App gestartet',
+      message: 'App started',
       details: { startupMs: Math.round(performance.now() - startedAt) },
     })
     void writeAuditEvent('runtime', 'app_started', {

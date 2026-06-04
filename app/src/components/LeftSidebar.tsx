@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+﻿import { useEffect, useMemo, useRef, useState } from 'react'
 import type { DragEvent, PointerEvent as ReactPointerEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { SessionSummary } from '../engine'
@@ -10,7 +10,8 @@ import { useTaskStore } from '../stores/taskStore'
 import { useWorkTasksStore, type WorkTask } from '../stores/workTasksStore'
 import { useProjectStore } from '../stores/projectStore'
 import { createChatProviderSelection, getChatProviderState } from '../utils/chatProvider'
-import { ContextPanel, OutputsPanel, ProgressPanel, WorkingFolderPanel } from './RightSidebar'
+import { ContextPanel, DocumentWorkspacePanel, OutputsPanel, ProgressPanel, WorkingFolderPanel } from './RightSidebar'
+import { tr } from '../i18n'
 
 const THREAD_DND_MIME = 'application/open-cowork-thread-id'
 const POINTER_DRAG_THRESHOLD = 5
@@ -47,9 +48,9 @@ function getTaskSidebarTitle(task: WorkTask): string {
 function buildTaskSidebarSummary(task: WorkTask): string {
   return [
     `Task angelegt: ${getTaskSidebarTitle(task)}`,
-    `Runner: ${task.runner === 'crew' ? 'Crew' : 'Modell'}`,
+    `Runner: ${task.runner === 'crew' ? 'Crew' : 'Model'}`,
     task.expectedOutput.trim() ? `Expected Output: ${task.expectedOutput.trim()}` : '',
-    task.workDir.trim() ? `Arbeitsordner: ${task.workDir.trim()}` : '',
+    task.workDir.trim() ? `Working folder: ${task.workDir.trim()}` : '',
   ].filter(Boolean).join('\n')
 }
 
@@ -226,7 +227,7 @@ export default function LeftSidebar() {
   }, [detachThreadFromAll, pointerDrag, threadIds])
 
   const handleNewChat = (projectId?: string) => {
-    const threadId = addThread('Neuer Chat', createChatProviderSelection(providerState))
+    const threadId = addThread('New chat', createChatProviderSelection(providerState))
     if (projectId) {
       attachThread(projectId, threadId)
       setActiveProject(projectId)
@@ -237,7 +238,7 @@ export default function LeftSidebar() {
   }
 
   const handleNewProject = () => {
-    const projectId = addProject(`Projekt ${projects.length + 1}`)
+    const projectId = addProject(`Project ${projects.length + 1}`)
     setActiveProject(projectId)
     navigate('/projects')
   }
@@ -396,21 +397,14 @@ export default function LeftSidebar() {
 
   return (
     <aside className="left-sidebar">
-      <button type="button" className="btn-new-task" onClick={() => handleNewChat()}>
-        + Neuer Chat
-      </button>
-      <button type="button" className="btn-new-task" onClick={handleNewProject}>
-        + Neues Projekt
-      </button>
-      <button type="button" className="btn-sm" style={{ width: '100%', marginBottom: 6 }} onClick={handleOpenProjects}>
-        Projekte verwalten
-      </button>
-      <button type="button" className="btn-sm" style={{ width: '100%', marginBottom: 12 }} onClick={() => navigate('/crew')}>
-        Crew Studio
-      </button>
+      <button type="button" className="btn-new-task" onClick={() => handleNewChat()}>{tr("+ New chat")}</button>
+      <button type="button" className="btn-new-task" onClick={handleNewProject}>{tr("+ New project")}</button>
+      <button type="button" className="btn-sm" style={{ width: '100%', marginBottom: 6 }} onClick={handleOpenProjects}>{tr("Manage projects")}</button>
+      <button type="button" className="btn-sm" style={{ width: '100%', marginBottom: 12 }} onClick={() => navigate('/crew')}>{tr("Crew Studio")}</button>
 
       <div className="sidebar-status-panels">
         <ProgressPanel task={activeTask} />
+        <DocumentWorkspacePanel />
         <WorkingFolderPanel />
         <OutputsPanel task={activeTask} />
         <ContextPanel />
@@ -419,8 +413,8 @@ export default function LeftSidebar() {
       <div className="sidebar-section">
         <div className="sidebar-group">
           <div className="sidebar-group-title">
-            <span>Projekte</span>
-            <button type="button" onClick={handleNewProject} title="Neues Projekt">+</button>
+            <span>{tr("Projects")}</span>
+            <button type="button" onClick={handleNewProject} title={tr("New project")}>+</button>
           </div>
           {projects.map((project) => {
             const projectThreads = project.threadIds
@@ -445,7 +439,7 @@ export default function LeftSidebar() {
                     <span className="sidebar-project-name">{project.title}</span>
                     <span className="sidebar-project-count">{projectThreads.length}</span>
                   </button>
-                  <button type="button" className="sidebar-row-action" onClick={() => handleNewChat(project.id)} title="Chat im Projekt starten">
+                  <button type="button" className="sidebar-row-action" onClick={() => handleNewChat(project.id)} title={tr("Start project chat")}>
                     +
                   </button>
                 </div>
@@ -458,7 +452,7 @@ export default function LeftSidebar() {
                         onDragStart={(event) => handleThreadDragStart(event, thread.id)}
                         onDragEnd={clearThreadDropState}
                         onPointerDown={(event) => handleThreadPointerDown(event, thread.id, thread.title)}
-                        title="Chat in ein anderes Projekt ziehen"
+                        title={tr("Move chat to another project")}
                       >
                         <button
                           type="button"
@@ -471,13 +465,13 @@ export default function LeftSidebar() {
                         </button>
                       </div>
                     ))}
-                    {projectThreads.length === 0 && <p className="hint-text">Keine Chats</p>}
+                    {projectThreads.length === 0 && <p className="hint-text">{tr("No Chats")}</p>}
                   </div>
                 )}
               </div>
             )
           })}
-          {projects.length === 0 && <p className="hint-text">Keine Projekte</p>}
+          {projects.length === 0 && <p className="hint-text">{tr("No projects")}</p>}
         </div>
 
         <div
@@ -492,7 +486,7 @@ export default function LeftSidebar() {
             className="sidebar-group-toggle"
             onClick={() => setChatsCollapsed((value) => !value)}
           >
-            <span>{chatsCollapsed ? '>' : 'v'} Chats</span>
+            <span>{chatsCollapsed ? '>' : 'v'}{tr("Chats")}</span>
             <span>{unassignedThreads.length}</span>
           </button>
           {!chatsCollapsed && (
@@ -504,7 +498,7 @@ export default function LeftSidebar() {
                   onDragStart={(event) => handleThreadDragStart(event, thread.id)}
                   onDragEnd={clearThreadDropState}
                   onPointerDown={(event) => handleThreadPointerDown(event, thread.id, thread.title)}
-                  title="Chat in ein Projekt ziehen"
+                  title={tr("Move chat to a project")}
                 >
                   <button
                     type="button"
@@ -520,20 +514,18 @@ export default function LeftSidebar() {
                     className="sidebar-row-action"
                     draggable={false}
                     onClick={(event) => { event.stopPropagation(); deleteThread(thread.id) }}
-                    title="Loeschen"
-                  >
-                    x
-                  </button>
+                    title={tr("Delete")}
+                  >{tr("x")}</button>
                 </div>
               ))}
-              {unassignedThreads.length === 0 && <p className="hint-text">Keine projektlosen Chats</p>}
+              {unassignedThreads.length === 0 && <p className="hint-text">{tr("No projektlosen Chats")}</p>}
             </div>
           )}
         </div>
 
         <div className="sidebar-group">
           <button type="button" className="sidebar-group-toggle" onClick={() => setTasksCollapsed((value) => !value)}>
-            <span>{tasksCollapsed ? '>' : 'v'} Tasks</span>
+            <span>{tasksCollapsed ? '>' : 'v'}{tr("Tasks")}</span>
             <span>{workTasks.length}</span>
           </button>
           {!tasksCollapsed && (
@@ -541,18 +533,18 @@ export default function LeftSidebar() {
               {workTasks.map((task) => (
                 <div key={task.id} className={`sidebar-thread-row${task.threadId === activeThreadId ? ' active' : ''}`}>
                   <button type="button" className="sidebar-row-main" onClick={() => handleOpenTaskThread(task)}>
-                    {getTaskSidebarTitle(task)} - {task.status}
+                    {getTaskSidebarTitle(task)} ? {task.status}
                   </button>
                 </div>
               ))}
-              {workTasks.length === 0 && <p className="hint-text">Keine Tasks</p>}
+              {workTasks.length === 0 && <p className="hint-text">{tr("No Tasks")}</p>}
             </div>
           )}
         </div>
 
         <div className="sidebar-group">
           <button type="button" className="sidebar-group-toggle" onClick={() => setSessionsCollapsed((value) => !value)}>
-            <span>{sessionsCollapsed ? '>' : 'v'} Sessions</span>
+            <span>{sessionsCollapsed ? '>' : 'v'}{tr("Sessions")}</span>
             <span>{persistedSessions.length}</span>
           </button>
           {!sessionsCollapsed && (
@@ -566,14 +558,12 @@ export default function LeftSidebar() {
                     type="button"
                     className="sidebar-row-action"
                     onClick={(event) => { event.stopPropagation(); void deleteSessionById(session.id) }}
-                    title="Loeschen"
-                  >
-                    x
-                  </button>
+                    title={tr("Delete")}
+                  >{tr("x")}</button>
                 </div>
               ))}
-              {loadingSessions && <p className="hint-text">Wird geladen...</p>}
-              {!loadingSessions && persistedSessions.length === 0 && <p className="hint-text">Keine Sessions</p>}
+              {loadingSessions && <p className="hint-text">{tr("Wird loaded...")}</p>}
+              {!loadingSessions && persistedSessions.length === 0 && <p className="hint-text">{tr("No Sessions")}</p>}
             </div>
           )}
         </div>

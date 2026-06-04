@@ -5,6 +5,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { useConfigStore } from '../../stores/configStore'
+import { useTerminalStore } from '../../stores/terminalStore'
 import type { McpServerConfig } from '../../stores/configStore'
 import type { AttachmentMessage, Tool, Tools, ToolInputSchema } from '../types'
 
@@ -35,7 +36,7 @@ type DesktopDisplayInfo = {
   scaleFactor?: number
 }
 
-type DesktopScreenshotResponse = DesktopDisplayInfo & {
+type DesktopscreenshotResponse = DesktopDisplayInfo & {
   dataUrl: string
   imageWidth?: number
   imageHeight?: number
@@ -165,7 +166,7 @@ type McpCallResponse = {
   error: string | null
 }
 
-type McpScreenshotPayload = {
+type McpscreenshotPayload = {
   success?: boolean
   reused?: boolean
   path?: string
@@ -264,14 +265,14 @@ function parseBase64DataUrl(dataUrl: string): { mediaType: string; data: string 
   }
 }
 
-function formatDesktopScreenshotSummary(screenshot: DesktopScreenshotResponse): string {
+function formatDesktopscreenshotSummary(screenshot: DesktopscreenshotResponse): string {
   const imageWidth = screenshot.imageWidth ?? screenshot.width
   const imageHeight = screenshot.imageHeight ?? screenshot.height
   const scaleFactor = typeof screenshot.scaleFactor === 'number' ? ` DPI-Skalierung ca. ${screenshot.scaleFactor.toFixed(2)}x.` : ''
   const overlay = screenshot.coordinateOverlay
-    ? ' Das Bild enthaelt ein Koordinatenraster: feine Linien alle 50 px, beschriftete Hauptlinien alle 100 px.'
+    ? ' The image contains a coordinate grid: fine lines every 50 px, labeled major lines every 100 px.'
     : ''
-  return `Desktop screenshot aufgenommen: Bild ${imageWidth}x${imageHeight}, Display ${screenshot.width}x${screenshot.height} auf ${screenshot.deviceName}${screenshot.primary ? ' [primary]' : ''}.${scaleFactor} Verwende fuer Klicks lokale Display-Koordinaten aus exakt diesem Bild mit Ursprung (0, 0) links oben; der virtuelle Bildschirm-Ursprung dieses Displays liegt bei (${screenshot.x}, ${screenshot.y}).${overlay}`
+  return `Desktop screenshot captured: Image ${imageWidth}x${imageHeight}, Display ${screenshot.width}x${screenshot.height} on ${screenshot.deviceName}${screenshot.primary ? ' [primary]' : ''}.${scaleFactor} Use local display coordinates from this exact image for clicks, with origin (0, 0) at the top-left; this display's virtual screen origin is at (${screenshot.x}, ${screenshot.y}).${overlay}`
 }
 
 function normalizeDesktopCoordinateSpace(value: string | undefined): DesktopCoordinateSpace {
@@ -320,26 +321,26 @@ async function resolveDesktopPoint(
 
 function describeResolvedDesktopPoint(point: ResolvedDesktopPoint): string {
   if (point.coordinateSpace === 'screen' || !point.display) {
-    return `Bildschirmkoordinaten (${point.absoluteX}, ${point.absoluteY})`
+    return `Screen coordinates (${point.absoluteX}, ${point.absoluteY})`
   }
 
-  return `Display-Koordinaten (${point.requestedX}, ${point.requestedY}) wurden mit Display-Ursprung (${point.display.x}, ${point.display.y}) zu Bildschirmkoordinaten (${point.absoluteX}, ${point.absoluteY}) umgerechnet`
+  return `Display coordinates (${point.requestedX}, ${point.requestedY}) were converted from display origin (${point.display.x}, ${point.display.y}) to screen coordinates (${point.absoluteX}, ${point.absoluteY}) umgerechnet`
 }
 
-function createDesktopScreenshotAttachment(
-  screenshot: DesktopScreenshotResponse,
+function createDesktopscreenshotAttachment(
+  screenshot: DesktopscreenshotResponse,
   options?: { title?: string; preface?: string },
 ): AttachmentMessage | null {
   const parsed = parseBase64DataUrl(screenshot.dataUrl)
   if (!parsed) return null
 
-  const summary = formatDesktopScreenshotSummary(screenshot)
+  const summary = formatDesktopscreenshotSummary(screenshot)
   const text = options?.preface ? `${options.preface}\n${summary}` : summary
 
   return {
     type: 'attachment',
     uuid: createToolStreamId(),
-    title: options?.title ?? `Desktop Screenshot ${screenshot.width}x${screenshot.height}`,
+    title: options?.title ?? `Desktop screenshot ${screenshot.width}x${screenshot.height}`,
     attachmentType: 'tool_result',
     timestamp: Date.now(),
     content: [
@@ -359,17 +360,17 @@ function createDesktopScreenshotAttachment(
   }
 }
 
-function parseMcpScreenshotPayload(message: string): McpScreenshotPayload | null {
+function parseMcpscreenshotPayload(message: string): McpscreenshotPayload | null {
   try {
     const parsed = JSON.parse(message)
     if (!parsed || typeof parsed !== 'object') return null
-    return parsed as McpScreenshotPayload
+    return parsed as McpscreenshotPayload
   } catch {
     return null
   }
 }
 
-function createMcpScreenshotAttachment(
+function createMcpscreenshotAttachment(
   toolName: string,
   message: string,
 ): { attachment: AttachmentMessage; textSummary: string } | null {
@@ -377,7 +378,7 @@ function createMcpScreenshotAttachment(
     return null
   }
 
-  const payload = parseMcpScreenshotPayload(message)
+  const payload = parseMcpscreenshotPayload(message)
   if (!payload?.imageDataUrl) {
     return null
   }
@@ -397,14 +398,14 @@ function createMcpScreenshotAttachment(
   const height = payload.displayInfo?.height
   const reused = payload.reused === true
   const title = width && height
-    ? `MCP Screenshot ${width}x${height}${reused ? ' (reused)' : ''}`
-    : `MCP Screenshot${reused ? ' (reused)' : ''}`
+    ? `MCP screenshot ${width}x${height}${reused ? ' (reused)' : ''}`
+    : `MCP screenshot${reused ? ' (reused)' : ''}`
 
   const overlayEnabled = payload.coordinateOverlay === true || payload.displayInfo?.coordinateOverlay === true
   const grid = payload.coordinateGrid ?? payload.displayInfo?.coordinateGrid
   const coordinateGuide = overlayEnabled
-    ? `Koordinatenhinweis: Das angehaengte Screenshot-Bild enthaelt ein Raster in lokalen Display-Koordinaten mit Ursprung (0, 0) links oben. Feine Linien: ${grid?.minorStepPx ?? 50}px, beschriftete Hauptlinien: ${grid?.majorStepPx ?? 100}px. Nutze diese Bildkoordinaten direkt fuer DesktopClick/DesktopMoveMouse mit coordinate_space="display".`
-    : 'Koordinatenhinweis: Nutze lokale Display-Koordinaten aus dem angehaengten Screenshot-Bild direkt fuer DesktopClick/DesktopMoveMouse mit coordinate_space="display".'
+    ? `coordinate hint: Das attachede screenshot-Image enthaelt ein Raster in lokalen Display coordinates mit origin (0, 0) top-left. Minor lines: ${grid?.minorStepPx ?? 50}px, labeled major lines: ${grid?.majorStepPx ?? 100}px. Use these image coordinates directly for DesktopClick/DesktopMoveMouse with coordinate_space="display".`
+    : 'coordinate hint: Use lokale Display coordinates aus dem attacheden screenshot-Image direkt for DesktopClick/DesktopMoveMouse mit coordinate_space="display".'
   const textSummary = `${coordinateGuide}\n${JSON.stringify(safePayload, null, 2)}`
 
   return {
@@ -435,8 +436,8 @@ function createMcpScreenshotAttachment(
 
 async function captureDesktopVerificationAttachment(actionLabel: string): Promise<AttachmentMessage | null> {
   try {
-    const screenshot = await invoke<DesktopScreenshotResponse>('desktop_capture_primary_annotated_screenshot')
-    return createDesktopScreenshotAttachment(screenshot, {
+    const screenshot = await invoke<DesktopscreenshotResponse>('desktop_capture_primary_annotated_screenshot')
+    return createDesktopscreenshotAttachment(screenshot, {
       title: `Desktop Verification: ${actionLabel}`,
       preface: `Verifikation nach Aktion: ${actionLabel}`,
     })
@@ -491,15 +492,15 @@ export function getEnabledTools(): Tools {
 const fileReadTool: Tool<{ file_path: string; offset?: number; limit?: number }> = {
   name: 'Read',
   aliases: ['read_file', 'FileReadTool'],
-  description: 'Liest den Inhalt einer Datei. Nutze offset/limit fuer grosse Dateien.',
+  description: 'Reads file contents. Use offset/limit for large files.',
   category: 'filesystem',
   riskLevel: 'low',
   inputSchema: {
     type: 'object',
     properties: {
-      file_path: { type: 'string', description: 'Absoluter oder relativer Pfad zur Datei' },
-      offset: { type: 'number', description: 'Startzeile (0-basiert)' },
-      limit: { type: 'number', description: 'Maximale Anzahl Zeilen' },
+      file_path: { type: 'string', description: 'Absolute or relative path to the file' },
+      offset: { type: 'number', description: 'Start line (0-based)' },
+      limit: { type: 'number', description: 'Maximum number of lines' },
     },
     required: ['file_path'],
   },
@@ -525,15 +526,15 @@ const fileReadTool: Tool<{ file_path: string; offset?: number; limit?: number }>
 const fileWriteTool: Tool<{ file_path: string; content: string; create_backup?: boolean }> = {
   name: 'Write',
   aliases: ['write_file', 'FileWriteTool'],
-  description: 'Schreibt Inhalt in eine Datei. Erstellt bei Bedarf uebergeordnete Verzeichnisse.',
+  description: 'Writes content to a file. Creates parent directories if needed.',
   category: 'filesystem',
   riskLevel: 'medium',
   inputSchema: {
     type: 'object',
     properties: {
-      file_path: { type: 'string', description: 'Absoluter oder relativer Pfad zur Datei' },
-      content: { type: 'string', description: 'Der zu schreibende Inhalt' },
-      create_backup: { type: 'boolean', description: 'Backup der Originaldatei erstellen' },
+      file_path: { type: 'string', description: 'Absolute or relative path to the file' },
+      content: { type: 'string', description: 'Content to write' },
+      create_backup: { type: 'boolean', description: 'Create a backup of the original file' },
     },
     required: ['file_path', 'content'],
   },
@@ -548,7 +549,7 @@ const fileWriteTool: Tool<{ file_path: string; content: string; create_backup?: 
       createBackup: input.create_backup ?? false,
       runId: context.runId,
     })
-    return { data: result.diff || 'Datei geschrieben.' }
+    return { data: result.diff || 'File geschrieben.' }
   },
 }
 
@@ -558,13 +559,13 @@ const fileWriteTool: Tool<{ file_path: string; content: string; create_backup?: 
 const createDirectoryTool: Tool<{ path: string }> = {
   name: 'CreateDirectory',
   aliases: ['create_directory', 'mkdir', 'make_dir', 'MakeDirectoryTool'],
-  description: 'Erstellt ein Verzeichnis inklusive fehlender Zwischenordner.',
+  description: 'Creates a directory, including missing parent folders.',
   category: 'filesystem',
   riskLevel: 'medium',
   inputSchema: {
     type: 'object',
     properties: {
-      path: { type: 'string', description: 'Pfad zum zu erstellenden Verzeichnis' },
+      path: { type: 'string', description: 'Path to the directory to create' },
     },
     required: ['path'],
   },
@@ -585,22 +586,22 @@ const createDirectoryTool: Tool<{ path: string }> = {
       path: fullPath,
       runId: context.runId,
     })
-    return { data: result.created ? `Verzeichnis erstellt: ${result.path}` : `Verzeichnis existiert bereits: ${result.path}` }
+    return { data: result.created ? `directory created: ${result.path}` : `directory existiert readys: ${result.path}` }
   },
 }
 
 const movePathTool: Tool<{ source_path: string; destination_path: string; overwrite?: boolean }> = {
   name: 'MovePath',
   aliases: ['move_path', 'move_file', 'move_directory', 'rename_path', 'MovePathTool'],
-  description: 'Verschiebt oder benennt eine Datei oder einen Ordner um.',
+  description: 'Moves or renames a file or folder.',
   category: 'filesystem',
   riskLevel: 'medium',
   inputSchema: {
     type: 'object',
     properties: {
-      source_path: { type: 'string', description: 'Ausgangspfad der Datei oder des Ordners' },
-      destination_path: { type: 'string', description: 'Zielpfad nach dem Verschieben' },
-      overwrite: { type: 'boolean', description: 'Bestehendes Ziel ueberschreiben (Standard: false)' },
+      source_path: { type: 'string', description: 'Source path of the file or folder' },
+      destination_path: { type: 'string', description: 'Destination path after moving' },
+      overwrite: { type: 'boolean', description: 'Overwrite existing target (default: false)' },
     },
     required: ['source_path', 'destination_path'],
   },
@@ -626,8 +627,8 @@ const movePathTool: Tool<{ source_path: string; destination_path: string; overwr
     })
     const notes = [
       `${result.itemKind} verschoben: ${result.sourcePath} -> ${result.destinationPath}`,
-      result.createdParent ? 'Zielordner wurde automatisch erstellt.' : '',
-      result.replacedExisting ? 'Bestehendes Ziel wurde ersetzt.' : '',
+      result.createdParent ? 'Targetordner was automatisch created.' : '',
+      result.replacedExisting ? 'Existing Target was replaced.' : '',
     ].filter(Boolean)
     return { data: notes.join('\n') }
   },
@@ -636,15 +637,15 @@ const movePathTool: Tool<{ source_path: string; destination_path: string; overwr
 const copyPathTool: Tool<{ source_path: string; destination_path: string; overwrite?: boolean }> = {
   name: 'CopyPath',
   aliases: ['copy_path', 'copy_file', 'copy_directory', 'CopyPathTool'],
-  description: 'Kopiert eine Datei oder einen Ordner an einen neuen Pfad.',
+  description: 'Copies a file or folder to a new path.',
   category: 'filesystem',
   riskLevel: 'medium',
   inputSchema: {
     type: 'object',
     properties: {
-      source_path: { type: 'string', description: 'Quelle der Datei oder des Ordners' },
-      destination_path: { type: 'string', description: 'Zielpfad fuer die Kopie' },
-      overwrite: { type: 'boolean', description: 'Bestehendes Ziel ueberschreiben (Standard: false)' },
+      source_path: { type: 'string', description: 'Source of the file or folder' },
+      destination_path: { type: 'string', description: 'Destination path for the copy' },
+      overwrite: { type: 'boolean', description: 'Overwrite existing target (default: false)' },
     },
     required: ['source_path', 'destination_path'],
   },
@@ -670,8 +671,8 @@ const copyPathTool: Tool<{ source_path: string; destination_path: string; overwr
     })
     const notes = [
       `${result.itemKind} kopiert: ${result.sourcePath} -> ${result.destinationPath}`,
-      result.createdParent ? 'Zielordner wurde automatisch erstellt.' : '',
-      result.replacedExisting ? 'Bestehendes Ziel wurde ersetzt.' : '',
+      result.createdParent ? 'Targetordner was automatisch created.' : '',
+      result.replacedExisting ? 'Existing Target was replaced.' : '',
     ].filter(Boolean)
     return { data: notes.join('\n') }
   },
@@ -680,15 +681,15 @@ const copyPathTool: Tool<{ source_path: string; destination_path: string; overwr
 const fileEditTool: Tool<{ file_path: string; old_string: string; new_string: string }> = {
   name: 'Edit',
   aliases: ['edit_file', 'FileEditTool'],
-  description: 'Ersetzt eine exakte Zeichenfolge in einer Datei. old_string muss eindeutig sein.',
+  description: 'Replaces an exact string in a file. old_string must be unique.',
   category: 'filesystem',
   riskLevel: 'medium',
   inputSchema: {
     type: 'object',
     properties: {
-      file_path: { type: 'string', description: 'Pfad zur zu bearbeitenden Datei' },
-      old_string: { type: 'string', description: 'Exakter zu ersetzender Text' },
-      new_string: { type: 'string', description: 'Neuer Ersetzungstext' },
+      file_path: { type: 'string', description: 'Path to the file to edit' },
+      old_string: { type: 'string', description: 'Exact text to replace' },
+      new_string: { type: 'string', description: 'New replacement text' },
     },
     required: ['file_path', 'old_string', 'new_string'],
   },
@@ -701,10 +702,10 @@ const fileEditTool: Tool<{ file_path: string; old_string: string; new_string: st
     const content = await invoke<string>('fs_extract_text', { path: fullPath, runId: context.runId })
     const occurrences = content.split(input.old_string).length - 1
     if (occurrences === 0) {
-      return { data: `Fehler: old_string wurde nicht in ${input.file_path} gefunden.` }
+      return { data: `Error: old_string was not found in ${input.file_path}.` }
     }
     if (occurrences > 1) {
-      return { data: `Fehler: old_string wurde ${occurrences}x gefunden. Muss eindeutig sein.` }
+      return { data: `Error: old_string was found ${occurrences} times. It must be unique.` }
     }
     const newContent = content.replace(input.old_string, input.new_string)
     await invoke('fs_write_text_file', {
@@ -713,7 +714,7 @@ const fileEditTool: Tool<{ file_path: string; old_string: string; new_string: st
       createBackup: true,
       runId: context.runId,
     })
-    return { data: `Datei bearbeitet: ${input.file_path}` }
+    return { data: `File edited: ${input.file_path}` }
   },
 }
 
@@ -723,14 +724,14 @@ const fileEditTool: Tool<{ file_path: string; old_string: string; new_string: st
 const globTool: Tool<{ pattern: string; path?: string }> = {
   name: 'Glob',
   aliases: ['glob', 'GlobTool'],
-  description: 'Sucht Dateien nach Glob-Muster. Schnell zum Finden von Dateien nach Name/Extension.',
+  description: 'Searches files by glob pattern. Fast for finding files by name/extension.',
   category: 'search',
   riskLevel: 'low',
   inputSchema: {
     type: 'object',
     properties: {
-      pattern: { type: 'string', description: 'Glob-Muster (z.B. **/*.ts, src/**/*.rs)' },
-      path: { type: 'string', description: 'Basisverzeichnis fuer die Suche (optional)' },
+      pattern: { type: 'string', description: 'Glob pattern (e.g. **/*.ts, src/**/*.rs)' },
+      path: { type: 'string', description: 'Base directory for the search (optional)' },
     },
     required: ['pattern'],
   },
@@ -748,7 +749,7 @@ const globTool: Tool<{ pattern: string; path?: string }> = {
     const matches = result.files
       .map((file) => file.path)
       .filter((filePath) => pattern.test(filePath))
-    return { data: matches.length > 0 ? matches.join('\n') : 'Keine Treffer.' }
+    return { data: matches.length > 0 ? matches.join('\n') : 'No results.' }
   },
 }
 
@@ -758,15 +759,15 @@ const globTool: Tool<{ pattern: string; path?: string }> = {
 const grepTool: Tool<{ pattern: string; path?: string; include?: string }> = {
   name: 'Grep',
   aliases: ['grep', 'GrepTool', 'search'],
-  description: 'Durchsucht Dateiinhalte mit regulaeren Ausdruecken. Schnell fuer Code-Suche.',
+  description: 'Searches file contents with regular expressions. Fast for code search.',
   category: 'search',
   riskLevel: 'low',
   inputSchema: {
     type: 'object',
     properties: {
-      pattern: { type: 'string', description: 'Regulaerer Ausdruck zum Suchen' },
-      path: { type: 'string', description: 'Verzeichnis fuer die Suche (optional)' },
-      include: { type: 'string', description: 'Dateinamenmuster zum Einschliessen (z.B. *.ts)' },
+      pattern: { type: 'string', description: 'Regular expression to search for' },
+      path: { type: 'string', description: 'Directory for the search (optional)' },
+      include: { type: 'string', description: 'Filename pattern to include (e.g. *.ts)' },
     },
     required: ['pattern'],
   },
@@ -783,9 +784,9 @@ const grepTool: Tool<{ pattern: string; path?: string; include?: string }> = {
         cwd: context.cwd,
         runId: context.runId,
       })
-      return { data: result.stdout || 'Keine Treffer.' }
+      return { data: result.stdout || 'No results.' }
     } catch {
-      return { data: `Grep-Suche nach "${input.pattern}" — Tauri exec_command nicht verfuegbar. Nutze Fallback.` }
+      return { data: `Grep search for "${input.pattern}" — Tauri exec_command is not available. Use fallback.` }
     }
   },
 }
@@ -796,14 +797,14 @@ const grepTool: Tool<{ pattern: string; path?: string; include?: string }> = {
 const bashTool: Tool<{ command: string; timeout?: number }> = {
   name: 'Bash',
   aliases: ['bash', 'shell', 'BashTool', 'execute'],
-  description: 'Fuehrt einen Shell-Befehl aus (PowerShell auf Windows). Nutze fuer Build, Test, Git etc.',
+  description: 'Runs a shell command (PowerShell on Windows). Use for builds, tests, Git, etc.',
   category: 'shell',
   riskLevel: 'high',
   inputSchema: {
     type: 'object',
     properties: {
-      command: { type: 'string', description: 'Der auszufuehrende Shell-Befehl' },
-      timeout: { type: 'number', description: 'Timeout in Millisekunden (Standard: 30000)' },
+      command: { type: 'string', description: 'Shell command to execute' },
+      timeout: { type: 'number', description: 'Timeout in milliseconds (default: 30000)' },
     },
     required: ['command'],
   },
@@ -814,6 +815,62 @@ const bashTool: Tool<{ command: string; timeout?: number }> = {
   },
   isConcurrencySafe: () => false,
   async call(input, context, onProgress) {
+    const terminalThreadId = useTerminalStore.getState().activeAiThreadId
+    if (terminalThreadId) {
+      try {
+        if (onProgress) {
+          onProgress({
+            toolUseID: '',
+            data: {
+              type: 'bash_progress',
+              output: 'terminal: starting command',
+            },
+          })
+        }
+        const result = await useTerminalStore.getState().runAiCommand({
+          threadId: terminalThreadId,
+          command: input.command,
+          cwd: context.cwd,
+          timeoutMs: input.timeout ?? 30000,
+        })
+        const resolvedCurrentCwd = result.currentCwd ?? inferShellCwdFromCommand(input.command, context.cwd)
+        if (resolvedCurrentCwd && resolvedCurrentCwd !== context.cwd) {
+          context.setAppState((prev) => ({ ...prev, cwd: resolvedCurrentCwd }))
+          if (onProgress) {
+            onProgress({
+              toolUseID: '',
+              data: {
+                type: 'bash_progress',
+                output: `cwd: ${resolvedCurrentCwd}`,
+              },
+            })
+          }
+        }
+        if (onProgress) {
+          onProgress({
+            toolUseID: '',
+            data: {
+              type: 'bash_progress',
+              output: `exit code: ${result.exitCode}`,
+              exitCode: result.exitCode ?? undefined,
+            },
+          })
+        }
+        const shouldMirrorCwdToStdout = /\b(?:pwd|Get-Location)\b/i.test(input.command)
+        const effectiveStdout = result.stdout || (shouldMirrorCwdToStdout && resolvedCurrentCwd ? resolvedCurrentCwd : '')
+        const output = [
+          effectiveStdout ? `stdout:\n${effectiveStdout}` : '',
+          result.stderr ? `stderr:\n${result.stderr}` : '',
+          result.interruptedByUser ? 'note: user manually intervened in the terminal while this command was running.' : '',
+          resolvedCurrentCwd ? `current cwd: ${resolvedCurrentCwd}` : '',
+          `exit code: ${result.exitCode}`,
+        ].filter(Boolean).join('\n\n')
+        return { data: output }
+      } catch (err) {
+        return { data: `Error beim Ausfuehren im Terminal: ${err instanceof Error ? err.message : String(err)}` }
+      }
+    }
+
     const streamId = createToolStreamId()
     let unlisten: (() => void) | null = null
 
@@ -886,7 +943,7 @@ const bashTool: Tool<{ command: string; timeout?: number }> = {
       ].filter(Boolean).join('\n\n')
       return { data: output }
     } catch (err) {
-      return { data: `Fehler beim Ausfuehren: ${err instanceof Error ? err.message : String(err)}` }
+      return { data: `Error beim Ausfuehren: ${err instanceof Error ? err.message : String(err)}` }
     } finally {
       if (unlisten) {
         unlisten()
@@ -901,14 +958,14 @@ const bashTool: Tool<{ command: string; timeout?: number }> = {
 const webFetchTool: Tool<{ url: string; max_chars?: number }> = {
   name: 'WebFetch',
   aliases: ['web_fetch', 'fetch', 'WebFetchTool'],
-  description: 'Ruft den Textinhalt einer URL ab und extrahiert den Haupttext.',
+  description: 'Fetches URL text content and extracts the main text.',
   category: 'web',
   riskLevel: 'low',
   inputSchema: {
     type: 'object',
     properties: {
-      url: { type: 'string', description: 'Die abzurufende URL' },
-      max_chars: { type: 'number', description: 'Maximale Zeichenanzahl (Standard: 50000)' },
+      url: { type: 'string', description: 'URL to fetch' },
+      max_chars: { type: 'number', description: 'Maximum character count (default: 50000)' },
     },
     required: ['url'],
   },
@@ -933,14 +990,14 @@ const webFetchTool: Tool<{ url: string; max_chars?: number }> = {
 const webSearchTool: Tool<{ query: string; max_results?: number }> = {
   name: 'WebSearch',
   aliases: ['web_search', 'WebSearchTool'],
-  description: 'Durchsucht das Web nach Informationen zu einem Thema.',
+  description: 'Searches the web for information about a topic.',
   category: 'web',
   riskLevel: 'low',
   inputSchema: {
     type: 'object',
     properties: {
-      query: { type: 'string', description: 'Suchanfrage' },
-      max_results: { type: 'number', description: 'Maximale Ergebnisanzahl (Standard: 5)' },
+      query: { type: 'string', description: 'Search query' },
+      max_results: { type: 'number', description: 'Maximum result count (default: 5)' },
     },
     required: ['query'],
   },
@@ -965,9 +1022,9 @@ const webSearchTool: Tool<{ query: string; max_results?: number }> = {
         const snippet = item.snippet ? `\n${item.snippet}` : ''
         return `${index + 1}. ${item.title}\n${item.url}${snippet}`
       })
-      return { data: lines.join('\n\n') || `Keine Treffer fuer "${input.query}"` }
+      return { data: lines.join('\n\n') || `No results for "${input.query}"` }
     } catch {
-      return { data: `Web-Suche fehlgeschlagen fuer: "${input.query}"` }
+      return { data: `Web-Suche failed for: "${input.query}"` }
     }
   },
 }
@@ -978,15 +1035,15 @@ const webSearchTool: Tool<{ query: string; max_results?: number }> = {
 const mcpTool: Tool<{ server_name: string; tool_name: string; arguments: Record<string, unknown> }> = {
   name: 'MCPTool',
   aliases: ['mcp_call', 'mcp'],
-  description: 'Ruft ein Tool auf einem MCP-Server auf.',
+  description: 'Calls a tool on an MCP server.',
   category: 'mcp',
   riskLevel: 'medium',
   inputSchema: {
     type: 'object',
     properties: {
-      server_name: { type: 'string', description: 'Name des MCP-Servers' },
-      tool_name: { type: 'string', description: 'Name des Tools auf dem Server' },
-      arguments: { type: 'object', description: 'Argumente fuer den Tool-Aufruf' },
+      server_name: { type: 'string', description: 'Name of the MCP server' },
+      tool_name: { type: 'string', description: 'Name of the tool on the server' },
+      arguments: { type: 'object', description: 'Arguments for the tool call' },
     },
     required: ['server_name', 'tool_name', 'arguments'],
   },
@@ -995,7 +1052,7 @@ const mcpTool: Tool<{ server_name: string; tool_name: string; arguments: Record<
   async call(input, context) {
     const server = findMcpServerConfig(input.server_name)
     if (!server) {
-      return { data: `MCP Fehler: Server "${input.server_name}" ist nicht konfiguriert.` }
+      return { data: `MCP Error: Server "${input.server_name}" ist not configured.` }
     }
 
     const requestPayload = {
@@ -1022,10 +1079,10 @@ const mcpTool: Tool<{ server_name: string; tool_name: string; arguments: Record<
 
     const toToolResult = (normalized: { ok: boolean; message: string }) => {
       if (!normalized.ok) {
-        return { data: `MCP Fehler: ${normalized.message}` }
+        return { data: `MCP Error: ${normalized.message}` }
       }
 
-      const screenshotAttachment = createMcpScreenshotAttachment(input.tool_name, normalized.message)
+      const screenshotAttachment = createMcpscreenshotAttachment(input.tool_name, normalized.message)
       if (screenshotAttachment) {
         return {
           data: screenshotAttachment.textSummary,
@@ -1058,10 +1115,10 @@ const mcpTool: Tool<{ server_name: string; tool_name: string; arguments: Record<
   },
 }
 
-const desktopScreenshotTool: Tool<Record<string, never>> = {
-  name: 'DesktopScreenshot',
+const desktopscreenshotTool: Tool<Record<string, never>> = {
+  name: 'Desktopscreenshot',
   aliases: ['desktop_screenshot', 'capture_desktop_screenshot'],
-  description: 'Nimmt einen Screenshot des Primaerdisplays mit Koordinatenraster auf und haengt das Bild fuer visuelle Analyse an die Unterhaltung an. Nutze dieses Tool vor Maus- oder Tastaturaktionen.',
+  description: 'Captures a screenshot of the primary display with a coordinate grid and attaches the image for visual analysis. Use this tool before mouse or keyboard actions.',
   category: 'desktop',
   riskLevel: 'low',
   inputSchema: {
@@ -1071,10 +1128,10 @@ const desktopScreenshotTool: Tool<Record<string, never>> = {
   isReadOnly: () => true,
   isConcurrencySafe: () => false,
   async call() {
-    const screenshot = await invoke<DesktopScreenshotResponse>('desktop_capture_primary_annotated_screenshot')
-    const attachment = createDesktopScreenshotAttachment(screenshot)
+    const screenshot = await invoke<DesktopscreenshotResponse>('desktop_capture_primary_annotated_screenshot')
+    const attachment = createDesktopscreenshotAttachment(screenshot)
     return {
-      data: `${formatDesktopScreenshotSummary(screenshot)} ${attachment ? 'Das Bild wurde als Attachment fuer visuelle Analyse angehaengt.' : 'Das Bild konnte nicht als Attachment angehaengt werden.'}`,
+      data: `${formatDesktopscreenshotSummary(screenshot)} ${attachment ? 'The image was attached for visual analysis.' : 'The image could not be attached.'}`,
       newMessages: attachment ? [attachment] : undefined,
     }
   },
@@ -1083,7 +1140,7 @@ const desktopScreenshotTool: Tool<Record<string, never>> = {
 const desktopPrimaryDisplayTool: Tool<Record<string, never>> = {
   name: 'DesktopPrimaryDisplay',
   aliases: ['desktop_primary_display', 'get_desktop_primary_display'],
-  description: 'Liest Geometrie und Ursprung des Primaerdisplays aus. Hilfreich fuer Koordinaten bei Mausaktionen.',
+  description: 'Reads geometry and origin of the primary display. Useful for coordinates during mouse actions.',
   category: 'desktop',
   riskLevel: 'low',
   inputSchema: {
@@ -1101,7 +1158,7 @@ const desktopPrimaryDisplayTool: Tool<Record<string, never>> = {
 const desktopListWindowsTool: Tool<Record<string, never>> = {
   name: 'DesktopListWindows',
   aliases: ['desktop_list_windows', 'list_desktop_windows'],
-  description: 'Listet sichtbare Desktop-Fenster mit Titel, Prozess und Bounds auf. Nutze dies, um Ziel-Fenster fuer Fokus oder Interaktionen zu finden.',
+  description: 'Lists visible desktop windows with title, process, and bounds. Use this to find target windows for focus or interaction.',
   category: 'desktop',
   riskLevel: 'low',
   inputSchema: {
@@ -1113,7 +1170,7 @@ const desktopListWindowsTool: Tool<Record<string, never>> = {
   async call() {
     const windows = await invoke<DesktopWindowInfo[]>('desktop_list_windows')
     if (windows.length === 0) {
-      return { data: 'Keine sichtbaren Desktop-Fenster gefunden.' }
+      return { data: 'No visible desktop windows found.' }
     }
     return { data: JSON.stringify(windows, null, 2) }
   },
@@ -1122,23 +1179,23 @@ const desktopListWindowsTool: Tool<Record<string, never>> = {
 const desktopFocusWindowTool: Tool<{ title?: string; process_name?: string; process_id?: number; exact_match?: boolean }> = {
   name: 'DesktopFocusWindow',
   aliases: ['desktop_focus_window', 'focus_desktop_window'],
-  description: 'Bringt ein Desktop-Fenster in den Vordergrund. Gib mindestens title, process_name oder process_id an.',
+  description: 'Brings a desktop window to the foreground. Provide at least title, process_name, or process_id.',
   category: 'desktop',
   riskLevel: 'medium',
   inputSchema: {
     type: 'object',
     properties: {
-      title: { type: 'string', description: 'Fenstertitel oder Teilstring' },
-      process_name: { type: 'string', description: 'Optionaler Prozessname' },
-      process_id: { type: 'number', description: 'Optionale Prozess-ID' },
-      exact_match: { type: 'boolean', description: 'Exakten Match statt Teilstring verwenden' },
+      title: { type: 'string', description: 'Window title or substring' },
+      process_name: { type: 'string', description: 'Optional process name' },
+      process_id: { type: 'number', description: 'Optional process ID' },
+      exact_match: { type: 'boolean', description: 'Use exact match instead of substring' },
     },
   },
   isReadOnly: () => false,
   isConcurrencySafe: () => false,
   async call(input) {
     if (!input.title?.trim() && !input.process_name?.trim() && typeof input.process_id !== 'number') {
-      return { data: 'Fehler: title, process_name oder process_id ist erforderlich.' }
+      return { data: 'Error: title, process_name, or process_id is required.' }
     }
 
     const windowInfo = await invoke<DesktopWindowInfo>('desktop_focus_window', {
@@ -1150,10 +1207,10 @@ const desktopFocusWindowTool: Tool<{ title?: string; process_name?: string; proc
       },
     })
 
-    const verification = await captureDesktopVerificationAttachment(`Fensterfokus fuer ${windowInfo.title || input.process_name || input.process_id || 'Ziel'} angefordert`)
+    const verification = await captureDesktopVerificationAttachment(`windowfokus for ${windowInfo.title || input.process_name || input.process_id || 'Target'} angefordert`)
 
     return {
-      data: `${JSON.stringify(windowInfo, null, 2)}\nFokus-Anfrage wurde gesendet. ${verification ? 'Ein aktueller Verifikations-Screenshot wurde angehaengt. Pruefe ihn, bevor du Erfolg behauptest.' : 'Automatische Verifikation nicht verfuegbar; nutze DesktopScreenshot zur Kontrolle.'}`,
+      data: `${JSON.stringify(windowInfo, null, 2)}\nFocus request was sent. ${verification ? 'A current verification screenshot was attached. Check it before claiming success.' : 'Automatic verification is not available; use DesktopScreenshot to check.'}`,
       newMessages: verification ? [verification] : undefined,
     }
   },
@@ -1162,16 +1219,16 @@ const desktopFocusWindowTool: Tool<{ title?: string; process_name?: string; proc
 const desktopLaunchAppTool: Tool<{ app_path: string; args?: string[]; cwd?: string; initial_delay_ms?: number }> = {
   name: 'DesktopLaunchApp',
   aliases: ['desktop_launch_app', 'launch_desktop_app'],
-  description: 'Startet eine Windows-Desktop-App lokal. Nutze dies, um eine Zielanwendung vor Screenshot- oder UI-Aktionen zu oeffnen.',
+  description: 'Starts a Windows desktop app locally. Use this to open a target application before screenshot or UI actions.',
   category: 'desktop',
   riskLevel: 'high',
   inputSchema: {
     type: 'object',
     properties: {
-      app_path: { type: 'string', description: 'Pfad zur auszufuehrenden .exe oder Anwendung' },
-      args: { type: 'array', description: 'Optionale Startargumente' },
-      cwd: { type: 'string', description: 'Optionales Arbeitsverzeichnis' },
-      initial_delay_ms: { type: 'number', description: 'Optionales Delay nach dem Start' },
+      app_path: { type: 'string', description: 'Path to the .exe or application to run' },
+      args: { type: 'array', description: 'Optional start arguments' },
+      cwd: { type: 'string', description: 'Optional working directory' },
+      initial_delay_ms: { type: 'number', description: 'Optional delay after launch' },
     },
     required: ['app_path'],
   },
@@ -1187,10 +1244,10 @@ const desktopLaunchAppTool: Tool<{ app_path: string; args?: string[]; cwd?: stri
       },
     })
 
-    const verification = await captureDesktopVerificationAttachment(`App-Start fuer ${launch.path}`)
+    const verification = await captureDesktopVerificationAttachment(`App-Start for ${launch.path}`)
 
     return {
-      data: `${JSON.stringify(launch, null, 2)}\nStart-Anfrage wurde gesendet. ${verification ? 'Ein aktueller Verifikations-Screenshot wurde angehaengt. Pruefe ihn, bevor du Folgezustaende beschreibst.' : 'Automatische Verifikation nicht verfuegbar; nutze DesktopScreenshot zur Kontrolle.'}`,
+      data: `${JSON.stringify(launch, null, 2)}\nStart request was sent. ${verification ? 'A current verification screenshot was attached. Check it before describing follow-up states.' : 'Automatic verification is not available; use DesktopScreenshot to check.'}`,
       newMessages: verification ? [verification] : undefined,
     }
   },
@@ -1199,15 +1256,15 @@ const desktopLaunchAppTool: Tool<{ app_path: string; args?: string[]; cwd?: stri
 const desktopMoveMouseTool: Tool<{ x: number; y: number; coordinate_space?: DesktopCoordinateSpace }> = {
   name: 'DesktopMoveMouse',
   aliases: ['desktop_move_mouse', 'move_desktop_mouse'],
-  description: 'Bewegt den Mauszeiger. Standard: x/y sind Koordinaten relativ zum aktuellen DesktopScreenshot des Primaerdisplays. Mit coordinate_space="screen" kannst du stattdessen absolute virtuelle Bildschirmkoordinaten angeben.',
+  description: 'Moves the mouse pointer. Default: x/y are coordinates relative to the current desktop screenshot of the primary display. With coordinate_space="screen", you can instead provide absolute virtual screen coordinates.',
   category: 'desktop',
   riskLevel: 'medium',
   inputSchema: {
     type: 'object',
     properties: {
-      x: { type: 'number', description: 'X-Koordinate im Screenshot des Primaerdisplays oder absolute X-Koordinate bei coordinate_space="screen"' },
-      y: { type: 'number', description: 'Y-Koordinate im Screenshot des Primaerdisplays oder absolute Y-Koordinate bei coordinate_space="screen"' },
-      coordinate_space: { type: 'string', description: 'Optional: "display" (Standard, relativ zum Screenshot) oder "screen" (absolut im virtuellen Desktop)', enum: ['display', 'screen'] },
+      x: { type: 'number', description: 'X coordinate in the primary display screenshot, or absolute X coordinate when coordinate_space="screen"' },
+      y: { type: 'number', description: 'Y coordinate in the primary display screenshot, or absolute Y coordinate when coordinate_space="screen"' },
+      coordinate_space: { type: 'string', description: 'Optional: "display" (default, relative to the screenshot) or "screen" (absolute in the virtual desktop)', enum: ['display', 'screen'] },
     },
     required: ['x', 'y'],
   },
@@ -1222,24 +1279,24 @@ const desktopMoveMouseTool: Tool<{ x: number; y: number; coordinate_space?: Desk
       },
     })
 
-    return { data: `${JSON.stringify(result, null, 2)}\nMausbewegung gesendet: ${describeResolvedDesktopPoint(point)}.` }
+    return { data: `${JSON.stringify(result, null, 2)}\nMouse movement sent: ${describeResolvedDesktopPoint(point)}.` }
   },
 }
 
 const desktopClickTool: Tool<{ x: number; y: number; button?: 'left' | 'right'; double_click?: boolean; coordinate_space?: DesktopCoordinateSpace }> = {
   name: 'DesktopClick',
   aliases: ['desktop_click', 'click_desktop'],
-  description: 'Klickt an einer Position auf dem Primaerdisplay. Standard: x/y sind Koordinaten relativ zum aktuellen DesktopScreenshot. Mit coordinate_space="screen" kannst du absolute virtuelle Bildschirmkoordinaten angeben.',
+  description: 'Clicks at a position on the primary display. Default: x/y are coordinates relative to the current desktop screenshot. With coordinate_space="screen", you can provide absolute virtual screen coordinates.',
   category: 'desktop',
   riskLevel: 'high',
   inputSchema: {
     type: 'object',
     properties: {
-      x: { type: 'number', description: 'X-Koordinate im Screenshot des Primaerdisplays oder absolute X-Koordinate bei coordinate_space="screen"' },
-      y: { type: 'number', description: 'Y-Koordinate im Screenshot des Primaerdisplays oder absolute Y-Koordinate bei coordinate_space="screen"' },
-      button: { type: 'string', description: 'Maustaste', enum: ['left', 'right'] },
-      double_click: { type: 'boolean', description: 'Doppelklick statt Einfachklick' },
-      coordinate_space: { type: 'string', description: 'Optional: "display" (Standard, relativ zum Screenshot) oder "screen" (absolut im virtuellen Desktop)', enum: ['display', 'screen'] },
+      x: { type: 'number', description: 'X coordinate in the primary display screenshot, or absolute X coordinate when coordinate_space="screen"' },
+      y: { type: 'number', description: 'Y coordinate in the primary display screenshot, or absolute Y coordinate when coordinate_space="screen"' },
+      button: { type: 'string', description: 'mouse button', enum: ['left', 'right'] },
+      double_click: { type: 'boolean', description: 'Double-click instead of single click' },
+      coordinate_space: { type: 'string', description: 'Optional: "display" (default, relative to the screenshot) or "screen" (absolute in the virtual desktop)', enum: ['display', 'screen'] },
     },
     required: ['x', 'y'],
   },
@@ -1256,11 +1313,11 @@ const desktopClickTool: Tool<{ x: number; y: number; button?: 'left' | 'right'; 
       },
     })
 
-    const actionLabel = `Klick bei (${point.absoluteX}, ${point.absoluteY})${input.double_click ? ' als Doppelklick' : ''}`
+    const actionLabel = `Click at (${point.absoluteX}, ${point.absoluteY})${input.double_click ? ' as double-click' : ''}`
     const verification = await captureDesktopVerificationAttachment(actionLabel)
 
     return {
-      data: `${JSON.stringify(result, null, 2)}\nKlick-Anfrage wurde an ${input.button ?? 'left'} gesendet: ${describeResolvedDesktopPoint(point)}.${input.double_click ? ' Doppelklick aktiv.' : ''} ${verification ? 'Ein aktueller Verifikations-Screenshot wurde angehaengt. Pruefe ihn, bevor du behauptest, dass ein Button wirklich getroffen wurde.' : 'Automatische Verifikation nicht verfuegbar; nutze DesktopScreenshot zur Kontrolle.'}`,
+      data: `${JSON.stringify(result, null, 2)}\nClick request was sent to ${input.button ?? 'left'}: ${describeResolvedDesktopPoint(point)}.${input.double_click ? ' Double-click active.' : ''} ${verification ? 'A current verification screenshot was attached. Check it before claiming that a button was actually hit.' : 'Automatic verification is not available; use DesktopScreenshot to check.'}`,
       newMessages: verification ? [verification] : undefined,
     }
   },
@@ -1269,13 +1326,13 @@ const desktopClickTool: Tool<{ x: number; y: number; button?: 'left' | 'right'; 
 const desktopTypeTextTool: Tool<{ text: string }> = {
   name: 'DesktopTypeText',
   aliases: ['desktop_type_text', 'type_desktop_text'],
-  description: 'Gibt Text in das aktuell fokussierte Windows-Fenster ein. Verwendet Zwischenablage-Einfuegen fuer robuste Eingabe.',
+  description: 'Types text into the currently focused Windows window. Uses clipboard paste for robust input.',
   category: 'desktop',
   riskLevel: 'high',
   inputSchema: {
     type: 'object',
     properties: {
-      text: { type: 'string', description: 'Einzugebender Text' },
+      text: { type: 'string', description: 'Text to type' },
     },
     required: ['text'],
   },
@@ -1291,7 +1348,7 @@ const desktopTypeTextTool: Tool<{ text: string }> = {
     const verification = await captureDesktopVerificationAttachment(`Texteingabe mit ${input.text.length} Zeichen`)
 
     return {
-      data: `${JSON.stringify(result, null, 2)}\nTexteingabe wurde gesendet (${input.text.length} Zeichen). ${verification ? 'Ein aktueller Verifikations-Screenshot wurde angehaengt. Pruefe ihn, bevor du eine erfolgreiche Eingabe beschreibst.' : 'Automatische Verifikation nicht verfuegbar; nutze DesktopScreenshot zur Kontrolle.'}`,
+      data: `${JSON.stringify(result, null, 2)}\nText input was sent (${input.text.length} characters). ${verification ? 'A current verification screenshot was attached. Check it before describing the input as successful.' : 'Automatic verification is not available; use DesktopScreenshot to check.'}`,
       newMessages: verification ? [verification] : undefined,
     }
   },
@@ -1300,13 +1357,13 @@ const desktopTypeTextTool: Tool<{ text: string }> = {
 const desktopKeypressTool: Tool<{ keys: string[] }> = {
   name: 'DesktopKeypress',
   aliases: ['desktop_keypress', 'press_desktop_keys'],
-  description: 'Sendet Tasten oder Tastenkombinationen an das aktuell fokussierte Fenster, z. B. ["CTRL", "L"] oder ["ENTER"].',
+  description: 'Sends keys or key combinations to the currently focused window, e.g. ["CTRL", "L"] or ["ENTER"].',
   category: 'desktop',
   riskLevel: 'high',
   inputSchema: {
     type: 'object',
     properties: {
-      keys: { type: 'array', description: 'Array von Tasten oder Modifiern' },
+      keys: { type: 'array', description: 'Array of keys or modifiers' },
     },
     required: ['keys'],
   },
@@ -1322,7 +1379,7 @@ const desktopKeypressTool: Tool<{ keys: string[] }> = {
     const verification = await captureDesktopVerificationAttachment(`Tastendruck ${input.keys.join(' + ')}`)
 
     return {
-      data: `${JSON.stringify(result, null, 2)}\nTastendruck wurde gesendet: ${input.keys.join(' + ')}. ${verification ? 'Ein aktueller Verifikations-Screenshot wurde angehaengt. Pruefe ihn, bevor du einen UI-Erfolg behauptest.' : 'Automatische Verifikation nicht verfuegbar; nutze DesktopScreenshot zur Kontrolle.'}`,
+      data: `${JSON.stringify(result, null, 2)}\nKeystroke was sent: ${input.keys.join(' + ')}. ${verification ? 'A current verification screenshot was attached. Check it before claiming UI success.' : 'Automatic verification is not available; use DesktopScreenshot to check.'}`,
       newMessages: verification ? [verification] : undefined,
     }
   },
@@ -1331,16 +1388,16 @@ const desktopKeypressTool: Tool<{ keys: string[] }> = {
 const desktopScrollTool: Tool<{ scroll_y: number; x?: number; y?: number; coordinate_space?: DesktopCoordinateSpace }> = {
   name: 'DesktopScroll',
   aliases: ['desktop_scroll', 'scroll_desktop'],
-  description: 'Scrollt im aktuell fokussierten Fenster oder optional an einer Position auf dem Primaerdisplay. Standard: x/y sind relativ zum Screenshot des Primaerdisplays. Mit coordinate_space="screen" kannst du absolute virtuelle Bildschirmkoordinaten angeben.',
+  description: 'Scrolls in the currently focused window or optionally at a position on the primary display. Default: x/y are relative to the primary display screenshot. With coordinate_space="screen", you can provide absolute virtual screen coordinates.',
   category: 'desktop',
   riskLevel: 'medium',
   inputSchema: {
     type: 'object',
     properties: {
       scroll_y: { type: 'number', description: 'Vertikaler Scrollwert; positiv nach oben, negativ nach unten' },
-      x: { type: 'number', description: 'Optionale X-Koordinate fuer den Mausfokus im Screenshot oder absolut bei coordinate_space="screen"' },
-      y: { type: 'number', description: 'Optionale Y-Koordinate fuer den Mausfokus im Screenshot oder absolut bei coordinate_space="screen"' },
-      coordinate_space: { type: 'string', description: 'Optional: "display" (Standard, relativ zum Screenshot) oder "screen" (absolut im virtuellen Desktop)', enum: ['display', 'screen'] },
+      x: { type: 'number', description: 'Optional X coordinate for mouse focus in the screenshot, or absolute when coordinate_space="screen"' },
+      y: { type: 'number', description: 'Optional Y coordinate for mouse focus in the screenshot, or absolute when coordinate_space="screen"' },
+      coordinate_space: { type: 'string', description: 'Optional: "display" (default, relative to the screenshot) or "screen" (absolute in the virtual desktop)', enum: ['display', 'screen'] },
     },
     required: ['scroll_y'],
   },
@@ -1362,7 +1419,7 @@ const desktopScrollTool: Tool<{ scroll_y: number; x?: number; y?: number; coordi
     const verification = await captureDesktopVerificationAttachment(`Scrollen mit Delta ${Math.round(input.scroll_y)}`)
 
     return {
-      data: `${JSON.stringify(result, null, 2)}\nScroll-Anfrage wurde gesendet (Delta ${Math.round(input.scroll_y)}).${point ? ` Mausfokus: ${describeResolvedDesktopPoint(point)}.` : ''} ${verification ? 'Ein aktueller Verifikations-Screenshot wurde angehaengt. Pruefe ihn, bevor du das Ergebnis beschreibst.' : 'Automatische Verifikation nicht verfuegbar; nutze DesktopScreenshot zur Kontrolle.'}`,
+      data: `${JSON.stringify(result, null, 2)}\nScroll request was sent (Delta ${Math.round(input.scroll_y)}).${point ? ` mouse focus: ${describeResolvedDesktopPoint(point)}.` : ''} ${verification ? 'A current verification screenshot was attached. Check it before describing the result.' : 'Automatic verification is not available; use DesktopScreenshot to check.'}`,
       newMessages: verification ? [verification] : undefined,
     }
   },
@@ -1374,14 +1431,14 @@ const desktopScrollTool: Tool<{ scroll_y: number; x?: number; y?: number; coordi
 const agentTool: Tool<{ agent_name: string; prompt: string }> = {
   name: 'Agent',
   aliases: ['agent', 'subagent', 'AgentTool'],
-  description: 'Startet einen Sub-Agenten fuer eine bestimmte Aufgabe. Der Agent laeuft in einer isolierten Worker-Sandbox.',
+  description: 'Starts a sub-agent for a specific task. The agent runs in an isolated worker sandbox.',
   category: 'agent',
   riskLevel: 'medium',
   inputSchema: {
     type: 'object',
     properties: {
-      agent_name: { type: 'string', description: 'Name/Typ des zu startenden Agenten' },
-      prompt: { type: 'string', description: 'Aufgabe/Prompt fuer den Sub-Agenten' },
+      agent_name: { type: 'string', description: 'Name/type of the agent to start' },
+      prompt: { type: 'string', description: 'Task/prompt for the sub-agent' },
     },
     required: ['agent_name', 'prompt'],
   },
@@ -1391,9 +1448,9 @@ const agentTool: Tool<{ agent_name: string; prompt: string }> = {
     // Sub-agent runs will be dispatched through the query engine
     // This is a placeholder that the query engine intercepts
     if (onProgress) {
-      onProgress({ toolUseID: '', data: { type: 'agent_progress', agentName: input.agent_name, content: `Agent "${input.agent_name}" gestartet...` } })
+      onProgress({ toolUseID: '', data: { type: 'agent_progress', agentName: input.agent_name, content: `Agent "${input.agent_name}" started...` } })
     }
-    return { data: `Sub-Agent "${input.agent_name}" fuer Aufgabe: ${input.prompt}` }
+    return { data: `Sub-Agent "${input.agent_name}" for Task: ${input.prompt}` }
   },
 }
 
@@ -1411,32 +1468,32 @@ type AskUserToolInput = {
 const askUserTool: Tool<AskUserToolInput> = {
   name: 'AskUser',
   aliases: ['ask_user', 'AskUserQuestionTool'],
-  description: 'Stellt dem Benutzer eine strukturierte Rueckfrage und wartet auf Antwort. Nutze options fuer Auswahlmoeglichkeiten und Freitext fuer Zusatzkontext.',
+  description: 'Asks the user a structured question and waits for an answer. Use options for choices and free text for additional context.',
   category: 'user_interaction',
   riskLevel: 'low',
   inputSchema: {
     type: 'object',
     properties: {
-      question: { type: 'string', description: 'Die Frage an den Benutzer' },
+      question: { type: 'string', description: 'Question for the user' },
       options: {
         type: 'array',
-        description: 'Optionale Auswahlmoeglichkeiten als Strings oder Objekte mit label/value.',
+        description: 'Optional choices as strings or objects with label/value.',
         items: { type: 'string' },
       },
       allow_multiple: {
         type: 'boolean',
-        description: 'Ob mehrere Optionen ausgewaehlt werden duerfen. Standard: false bei Entscheidungsfragen, sonst true.',
+        description: 'Whether multiple options may be selected. Default: false for decision questions, otherwise true.',
         default: false,
       },
       free_text_label: {
         type: 'string',
-        description: 'Beschriftung des Freitextfelds.',
+        description: 'Label for the free-text field.',
         default: 'Zusatzangaben',
       },
       free_text_placeholder: {
         type: 'string',
-        description: 'Placeholder fuer das Freitextfeld.',
-        default: 'Optional ergaenzen...',
+        description: 'Placeholder for the free-text field.',
+        default: 'Add optional details...',
       },
     },
     required: ['question'],
@@ -1464,7 +1521,7 @@ const askUserTool: Tool<AskUserToolInput> = {
       allowMultiple,
       allowFreeformInput: true,
       freeTextLabel: input.free_text_label || 'Freitext',
-      freeTextPlaceholder: input.free_text_placeholder || 'Optional ergaenzen...',
+      freeTextPlaceholder: input.free_text_placeholder || 'Add optional details...',
     })
     return {
       data: `[Warte auf Benutzerantwort: ${input.question}]`,
@@ -1479,14 +1536,14 @@ const askUserTool: Tool<AskUserToolInput> = {
 const taskCreateTool: Tool<{ title: string; description: string }> = {
   name: 'TaskCreate',
   aliases: ['task_create', 'todo_add'],
-  description: 'Erstellt eine neue Aufgabe/Todo.',
+  description: 'Creates a new task/todo.',
   category: 'task',
   riskLevel: 'low',
   inputSchema: {
     type: 'object',
     properties: {
-      title: { type: 'string', description: 'Titel der Aufgabe' },
-      description: { type: 'string', description: 'Beschreibung der Aufgabe' },
+      title: { type: 'string', description: 'Task title' },
+      description: { type: 'string', description: 'Task description' },
     },
     required: ['title', 'description'],
   },
@@ -1502,20 +1559,20 @@ const taskCreateTool: Tool<{ title: string; description: string }> = {
       threadId: null,
       createdAt: new Date().toISOString(),
     })
-    return { data: `Aufgabe erstellt: ${input.title} (ID: ${taskId})` }
+    return { data: `Task created: ${input.title} (ID: ${taskId})` }
   },
 }
 
 const taskListTool: Tool<{ status?: string }> = {
   name: 'TaskList',
   aliases: ['task_list', 'todo_list'],
-  description: 'Listet alle aktiven Aufgaben/Todos auf.',
+  description: 'Lists all active tasks/todos.',
   category: 'task',
   riskLevel: 'low',
   inputSchema: {
     type: 'object',
     properties: {
-      status: { type: 'string', description: 'Filtere nach Status (pending/running/completed/failed)', enum: ['pending', 'running', 'completed', 'failed'] },
+      status: { type: 'string', description: 'Filter by status (pending/running/completed/failed)', enum: ['pending', 'running', 'completed', 'failed'] },
     },
   },
   isReadOnly: () => true,
@@ -1523,9 +1580,9 @@ const taskListTool: Tool<{ status?: string }> = {
   async call(input) {
     const tasks = await invoke<Array<{ id: string; title: string; status: string }>>('db_list_tasks')
     const filtered = input.status ? tasks.filter(t => t.status === input.status) : tasks
-    if (filtered.length === 0) return { data: 'Keine Aufgaben gefunden.' }
+    if (filtered.length === 0) return { data: 'No tasks found.' }
     const list = filtered.map(t => `- [${t.status}] ${t.title} (${t.id.slice(0, 8)})`).join('\n')
-    return { data: `Aufgaben (${filtered.length}):\n${list}` }
+    return { data: `Tasks (${filtered.length}):\n${list}` }
   },
 }
 
@@ -1535,14 +1592,14 @@ const taskListTool: Tool<{ status?: string }> = {
 const memoryReadTool: Tool<{ scope?: string; key?: string }> = {
   name: 'MemoryRead',
   aliases: ['memory_read', 'recall'],
-  description: 'Liest Eintraege aus dem Gedaechtnis-System.',
+  description: 'Reads entries from the memory system.',
   category: 'memory',
   riskLevel: 'low',
   inputSchema: {
     type: 'object',
     properties: {
       scope: { type: 'string', description: 'Scope: agent, user, session, shared', enum: ['agent', 'user', 'session', 'shared'] },
-      key: { type: 'string', description: 'Optionaler Schluessel zum Filtern' },
+      key: { type: 'string', description: 'Optional key to filter by' },
     },
   },
   isReadOnly: () => true,
@@ -1556,7 +1613,7 @@ const memoryReadTool: Tool<{ scope?: string; key?: string }> = {
       limit: 100,
     })
     const filtered = input.key ? entries.filter(e => e.key.includes(input.key ?? '')) : entries
-    if (filtered.length === 0) return { data: 'Keine Erinnerungen gefunden.' }
+    if (filtered.length === 0) return { data: 'No reminders found.' }
     return { data: filtered.map(e => `[${e.scope}/${e.category}/${e.key}]: ${e.content}`).join('\n\n') }
   },
 }
@@ -1564,15 +1621,15 @@ const memoryReadTool: Tool<{ scope?: string; key?: string }> = {
 const memoryWriteTool: Tool<{ scope: string; key: string; content: string }> = {
   name: 'MemoryWrite',
   aliases: ['memory_write', 'remember'],
-  description: 'Speichert einen Eintrag im Gedaechtnis-System.',
+  description: 'Stores an entry in the memory system.',
   category: 'memory',
   riskLevel: 'low',
   inputSchema: {
     type: 'object',
     properties: {
       scope: { type: 'string', description: 'Scope: agent, user, session, shared', enum: ['agent', 'user', 'session', 'shared'] },
-      key: { type: 'string', description: 'Eindeutiger Schluessel' },
-      content: { type: 'string', description: 'Zu speichernder Inhalt' },
+      key: { type: 'string', description: 'Unique key' },
+      content: { type: 'string', description: 'Content to store' },
     },
     required: ['scope', 'key', 'content'],
   },
@@ -1581,7 +1638,7 @@ const memoryWriteTool: Tool<{ scope: string; key: string; content: string }> = {
   async call(input, context) {
     const scope = normalizeMemoryScope(input.scope)
     if (!scope) {
-      return { data: 'Fehler: scope ist erforderlich.' }
+      return { data: 'Error: scope ist erforderlich.' }
     }
 
     await invoke('memory_upsert', {
@@ -1593,7 +1650,7 @@ const memoryWriteTool: Tool<{ scope: string; key: string; content: string }> = {
       sourceSessionId: context.sessionId ?? null,
       confidence: 1.0,
     })
-    return { data: `Erinnerung gespeichert: [${scope}/user/${input.key}]` }
+    return { data: `reminder saved: [${scope}/user/${input.key}]` }
   },
 }
 
@@ -1603,7 +1660,7 @@ const memoryWriteTool: Tool<{ scope: string; key: string; content: string }> = {
 const enterPlanTool: Tool = {
   name: 'EnterPlanMode',
   aliases: ['plan', 'enter_plan_mode'],
-  description: 'Wechselt in den Plan-Modus. Alle Aenderungen werden nur vorgeschlagen, nicht ausgefuehrt.',
+  description: 'Switches to plan mode. All changes are suggested only, not executed.',
   category: 'planning',
   riskLevel: 'low',
   inputSchema: { type: 'object', properties: {} },
@@ -1611,14 +1668,14 @@ const enterPlanTool: Tool = {
   isConcurrencySafe: () => true,
   async call(_input, context) {
     context.setAppState(prev => ({ ...prev, planMode: true }))
-    return { data: 'Plan-Modus aktiviert. Aenderungen werden nur vorgeschlagen.' }
+    return { data: 'Plan mode enabled. Changes will only be suggested.' }
   },
 }
 
 const exitPlanTool: Tool = {
   name: 'ExitPlanMode',
   aliases: ['execute', 'exit_plan_mode'],
-  description: 'Verlaesst den Plan-Modus und kehrt zur direkten Ausfuehrung zurueck.',
+  description: 'Leaves plan mode and returns to direct execution.',
   category: 'planning',
   riskLevel: 'low',
   inputSchema: { type: 'object', properties: {} },
@@ -1626,7 +1683,7 @@ const exitPlanTool: Tool = {
   isConcurrencySafe: () => true,
   async call(_input, context) {
     context.setAppState(prev => ({ ...prev, planMode: false }))
-    return { data: 'Plan-Modus deaktiviert. Aenderungen werden direkt ausgefuehrt.' }
+    return { data: 'Plan mode disabled. Changes will be executed directly.' }
   },
 }
 
@@ -1636,14 +1693,14 @@ const exitPlanTool: Tool = {
 const skillTool: Tool<{ skill_name: string; input: string }> = {
   name: 'Skill',
   aliases: ['skill', 'SkillTool', 'run_skill'],
-  description: 'Fuehrt eine gespeicherte Faehigkeit (Skill) aus.',
+  description: 'Runs a saved skill.',
   category: 'skill',
   riskLevel: 'medium',
   inputSchema: {
     type: 'object',
     properties: {
-      skill_name: { type: 'string', description: 'Name des Skills' },
-      input: { type: 'string', description: 'Eingabe fuer den Skill' },
+      skill_name: { type: 'string', description: 'Name of the skill' },
+      input: { type: 'string', description: 'Input for the skill' },
     },
     required: ['skill_name', 'input'],
   },
@@ -1651,7 +1708,7 @@ const skillTool: Tool<{ skill_name: string; input: string }> = {
   isConcurrencySafe: () => false,
   async call(input) {
     // Delegate to the existing skill system
-    return { data: `Skill "${input.skill_name}" ausgefuehrt mit: ${input.input}` }
+    return { data: `Skill "${input.skill_name}" executed mit: ${input.input}` }
   },
 }
 
@@ -1671,20 +1728,20 @@ const officeWorkflowTool: Tool<{
 }> = {
   name: 'OfficeWorkflowTool',
   aliases: ['office_workflow', 'generate_office_workflow', 'docx_template_workflow', 'pptx_template_workflow'],
-  description: 'Erzeugt DOCX/PPTX mit nativer Generierung und optionalem Template-Transform (Modi: parallel, native, template).',
+  description: 'Creates DOCX/PPTX with native generation and optional template transform (modes: parallel, native, template).',
   category: 'filesystem',
   riskLevel: 'medium',
   inputSchema: {
     type: 'object',
     properties: {
-      format: { type: 'string', description: 'Zielformat', enum: ['docx', 'pptx'] },
-      output_path: { type: 'string', description: 'Zieldatei fuer native/template Ausgabe' },
-      mode: { type: 'string', description: 'Workflow-Modus', enum: ['parallel', 'native', 'template'], default: 'parallel' },
-      template_path: { type: 'string', description: 'Optionales Template fuer Placeholder-Transform' },
-      transforms: { type: 'object', description: 'Schluessel/Wert-Map fuer {{placeholder}} Ersetzung' },
-      title: { type: 'string', description: 'Optionaler Titel fuer native Ausgabe und Transform-Defaults' },
-      paragraphs: { type: 'array', items: { type: 'string' }, description: 'Optionale Abschnitte fuer native Ausgabe (jeder Eintrag = ein Absatz / Folie)' },
-      bullets: { type: 'array', items: { type: 'string' }, description: 'Optionale Bullet-Liste fuer native Ausgabe' },
+      format: { type: 'string', description: 'Target format', enum: ['docx', 'pptx'] },
+      output_path: { type: 'string', description: 'Target file for native/template output' },
+      mode: { type: 'string', description: 'Workflow mode', enum: ['parallel', 'native', 'template'], default: 'parallel' },
+      template_path: { type: 'string', description: 'Optional template for placeholder transform' },
+      transforms: { type: 'object', description: 'Key/value map for {{placeholder}} replacement' },
+      title: { type: 'string', description: 'Optional title for native output and transform defaults' },
+      paragraphs: { type: 'array', items: { type: 'string' }, description: 'Optional sections for native output (each entry = one paragraph / slide)' },
+      bullets: { type: 'array', items: { type: 'string' }, description: 'Optional bullet list for native output' },
     },
     required: ['format', 'output_path'],
   },
@@ -1712,16 +1769,16 @@ const officeWorkflowTool: Tool<{
 const listDirTool: Tool<{ path: string; recursive?: boolean; max_depth?: number; max_entries?: number }> = {
   name: 'ListDir',
   aliases: ['list_directory', 'ls', 'ListDirTool', 'list_dir', 'dir'],
-  description: 'Listet den Inhalt eines Verzeichnisses auf. Zeigt Dateien mit Groesse und Typ.',
+  description: 'Lists directory contents. Shows files with size and type.',
   category: 'filesystem',
   riskLevel: 'low',
   inputSchema: {
     type: 'object',
     properties: {
-      path: { type: 'string', description: 'Pfad zum Verzeichnis' },
-      recursive: { type: 'boolean', description: 'Rekursiv auflisten (Standard: false)' },
-      max_depth: { type: 'number', description: 'Maximale Tiefe bei Rekursion (Standard: 3)' },
-      max_entries: { type: 'number', description: 'Optional: maximale Anzahl Eintraege (Standard: 200)' },
+      path: { type: 'string', description: 'Path to the directory' },
+      recursive: { type: 'boolean', description: 'List recursively (default: false)' },
+      max_depth: { type: 'number', description: 'Maximum recursion depth (default: 3)' },
+      max_entries: { type: 'number', description: 'Optional: maximum number of entries (default: 200)' },
     },
     required: ['path'],
   },
@@ -1738,7 +1795,7 @@ const listDirTool: Tool<{ path: string; recursive?: boolean; max_depth?: number;
       })
 
       if (result.files.length === 0) {
-        return { data: 'Verzeichnis ist leer.' }
+        return { data: 'directory ist leer.' }
       }
 
       const basePath = result.rootPath.replace(/\\/g, '/')
@@ -1751,10 +1808,10 @@ const listDirTool: Tool<{ path: string; recursive?: boolean; max_depth?: number;
         return `${displayPath} (${sizeKb} KB${ext}${lang})`
       })
 
-      const header = `Verzeichnis: ${result.rootPath} (${result.totalFiles} Dateien${result.truncated ? ', gekuerzt' : ''})`
+      const header = `directory: ${result.rootPath} (${result.totalFiles} Files${result.truncated ? ', truncated' : ''})`
       return { data: `${header}\n${lines.join('\n')}` }
     } catch (err) {
-      return { data: `Fehler beim Auflisten von "${input.path}": ${err instanceof Error ? err.message : String(err)}` }
+      return { data: `Error beim Auflisten von "${input.path}": ${err instanceof Error ? err.message : String(err)}` }
     }
   },
 }
@@ -1765,16 +1822,16 @@ const listDirTool: Tool<{ path: string; recursive?: boolean; max_depth?: number;
 const multiEditTool: Tool<{ file_path: string; edits: Array<{ old_string: string; new_string: string }> }> = {
   name: 'MultiEdit',
   aliases: ['multi_edit', 'batch_edit', 'MultiEditTool'],
-  description: 'Fuehrt mehrere Ersetzungen in einer Datei aus. Jede old_string muss eindeutig sein.',
+  description: 'Runs multiple replacements in one file. Each old_string must be unique.',
   category: 'filesystem',
   riskLevel: 'medium',
   inputSchema: {
     type: 'object',
     properties: {
-      file_path: { type: 'string', description: 'Pfad zur zu bearbeitenden Datei' },
+      file_path: { type: 'string', description: 'Path to the file to edit' },
       edits: {
         type: 'object',
-        description: 'Array von {old_string, new_string} Ersetzungen',
+        description: 'Array of {old_string, new_string} replacements',
       },
     },
     required: ['file_path', 'edits'],
@@ -1793,11 +1850,11 @@ const multiEditTool: Tool<{ file_path: string; edits: Array<{ old_string: string
     for (const edit of edits) {
       const occurrences = content.split(edit.old_string).length - 1
       if (occurrences === 0) {
-        results.push(`Edit ${editCount + 1}: old_string nicht gefunden`)
+        results.push(`Edit ${editCount + 1}: old_string not found`)
         continue
       }
       if (occurrences > 1) {
-        results.push(`Edit ${editCount + 1}: old_string ${occurrences}x gefunden (muss eindeutig sein)`)
+        results.push(`Edit ${editCount + 1}: old_string found ${occurrences} times (must be unique)`)
         continue
       }
       content = content.replace(edit.old_string, edit.new_string)
@@ -1814,7 +1871,7 @@ const multiEditTool: Tool<{ file_path: string; edits: Array<{ old_string: string
       })
     }
 
-    return { data: `${editCount}/${edits.length} Edits ausgefuehrt in ${input.file_path}\n${results.join('\n')}` }
+    return { data: `${editCount}/${edits.length} Edits executed in ${input.file_path}\n${results.join('\n')}` }
   },
 }
 
@@ -1824,15 +1881,15 @@ const multiEditTool: Tool<{ file_path: string; edits: Array<{ old_string: string
 const taskUpdateTool: Tool<{ task_id: string; status?: string; note?: string }> = {
   name: 'TaskUpdate',
   aliases: ['task_update', 'todo_update'],
-  description: 'Aktualisiert den Status einer Aufgabe.',
+  description: 'Updates task status.',
   category: 'task',
   riskLevel: 'low',
   inputSchema: {
     type: 'object',
     properties: {
-      task_id: { type: 'string', description: 'ID der Aufgabe' },
-      status: { type: 'string', description: 'Neuer Status', enum: ['pending', 'running', 'completed', 'failed'] },
-      note: { type: 'string', description: 'Optionale Notiz/Kommentar' },
+      task_id: { type: 'string', description: 'Task ID' },
+      status: { type: 'string', description: 'New status', enum: ['pending', 'running', 'completed', 'failed'] },
+      note: { type: 'string', description: 'Optional note/comment' },
     },
     required: ['task_id'],
   },
@@ -1844,9 +1901,9 @@ const taskUpdateTool: Tool<{ task_id: string; status?: string; note?: string }> 
         id: input.task_id,
         status: input.status ?? 'running',
       })
-      return { data: `Aufgabe ${input.task_id.slice(0, 8)} aktualisiert: ${input.status}${input.note ? ` — ${input.note}` : ''}` }
+      return { data: `Task ${input.task_id.slice(0, 8)} aktualisiert: ${input.status}${input.note ? ` — ${input.note}` : ''}` }
     } catch (err) {
-      return { data: `Fehler beim Aktualisieren: ${err instanceof Error ? err.message : String(err)}` }
+      return { data: `Error beim Aktualisieren: ${err instanceof Error ? err.message : String(err)}` }
     }
   },
 }
@@ -1857,14 +1914,14 @@ const taskUpdateTool: Tool<{ task_id: string; status?: string; note?: string }> 
 const fileAppendTool: Tool<{ file_path: string; content: string }> = {
   name: 'Append',
   aliases: ['append_file', 'file_append'],
-  description: 'Haengt Inhalt an das Ende einer bestehenden Datei an.',
+  description: 'Appends content to the end of an existing file.',
   category: 'filesystem',
   riskLevel: 'medium',
   inputSchema: {
     type: 'object',
     properties: {
-      file_path: { type: 'string', description: 'Pfad zur Datei' },
-      content: { type: 'string', description: 'Anzuhaengender Inhalt' },
+      file_path: { type: 'string', description: 'Path to the file' },
+      content: { type: 'string', description: 'Content to append' },
     },
     required: ['file_path', 'content'],
   },
@@ -1882,7 +1939,7 @@ const fileAppendTool: Tool<{ file_path: string; content: string }> = {
         createBackup: false,
         runId: context.runId,
       })
-      return { data: `${input.content.length} Zeichen an ${input.file_path} angehaengt.` }
+      return { data: `${input.content.length} Zeichen an ${input.file_path} attached.` }
     } catch {
       // File doesn't exist — create it
       await invoke('fs_write_text_file', {
@@ -1891,25 +1948,25 @@ const fileAppendTool: Tool<{ file_path: string; content: string }> = {
         createBackup: false,
         runId: context.runId,
       })
-      return { data: `Neue Datei erstellt: ${input.file_path}` }
+      return { data: `New file created: ${input.file_path}` }
     }
   },
 }
 
 // ── DeleteFileTool ─────────────────────────────────────────────────────────
-// Löscht eine Datei mit Sicherheitsbestätigung
+// Deletes a file with safety confirmation
 
 const deleteFileTool: Tool<{ file_path: string; confirm: boolean }> = {
   name: 'DeleteFile',
   aliases: ['delete_file', 'remove_file', 'rm', 'DeleteFileTool'],
-  description: 'Loescht eine Datei. confirm muss auf true gesetzt werden, um die Loeschung zu bestaetigen.',
+  description: 'Deletes a file. confirm must be set to true to confirm deletion.',
   category: 'filesystem',
   riskLevel: 'high',
   inputSchema: {
     type: 'object',
     properties: {
-      file_path: { type: 'string', description: 'Pfad zur zu loeschenden Datei' },
-      confirm: { type: 'boolean', description: 'Muss true sein, um die Loeschung zu bestaetigen' },
+      file_path: { type: 'string', description: 'Path to the file to delete' },
+      confirm: { type: 'boolean', description: 'Must be true to confirm deletion' },
     },
     required: ['file_path', 'confirm'],
   },
@@ -1918,7 +1975,7 @@ const deleteFileTool: Tool<{ file_path: string; confirm: boolean }> = {
   isConcurrencySafe: () => false,
   async call(input, context, onProgress) {
     if (!input.confirm) {
-      return { data: 'Fehler: confirm muss auf true gesetzt werden, um die Datei zu loeschen.' }
+      return { data: 'Error: confirm must be set to true to delete the file.' }
     }
     const fullPath = resolvePath(input.file_path, context.cwd)
     onProgress?.({
@@ -1934,26 +1991,26 @@ const deleteFileTool: Tool<{ file_path: string; confirm: boolean }> = {
         path: fullPath,
         confirmToken: 'DELETE',
       })
-      return { data: `Datei geloescht: ${input.file_path}` }
+      return { data: `File geloescht: ${input.file_path}` }
     } catch (err) {
-      return { data: `Fehler beim Loeschen: ${err instanceof Error ? err.message : String(err)}` }
+      return { data: `Error beim Delete: ${err instanceof Error ? err.message : String(err)}` }
     }
   },
 }
 
 // ── FileInfoTool ───────────────────────────────────────────────────────────
-// Zeigt Metadaten einer Datei an
+// Zeigt Metadaten einer File an
 
 const fileInfoTool: Tool<{ path: string }> = {
   name: 'FileInfo',
   aliases: ['file_info', 'stat', 'FileInfoTool', 'file_metadata'],
-  description: 'Zeigt Metadaten einer Datei: Groesse, Format, Sprache, Extension.',
+  description: 'Shows file metadata: size, format, language, extension.',
   category: 'filesystem',
   riskLevel: 'low',
   inputSchema: {
     type: 'object',
     properties: {
-      path: { type: 'string', description: 'Pfad zur Datei oder zum Verzeichnis' },
+      path: { type: 'string', description: 'Path to the file or directory' },
     },
     required: ['path'],
   },
@@ -1973,7 +2030,7 @@ const fileInfoTool: Tool<{ path: string }> = {
         const sizeKb = (file.sizeBytes / 1024).toFixed(1)
         const sizeMb = (file.sizeBytes / (1024 * 1024)).toFixed(2)
         const lines = [
-          `Datei: ${file.fileName}`,
+          `File: ${file.fileName}`,
           `Pfad: ${file.path}`,
           `Groesse: ${sizeKb} KB (${sizeMb} MB, ${file.sizeBytes} Bytes)`,
           file.extension ? `Extension: .${file.extension}` : null,
@@ -1985,35 +2042,35 @@ const fileInfoTool: Tool<{ path: string }> = {
       if (result.rootKind === 'folder') {
         return {
           data: [
-            `Verzeichnis: ${result.rootPath}`,
-            `Dateien insgesamt: ${result.totalFiles}`,
-            `Dateien angezeigt: ${result.returnedFiles}`,
+            `directory: ${result.rootPath}`,
+            `Files insgesamt: ${result.totalFiles}`,
+            `Files angezeigt: ${result.returnedFiles}`,
             result.truncated ? 'Anzeige gekuerzt.' : null,
           ].filter(Boolean).join('\n'),
         }
       }
 
-      return { data: `Pfad nicht gefunden: ${input.path}` }
+      return { data: `Path not found: ${input.path}` }
     } catch (err) {
-      return { data: `Fehler: ${err instanceof Error ? err.message : String(err)}` }
+      return { data: `Error: ${err instanceof Error ? err.message : String(err)}` }
     }
   },
 }
 
 // ── RenameFileTool ─────────────────────────────────────────────────────────
-// Benennt eine Datei oder einen Ordner um (Wrapper um fs_move_path)
+// Renames a file or folder (wrapper around fs_move_path)
 
 const renameFileTool: Tool<{ path: string; new_name: string }> = {
   name: 'RenameFile',
   aliases: ['rename_file', 'rename', 'RenameFileTool'],
-  description: 'Benennt eine Datei oder einen Ordner um. Nur der Name aendert sich, der Speicherort bleibt gleich.',
+  description: 'Renames a file or folder. Only the name changes; the location stays the same.',
   category: 'filesystem',
   riskLevel: 'medium',
   inputSchema: {
     type: 'object',
     properties: {
-      path: { type: 'string', description: 'Pfad zur umzubenennenden Datei oder zum Ordner' },
-      new_name: { type: 'string', description: 'Neuer Dateiname (ohne Pfad, nur der Name)' },
+      path: { type: 'string', description: 'Path to the file or folder to rename' },
+      new_name: { type: 'string', description: 'New filename (without path, name only)' },
     },
     required: ['path', 'new_name'],
   },
@@ -2045,7 +2102,7 @@ const renameFileTool: Tool<{ path: string; new_name: string }> = {
       })
       return { data: `${result.itemKind} umbenannt: ${input.path} -> ${input.new_name}` }
     } catch (err) {
-      return { data: `Fehler beim Umbenennen: ${err instanceof Error ? err.message : String(err)}` }
+      return { data: `Error while renaming: ${err instanceof Error ? err.message : String(err)}` }
     }
   },
 }
@@ -2056,13 +2113,13 @@ const renameFileTool: Tool<{ path: string; new_name: string }> = {
 const thinkTool: Tool<{ thought: string }> = {
   name: 'Think',
   aliases: ['think', 'ThinkTool', 'reasoning'],
-  description: 'Nutze dieses Tool zum Nachdenken und Planen, bevor du handelst. Hilft bei komplexen mehrstufigen Aufgaben.',
+  description: 'Use this tool to think and plan before acting. Helps with complex multi-step tasks.',
   category: 'planning',
   riskLevel: 'low',
   inputSchema: {
     type: 'object',
     properties: {
-      thought: { type: 'string', description: 'Dein Gedanke/Plan/Ueberlegung' },
+      thought: { type: 'string', description: 'Your thought/plan/consideration' },
     },
     required: ['thought'],
   },
@@ -2092,7 +2149,7 @@ export function registerAllBuiltinTools(): void {
     webFetchTool,
     webSearchTool,
     mcpTool,
-    desktopScreenshotTool,
+    desktopscreenshotTool,
     desktopPrimaryDisplayTool,
     desktopListWindowsTool,
     desktopFocusWindowTool,

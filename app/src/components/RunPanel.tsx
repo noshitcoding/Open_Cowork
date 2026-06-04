@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useEngineStore } from '../stores/engineStore'
 import { safeInvoke } from '../utils/safeInvoke'
+import { tr } from '../i18n'
 
 type EngineRunRow = {
   id: string
@@ -85,7 +86,7 @@ const normalizeRun = (value: unknown): EngineRunRow | null => {
     id,
     parentRunId: asNullableString(row.parentRunId ?? row.parent_run_id),
     sessionId: asNullableString(row.sessionId ?? row.session_id),
-    title: asString(row.title, 'Unbenannter Run'),
+    title: asString(row.title, 'Untitleder Run'),
     inputSummary: asNullableString(row.inputSummary ?? row.input_summary),
     status: asString(row.status, 'unknown'),
     phase: asString(row.phase, 'unknown'),
@@ -231,22 +232,19 @@ export default function RunPanel() {
   return (
     <div className="panel">
       <div className="panel-heading-row">
-        <h2>Runs</h2>
-        <button type="button" className="btn-sm" onClick={() => void refreshRuns()}>
-          Aktualisieren
-        </button>
+        <h2>{tr("Runs")}</h2>
+        <button type="button" className="btn-sm" onClick={() => void refreshRuns()}>{tr("Refresh")}</button>
       </div>
 
       {error && <p style={{ color: 'var(--danger)', fontSize: 12 }}>{error}</p>}
 
-      <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>
-        Aktiver Run: {currentRunId ?? 'keiner'}
+      <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>{tr("Active run:")}{currentRunId ?? 'none'}
       </div>
 
       {loading ? (
-        <p className="panel-empty">Laden...</p>
+        <p className="panel-empty">{tr("Loading...")}</p>
       ) : runs.length === 0 ? (
-        <p className="panel-empty">Noch keine Runs gespeichert.</p>
+        <p className="panel-empty">{tr("No runs saved yet.")}</p>
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 1fr', gap: 12 }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 420, overflowY: 'auto' }}>
@@ -269,7 +267,7 @@ export default function RunPanel() {
                   </span>
                 </div>
                 <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
-                  {new Date(run.updatedAt).toLocaleString('de-DE')} • {run.phase}
+                  {new Date(run.updatedAt).toLocaleString('en-US')} • {run.phase}
                 </div>
                 {run.inputSummary && (
                   <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 6 }}>
@@ -284,7 +282,7 @@ export default function RunPanel() {
             {selectedRun ? (
               (() => {
                 const run = runs.find((item) => item.id === selectedRun)
-                if (!run) return <p className="panel-empty">Run nicht gefunden.</p>
+                if (!run) return <p className="panel-empty">{tr("Run not found.")}</p>
                 return (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                     <div>
@@ -294,42 +292,35 @@ export default function RunPanel() {
                       </div>
                     </div>
                     <div style={{ fontSize: 12 }}>
-                      <div>Status: {run.status}</div>
-                      <div>Phase: {run.phase}</div>
-                      <div>Provider: {run.provider ?? 'n/a'}</div>
-                      <div>Modell: {run.model ?? 'n/a'}</div>
-                      <div>Retry Count: {run.retryCount}</div>
-                      {run.parentRunId && <div>Parent: {run.parentRunId}</div>}
+                      <div>{tr("Status:")}{run.status}</div>
+                      <div>{tr("Phase:")}{run.phase}</div>
+                      <div>{tr("Provider:")}{run.provider ?? 'n/a'}</div>
+                      <div>{tr("Model:")}{run.model ?? 'n/a'}</div>
+                      <div>{tr("Retry Count:")}{run.retryCount}</div>
+                      {run.parentRunId && <div>{tr("Parent:")}{run.parentRunId}</div>}
                     </div>
                     {sandbox && (
                       <div>
-                        <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Sandbox</div>
+                        <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4 }}>{tr("Sandbox")}</div>
                         <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
-                          <div>Status: {sandbox.status}</div>
-                          <div>Mode: {sandbox.mode}</div>
-                          <div>Backend: {sandbox.backendId ?? 'local'}</div>
-                          <div>Workspace: {sandbox.workspaceRoot}</div>
-                          <div>Source: {sandbox.sourceCwd}</div>
-                          <div>
-                            Rechte: read {String(sandbox.allowFileRead)} | write {String(sandbox.allowFileWrite)} | shell {String(sandbox.allowShellExecution)} | web {String(sandbox.allowWebFetch || sandbox.allowWebSearch)} | mcp {String(sandbox.allowMcp)}
+                          <div>{tr("Status:")}{sandbox.status}</div>
+                          <div>{tr("Mode:")}{sandbox.mode}</div>
+                          <div>{tr("Backend:")}{sandbox.backendId ?? 'local'}</div>
+                          <div>{tr("Workspace:")}{sandbox.workspaceRoot}</div>
+                          <div>{tr("Source:")}{sandbox.sourceCwd}</div>
+                          <div>{tr("Permissions: read")}{String(sandbox.allowFileRead)}{tr("| write")}{String(sandbox.allowFileWrite)}{tr("| shell")}{String(sandbox.allowShellExecution)}{tr("| web")}{String(sandbox.allowWebFetch || sandbox.allowWebSearch)}{tr("| mcp")}{String(sandbox.allowMcp)}
                           </div>
                         </div>
                       </div>
                     )}
                     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                      <button type="button" className="btn-sm" disabled={busyRunId === run.id || run.status === 'completed'} onClick={() => void handleAction(run.id, 'resume')}>
-                        Resume
-                      </button>
-                      <button type="button" className="btn-sm" disabled={busyRunId === run.id} onClick={() => void handleAction(run.id, 'retry')}>
-                        Retry
-                      </button>
-                      <button type="button" className="btn-sm" disabled={busyRunId === run.id || run.status === 'completed' || run.status === 'failed' || run.status === 'canceled'} onClick={() => void handleAction(run.id, 'cancel')}>
-                        Cancel
-                      </button>
+                      <button type="button" className="btn-sm" disabled={busyRunId === run.id || run.status === 'completed'} onClick={() => void handleAction(run.id, 'resume')}>{tr("Resume")}</button>
+                      <button type="button" className="btn-sm" disabled={busyRunId === run.id} onClick={() => void handleAction(run.id, 'retry')}>{tr("Retry")}</button>
+                      <button type="button" className="btn-sm" disabled={busyRunId === run.id || run.status === 'completed' || run.status === 'failed' || run.status === 'canceled'} onClick={() => void handleAction(run.id, 'cancel')}>{tr("Cancel")}</button>
                     </div>
                     {run.resultSummary && (
                       <div>
-                        <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Ergebnis</div>
+                        <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4 }}>{tr("Result")}</div>
                         <pre style={{ fontSize: 11, whiteSpace: 'pre-wrap', background: 'var(--bg-primary)', padding: 8, borderRadius: 'var(--radius-sm)', maxHeight: 140, overflowY: 'auto' }}>
                           {run.resultSummary}
                         </pre>
@@ -337,22 +328,22 @@ export default function RunPanel() {
                     )}
                     {run.error && (
                       <div>
-                        <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4, color: 'var(--danger)' }}>Fehler</div>
+                        <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4, color: 'var(--danger)' }}>{tr("Error")}</div>
                         <pre style={{ fontSize: 11, whiteSpace: 'pre-wrap', background: 'var(--bg-primary)', padding: 8, borderRadius: 'var(--radius-sm)', maxHeight: 120, overflowY: 'auto', color: 'var(--danger)' }}>
                           {run.error}
                         </pre>
                       </div>
                     )}
                     <div>
-                      <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Checkpoints</div>
+                      <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4 }}>{tr("Checkpoints")}</div>
                       {checkpoints.length === 0 ? (
-                        <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Keine Checkpoints</div>
+                        <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{tr("No Checkpoints")}</div>
                       ) : (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 140, overflowY: 'auto' }}>
                           {checkpoints.map((checkpoint) => (
                             <div key={checkpoint.id} style={{ fontSize: 11, background: 'var(--bg-primary)', padding: 8, borderRadius: 'var(--radius-sm)' }}>
                               <div style={{ fontWeight: 600 }}>{checkpoint.label}</div>
-                              <div style={{ color: 'var(--text-muted)', margin: '3px 0 6px' }}>{new Date(checkpoint.createdAt).toLocaleString('de-DE')}</div>
+                              <div style={{ color: 'var(--text-muted)', margin: '3px 0 6px' }}>{new Date(checkpoint.createdAt).toLocaleString('en-US')}</div>
                               <pre style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{checkpoint.snapshotJson.slice(0, 400)}</pre>
                             </div>
                           ))}
@@ -363,7 +354,7 @@ export default function RunPanel() {
                 )
               })()
             ) : (
-              <p className="panel-empty">Run auswaehlen.</p>
+              <p className="panel-empty">{tr("Run choose.")}</p>
             )}
           </div>
         </div>

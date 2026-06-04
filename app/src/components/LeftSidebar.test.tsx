@@ -104,7 +104,7 @@ describe('LeftSidebar', () => {
             type: 'user',
             uuid: 'message-1',
             timestamp: 100,
-            content: [{ type: 'text', text: 'Bitte pruefe den Build.' }],
+            content: [{ type: 'text', text: 'Please check den Build.' }],
           },
         ],
         totalUsage: {

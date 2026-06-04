@@ -114,7 +114,7 @@ pub fn start_process(db: &Arc<Database>, request: &ProcessStartRequest) -> Proce
             process_id: id,
             pid: None,
             status: "pending_approval".to_string(),
-            message: "Prozess benötigt Admin-Genehmigung".to_string(),
+            message: "Process requires admin approval".to_string(),
         };
     }
 
@@ -134,7 +134,7 @@ pub fn approve_and_start(
             process_id: process_id.to_string(),
             pid: None,
             status: "rejected".to_string(),
-            message: "Admin-Genehmigung abgelehnt".to_string(),
+            message: "Admin approval rejected".to_string(),
         };
     }
 
@@ -159,7 +159,7 @@ pub fn approve_and_start(
                 process_id: process_id.to_string(),
                 pid: None,
                 status: "error".to_string(),
-                message: "Prozess nicht gefunden".to_string(),
+                message: "Process not found".to_string(),
             };
         }
     };
@@ -173,7 +173,7 @@ pub fn stop_process(db: &Arc<Database>, process_id: &str) -> Result<(), String> 
     let proc = processes
         .into_iter()
         .find(|p| p.id == process_id)
-        .ok_or_else(|| "Prozess nicht gefunden".to_string())?;
+        .ok_or_else(|| "Process not found".to_string())?;
 
     if let Some(pid) = proc.pid {
         #[cfg(target_os = "windows")]
@@ -238,7 +238,7 @@ fn spawn_local_process(db: &Arc<Database>, process_id: &str, command: &str) -> P
                 process_id: process_id.to_string(),
                 pid: Some(pid),
                 status: "running".to_string(),
-                message: format!("Prozess gestartet (PID {})", pid),
+                message: format!("Process started (PID {})", pid),
             }
         }
         Err(e) => {

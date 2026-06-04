@@ -20,6 +20,15 @@ pub struct ArtifactParseResponse {
     pub metadata: Value,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PdfPreviewPage {
+    pub page_number: usize,
+    pub image_path: String,
+    pub width: u32,
+    pub height: u32,
+}
+
 pub fn parse_artifact(path: &Path) -> Result<ArtifactParseResponse, String> {
     let metadata = fs::metadata(path).map_err(|err| err.to_string())?;
     let size_bytes = metadata.len();
@@ -46,6 +55,47 @@ pub fn parse_artifact(path: &Path) -> Result<ArtifactParseResponse, String> {
         "pptx" => parse_pptx(path, size_bytes),
         _ => parse_binary(path, size_bytes),
     }
+}
+
+pub fn render_pdf_pages(
+    path: &Path,
+    output_dir: &Path,
+    max_pages: usize,
+    target_width: i32,
+) -> Result<Vec<PdfPreviewPage>, String> {
+    fs::create_dir_all(output_dir).map_err(|err| err.to_string())?;
+
+    let pdfium = bind_pdfium()?;
+    let document = pdfium
+        .load_pdf_from_file(path, None)
+        .map_err(|err| err.to_string())?;
+    let render_config = PdfRenderConfig::new()
+        .set_target_width(target_width)
+        .set_maximum_height(target_width * 2);
+
+    let mut pages = Vec::new();
+    for (index, page) in document.pages().iter().take(max_pages.max(1)).enumerate() {
+        let page_number = index + 1;
+        let image_path = output_dir.join(format!("page-{}.png", page_number));
+        let bitmap = page
+            .render_with_config(&render_config)
+            .map_err(|err| err.to_string())?;
+        let width = bitmap.width() as u32;
+        let height = bitmap.height() as u32;
+        bitmap
+            .as_image()
+            .into_rgb8()
+            .save_with_format(&image_path, image::ImageFormat::Png)
+            .map_err(|err| err.to_string())?;
+        pages.push(PdfPreviewPage {
+            page_number,
+            image_path: image_path.display().to_string(),
+            width,
+            height,
+        });
+    }
+
+    Ok(pages)
 }
 
 pub fn extract_text_for_llm(path: &Path) -> Result<String, String> {
@@ -163,7 +213,7 @@ fn safe_extract_pdf_text_limited(
         }),
         Ok(Err(err)) => Err(err.to_string()),
         Err(_) => {
-            Err("PDF-Text konnte nicht extrahiert werden: Parser ist abgestuerzt".to_string())
+            Err("PDF text could not be extracted: parser crashed".to_string())
         }
     }
 }
@@ -227,7 +277,7 @@ fn bind_pdfium() -> Result<Pdfium, String> {
         Err(err) => {
             errors.push(format!("system library: {}", err));
             Err(format!(
-                "Pdfium konnte nicht geladen werden ({})",
+                "Pdfium could not be loaded ({})",
                 errors.join("; ")
             ))
         }
@@ -313,7 +363,7 @@ fn parse_text_like(
         path: path.display().to_string(),
         format: format.to_string(),
         size_bytes,
-        summary: format!("Textdatei mit Vorschau, {} Zeilen gelesen", line_count),
+        summary: format!("Text file with preview, {} lines read", line_count),
         preview,
         metadata: json!({
             "lineCount": line_count,
@@ -463,7 +513,7 @@ fn parse_image(path: &Path, size_bytes: u64) -> Result<ArtifactParseResponse, St
         path: path.display().to_string(),
         format: "image/raster".to_string(),
         size_bytes,
-        summary: format!("Bild erkannt: {}x{}", width, height),
+        summary: format!("Image detected: {}x{}", width, height),
         preview: String::new(),
         metadata: json!({
             "width": width,
@@ -490,7 +540,7 @@ fn parse_pdf(path: &Path, size_bytes: u64) -> Result<ArtifactParseResponse, Stri
     let preview = extracted_text
         .as_ref()
         .map(|(text, _)| text.clone())
-        .unwrap_or_else(|| "PDF-Binaerformat: Textvorschau nicht verfuegbar".to_string());
+        .unwrap_or_else(|| "PDF binary format: text preview not available".to_string());
     let preview_chars = preview.chars().count();
 
     Ok(ArtifactParseResponse {
@@ -512,7 +562,7 @@ fn parse_pdf(path: &Path, size_bytes: u64) -> Result<ArtifactParseResponse, Stri
                 }
             )
         } else {
-            "PDF erkannt, Text konnte nicht extrahiert werden".to_string()
+            "PDF detected, text could not be extracted".to_string()
         },
         preview,
         metadata: json!({
@@ -582,7 +632,7 @@ fn parse_binary(path: &Path, size_bytes: u64) -> Result<ArtifactParseResponse, S
         path: path.display().to_string(),
         format: "application/octet-stream".to_string(),
         size_bytes,
-        summary: "Unbekanntes Binaerformat, nur Metadaten verfuegbar".to_string(),
+        summary: "Unbekanntes Binaerformat, nur Metadaten available".to_string(),
         preview: String::new(),
         metadata: json!({}),
     })

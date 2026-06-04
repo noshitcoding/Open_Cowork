@@ -179,7 +179,7 @@ const DEFAULT_AGENTS: CrewAgent[] = [
     name: 'Forscher',
     role: 'researcher',
     goal: 'Gruendliche Recherche und Informationsbeschaffung zu jedem Thema',
-    backstory: 'Ein erfahrener Forscher mit Zugang zu vielfaeltigen Quellen. Analysiert Informationen kritisch und liefert fundierte Ergebnisse.',
+    backstory: 'An experienced researcher with access to diverse sources. Analyzes information critically and delivers solid results.',
     skillsMarkdown: '',
     personalityId: null,
     modelOverride: null,
@@ -195,8 +195,8 @@ const DEFAULT_AGENTS: CrewAgent[] = [
     id: 'agent-writer',
     name: 'Autor',
     role: 'writer',
-    goal: 'Hochwertige Texte, Dokumentation und Content erstellen',
-    backstory: 'Ein versierter Autor der klare, praegnante und gut strukturierte Texte verfasst. Beherrscht verschiedene Schreibstile.',
+    goal: 'Hochwertige Texte, documentation und Content erstellen',
+    backstory: 'An experienced writer who creates clear, concise, and well-structured text across multiple writing styles.',
     skillsMarkdown: '',
     personalityId: null,
     modelOverride: null,
@@ -212,8 +212,8 @@ const DEFAULT_AGENTS: CrewAgent[] = [
     id: 'agent-reviewer',
     name: 'Reviewer',
     role: 'reviewer',
-    goal: 'Code und Texte qualitativ pruefen und verbessern',
-    backstory: 'Ein erfahrener Code-Reviewer mit Blick fuer Details, Best Practices und potenzielle Probleme.',
+    goal: 'Review and improve the quality of code and text',
+    backstory: 'Ein erfahrener Code-Reviewer mit Blick for Details, best practices und potenzielle problems.',
     skillsMarkdown: '',
     personalityId: null,
     modelOverride: null,
@@ -229,8 +229,8 @@ const DEFAULT_AGENTS: CrewAgent[] = [
     id: 'agent-planner',
     name: 'Planer',
     role: 'planner',
-    goal: 'Komplexe Aufgaben in ausfuehrbare Schritte zerlegen',
-    backstory: 'Ein strategischer Denker der komplexe Probleme analysiert und in klare, priorisierte Aktionsplaene uebersetzen kann.',
+    goal: 'Komplexe Tasks in ausfuehrbare Schritte zerlegen',
+    backstory: 'A strategic thinker who analyzes complex problems and translates them into clear, prioritized action plans.',
     skillsMarkdown: '',
     personalityId: null,
     modelOverride: null,
@@ -246,8 +246,8 @@ const DEFAULT_AGENTS: CrewAgent[] = [
     id: 'agent-executor',
     name: 'Ausfuehrer',
     role: 'executor',
-    goal: 'Aufgaben zuverlaessig und effizient ausfuehren',
-    backstory: 'Ein zuverlaessiger Ausfuehrer der Plaene praezise umsetzt, Fehler erkennt und selbststaendig loest.',
+    goal: 'Tasks zuverlaessig und effizient execute',
+    backstory: 'A reliable executor who implements plans precisely, detects errors, and solves them independently.',
     skillsMarkdown: '',
     personalityId: null,
     modelOverride: null,
@@ -263,8 +263,8 @@ const DEFAULT_AGENTS: CrewAgent[] = [
     id: 'agent-analyst',
     name: 'Analyst',
     role: 'analyst',
-    goal: 'Daten analysieren, Muster erkennen und Empfehlungen ableiten',
-    backstory: 'Ein Datenanalyst der Zusammenhaenge erkennt, Metriken auswertet und datengetriebene Empfehlungen ausspricht.',
+    goal: 'Analyze data, detect patterns, and derive recommendations',
+    backstory: 'A data analyst who recognizes relationships, evaluates metrics, and provides data-driven recommendations.',
     skillsMarkdown: '',
     personalityId: null,
     modelOverride: null,
@@ -310,7 +310,7 @@ const DEFAULT_CREW_GOVERNANCE_MODE: CrewGovernanceMode = 'allow-all'
 const PERSONALITY_AGENT_ID_PREFIX = 'agent-personality-'
 
 function isCrewAwaitingApproval(message: string): boolean {
-  return message.trim().toLowerCase().startsWith('crew wartet auf freigabe:')
+  return message.trim().toLowerCase().startsWith('crew waiting for approval:')
 }
 
 function createPersonalityCrewAgentId(personalityId: string): string {
@@ -341,7 +341,7 @@ function buildAgentProfileSignature(agent: CrewAgent): string {
 }
 
 function createUniqueProfileName(baseName: string, existingNames: Set<string>): string {
-  const base = baseName.trim() || 'Persoenlichkeit'
+  const base = baseName.trim() || 'Personality'
   let candidate = base
   let index = 2
 
@@ -379,7 +379,7 @@ function buildCrewAgentFromPersonality(profile: CrewPersonalityProfile): CrewAge
     id: createPersonalityCrewAgentId(profile.id),
     name: trimmedName,
     role: profile.role ?? 'custom',
-    goal: trimmedGoal || `Arbeite im Stil von ${trimmedName}.`,
+    goal: trimmedGoal || `Work in the style of ${trimmedName}.`,
     backstory: profile.systemPrompt,
     skillsMarkdown: profile.skillsMarkdown,
     personalityId: profile.id,
@@ -408,7 +408,7 @@ export function resolveCrewAgentWithProfile(agent: CrewAgent, profiles: CrewPers
     ...agent,
     name: profile.name,
     role: profile.role ?? 'custom',
-    goal: profile.goal || profile.description || `Arbeite im Stil von ${profile.name}.`,
+    goal: profile.goal || profile.description || `Work in the style of ${profile.name}.`,
     backstory: profile.systemPrompt,
     skillsMarkdown: profile.skillsMarkdown,
     modelOverride: profile.modelOverride?.trim() || null,
@@ -980,7 +980,7 @@ export const useCrewStore = create<CrewState>()(
         const blockedTaskIds = new Set(blockedTasks.map((task) => task.id))
 
         if (enabledAgents.length === 0) {
-          const message = 'Keine aktiven Crew-Mitglieder vorhanden.'
+          const message = 'No active Crew-members available.'
           set((s) => ({
             crews: s.crews.map((entry) =>
               entry.id === crewId
@@ -1001,7 +1001,7 @@ export const useCrewStore = create<CrewState>()(
             crewId,
             crew.managerAgentId ?? crew.agents[0]?.id ?? 'crew-manager',
             crew.tasks[0]?.id ?? 'crew-start',
-            'Crew-Ausfuehrung blockiert',
+            'Crew-Execution blockiert',
             message,
           ))
           return
@@ -1021,7 +1021,7 @@ export const useCrewStore = create<CrewState>()(
                         ? 'running'
                         : 'pending',
                     output: blockedTaskIds.has(t.id)
-                      ? 'Zugewiesenes Crew-Mitglied ist deaktiviert.'
+                      ? 'Zugewiesenes Crew-Mitglied ist disabled.'
                       : null,
                   })),
                   updatedAt: Date.now(),
@@ -1034,8 +1034,8 @@ export const useCrewStore = create<CrewState>()(
           crewId,
           crew.managerAgentId ?? crew.agents[0]?.id ?? 'crew-manager',
           runnableTasks[0]?.id ?? crew.tasks[0]?.id ?? 'crew-start',
-          'Crew gestartet',
-          `${runnableTasks.length} aktive Task(s) werden ueber ${crew.process} ausgefuehrt.${blockedTasks.length > 0 ? ` ${blockedTasks.length} Task(s) sind durch deaktivierte Crew-Mitglieder blockiert.` : ''}`,
+          'Crew started',
+          `${runnableTasks.length} active task(s) are executed through ${crew.process} executed.${blockedTasks.length > 0 ? ` ${blockedTasks.length} task(s) are blocked by disabled crew members.` : ''}`,
         ))
 
         try {
@@ -1123,7 +1123,7 @@ export const useCrewStore = create<CrewState>()(
               crewId,
               crew.managerAgentId ?? crew.agents[0]?.id ?? 'crew-manager',
               runnableTasks[0]?.id ?? 'crew-start',
-              'Crew-Ausfuehrung meldet Fehler',
+              'Crew-Execution meldet Error',
               response.error,
             ))
           }
@@ -1159,7 +1159,7 @@ export const useCrewStore = create<CrewState>()(
                 crewId,
                 agentId: crew.managerAgentId ?? crew.agents[0]?.id ?? 'unknown',
                 taskId: crew.tasks[0]?.id ?? 'unknown',
-                action: awaitingApproval ? 'Crew wartet auf Freigabe' : 'Crew-Ausfuehrung fehlgeschlagen',
+                action: awaitingApproval ? 'Crew is waiting for approval' : 'Crew execution failed',
                 result: message,
                 timestamp: Date.now(),
               },

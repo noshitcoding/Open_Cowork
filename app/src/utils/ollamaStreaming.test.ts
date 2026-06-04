@@ -33,7 +33,7 @@ describe('streamChatTurn', () => {
         return Promise.resolve({
           endpoint: 'http://localhost:11434',
           model: 'qwen3.6:35b',
-          assistantMessage: 'Fallback-Antwort',
+          assistantMessage: 'Fallback-answer',
           requiresApproval: false,
           proposedPlan: [],
         })
@@ -44,7 +44,7 @@ describe('streamChatTurn', () => {
     const { streamChatTurn } = await import('./ollamaStreaming')
     const result = await streamChatTurn(
       {
-        prompt: 'Teste den Fallback',
+        prompt: 'Test the fallback',
         history: [],
         config: {
           baseUrl: 'http://localhost:11434',
@@ -55,10 +55,10 @@ describe('streamChatTurn', () => {
       vi.fn(),
     )
 
-    expect(result.assistantMessage).toBe('Fallback-Antwort')
+    expect(result.assistantMessage).toBe('Fallback-answer')
     expect(invokeMock).toHaveBeenCalledWith('chat_turn', expect.objectContaining({
       request: expect.objectContaining({
-        prompt: 'Teste den Fallback',
+        prompt: 'Test the fallback',
       }),
     }))
     expect(unlisten).toHaveBeenCalledTimes(1)

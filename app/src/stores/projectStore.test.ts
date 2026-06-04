@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+﻿import { beforeEach, describe, expect, it } from 'vitest'
 import {
   getEnabledProjectAttachments,
   getEnabledProjectLinks,
@@ -17,19 +17,19 @@ describe('projectStore', () => {
   })
 
   it('creates named projects and renames them', () => {
-    const id = useProjectStore.getState().addProject('Kundenanalyse')
-    useProjectStore.getState().renameProject(id, 'Kundenanalyse Q2')
-    useProjectStore.getState().updateProjectInstructions(id, 'Nutze kurze Antworten.')
+    const id = useProjectStore.getState().addProject('Customer analysis')
+    useProjectStore.getState().renameProject(id, 'Customer analysis Q2')
+    useProjectStore.getState().updateProjectInstructions(id, 'Use short answers.')
 
     const project = useProjectStore.getState().projects[0]
     expect(project.id).toBe(id)
-    expect(project.title).toBe('Kundenanalyse Q2')
-    expect(project.instructions).toBe('Nutze kurze Antworten.')
+    expect(project.title).toBe('Customer analysis Q2')
+    expect(project.instructions).toBe('Use short answers.')
     expect(useProjectStore.getState().activeProjectId).toBe(id)
   })
 
   it('deduplicates resources and separates local attachments from links', () => {
-    const id = useProjectStore.getState().addProject('Daten')
+    const id = useProjectStore.getState().addProject('Data')
     useProjectStore.getState().addResources(id, [
       { path: 'C:/docs/spec.md', kind: 'file' },
       { path: 'C:/docs/spec.md', kind: 'file' },
@@ -63,7 +63,7 @@ describe('projectStore', () => {
     expect(getProjectForThread(state.projects, 'thread-1')?.id).toBe(secondId)
   })
 
-  it('can detach chats from all projects and reports deleted project threads', () => {
+  it('can detach chats from all projects and report deleted project threads', () => {
     const id = useProjectStore.getState().addProject('Alpha')
     useProjectStore.getState().attachThread(id, 'thread-1')
     useProjectStore.getState().detachThreadFromAll('thread-1')

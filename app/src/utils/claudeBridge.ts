@@ -12,14 +12,14 @@ export type SlashCommandDefinition = {
 }
 
 export const SLASH_COMMAND_DEFINITIONS: SlashCommandDefinition[] = [
-  { command: '/help', description: 'Diese Hilfe anzeigen' },
-  { command: '/tools', description: 'Aktive Tool-Konfiguration anzeigen' },
-  { command: '/mode', args: 'plan|execute', description: 'Plan-Mode ein/aus' },
+  { command: '/help', description: 'Show this help' },
+  { command: '/tools', description: 'Show active tool configuration' },
+  { command: '/mode', args: 'plan|execute', description: 'Toggle plan mode' },
   { command: '/permissions', args: '<mode>', description: 'default | acceptEdits | bypassPermissions | dontAsk | plan' },
-  { command: '/plan', args: '<prompt>', description: 'Prompt als Plan-Anfrage ausfuehren' },
-  { command: '/fetch', args: '<url>', description: 'URL laden und Textauszug anzeigen' },
-  { command: '/tool', args: '<name> <args>', description: 'Tool Dispatcher nutzen' },
-  { command: '/todo', args: 'add <titel> | list', description: 'Einfache Todo-Steuerung' },
+  { command: '/plan', args: '<prompt>', description: 'Run prompt as a planning request' },
+  { command: '/fetch', args: '<url>', description: 'Load URL and show text excerpt' },
+  { command: '/tool', args: '<name> <args>', description: 'Use tool dispatcher' },
+  { command: '/todo', args: 'add <titel> | list', description: 'Simple todo control' },
 ]
 
 export function parseSlashCommand(input: string): ParsedSlashCommand {
@@ -49,25 +49,25 @@ export function buildClaudeSystemAddendum(input: {
   const sections: string[] = []
 
   if (input.globalInstruction.trim()) {
-    sections.push(`Projekt-Instruktion: ${input.globalInstruction.trim()}`)
+    sections.push(`Project instruction: ${input.globalInstruction.trim()}`)
   }
 
   if (input.planMode) {
-    sections.push('Plan-Mode ist aktiv: gib nur Plan/Analyse aus, keine Ausfuehrungsanweisungen mit destruktiven Schritten.')
+    sections.push('Plan mode is active: output only plan/analysis, no execution instructions with destructive steps.')
   }
 
   if (input.permissionMode !== 'default') {
-    sections.push(`Permission-Modus: ${input.permissionMode}`)
+    sections.push(`Permission-Mode: ${input.permissionMode}`)
   }
 
   if (sections.length === 0) return ''
 
-  return `[SYSTEM-KONTEXT]\n${sections.join('\n')}\n[/SYSTEM-KONTEXT]`
+  return `[SYSTEM-CONTEXT]\n${sections.join('\n')}\n[/SYSTEM-CONTEXT]`
 }
 
 export function buildSlashHelpText(pluginSkillLines: string[] = []): string {
   const baseLines = [
-    'Verfuegbare Slash-Commands:',
+    'Verfuegbare slash commands:',
     ...SLASH_COMMAND_DEFINITIONS.map((definition) => {
       const usage = [definition.command, definition.args].filter(Boolean).join(' ')
       return `${usage} - ${definition.description}`
@@ -75,7 +75,7 @@ export function buildSlashHelpText(pluginSkillLines: string[] = []): string {
   ]
 
   if (pluginSkillLines.length > 0) {
-    baseLines.push('', 'Aktive Plugin-Skills:')
+    baseLines.push('', 'Active Plugin-Skills:')
     pluginSkillLines.forEach((line) => baseLines.push(line))
   }
 
@@ -132,7 +132,7 @@ export function compactHistoryForPrompt(
 
   const synthetic = {
     role: 'system',
-    content: `[HISTORY_COMPACTED]\nReduzierte Nachrichten: ${dropped.length}\nLetzte Kernaussagen:\n${summary}\n[/HISTORY_COMPACTED]`,
+    content: `[HISTORY_COMPACTED]\nReduzierte Messages: ${dropped.length}\nLetzte Kernaussagen:\n${summary}\n[/HISTORY_COMPACTED]`,
   }
 
   return {

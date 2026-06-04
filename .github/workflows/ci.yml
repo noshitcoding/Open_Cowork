@@ -36,15 +36,35 @@ jobs:
           cd app
           npm ci
 
+      - name: Toolchain doctor
+        run: |
+          cd app
+          npm run doctor:ci
+
+      - name: Frontend lint
+        run: |
+          cd app
+          npm run lint:ci
+
       - name: TypeScript type check
         run: |
           cd app
-          npx tsc -b --noEmit
+          npm run typecheck
 
       - name: Frontend tests
         run: |
           cd app
-          npx vitest run
+          npm run test:ci
+
+      - name: Frontend production build
+        run: |
+          cd app
+          npm run build
+
+      - name: Frontend build budgets
+        run: |
+          cd app
+          npm run budgets:build
 
       - name: Rust check
         run: |
@@ -60,6 +80,11 @@ jobs:
         run: |
           cd app/src-tauri
           cargo clippy -- -D warnings
+
+      - name: Tauri production build
+        run: |
+          cd app
+          npm run tauri build
 
   security:
     runs-on: ubuntu-latest

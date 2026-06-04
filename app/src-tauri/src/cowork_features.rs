@@ -234,8 +234,8 @@ pub fn generate_office_workflow(
     mut request: OfficeWorkflowRequest,
 ) -> Result<OfficeWorkflowResponse, String> {
     let format = request.format.trim().to_lowercase();
-    if format != "docx" && format != "pptx" {
-        return Err("unsupported office format (allowed: docx, pptx)".to_string());
+    if !matches!(format.as_str(), "docx" | "pptx" | "xlsx" | "pdf") {
+        return Err("unsupported office format (allowed: docx, pptx, xlsx, pdf)".to_string());
     }
 
     let mode = request
@@ -291,15 +291,26 @@ pub fn generate_office_workflow(
         let totals = build_workflow_totals(&request.transforms);
         let row_count = request.paragraphs.len().max(request.bullets.len()).max(1);
 
-        if format == "docx" {
-            write_docx(&output_path, &headers, row_count, &totals)?;
-        } else {
-            write_pptx(
+        match format.as_str() {
+            "docx" => write_docx(&output_path, &headers, row_count, &totals)?,
+            "pptx" => write_pptx(
                 &output_path,
                 request.title.as_deref(),
                 &request.paragraphs,
                 &request.bullets,
-            )?;
+            )?,
+            "xlsx" => {
+                let rows = build_workflow_rows(&request);
+                write_xlsx(&output_path, &headers, &rows, &totals)?;
+            }
+            "pdf" => write_simple_pdf(
+                &output_path,
+                request.title.as_deref().unwrap_or("Office Workflow Output"),
+                row_count,
+                headers.len(),
+                &totals,
+            )?,
+            _ => unreachable!(),
         }
 
         generated.push(OfficeWorkflowArtifact {
@@ -310,8 +321,11 @@ pub fn generate_office_workflow(
     }
 
     if mode != "native" {
+        if format != "docx" && format != "pptx" {
+            return Err("template workflow is supported only for docx and pptx".to_string());
+        }
         let template_path = request.template_path.as_deref().ok_or_else(|| {
-            "templatePath ist fuer mode=template oder mode=parallel erforderlich".to_string()
+            "templatePath is required for mode=template or mode=parallel".to_string()
         })?;
         let template_output = if mode == "template" {
             output_path.clone()
@@ -329,7 +343,7 @@ pub fn generate_office_workflow(
 
         if replacements == 0 {
             warnings.push(
-                "Keine Template-Platzhalter ersetzt (erwartetes Muster: {{key}}).".to_string(),
+                "No template placeholders were replaced (expected pattern: {{key}}).".to_string(),
             );
         }
 
@@ -389,6 +403,44 @@ fn build_workflow_totals(transforms: &HashMap<String, String>) -> Vec<(String, f
         }
     }
     totals
+}
+
+fn build_workflow_rows(request: &OfficeWorkflowRequest) -> Vec<Vec<String>> {
+    let mut rows = Vec::new();
+
+    if let Some(title) = request.title.as_ref() {
+        let trimmed = title.trim();
+        if !trimmed.is_empty() {
+            rows.push(vec!["title".to_string(), trimmed.to_string()]);
+        }
+    }
+
+    for (index, paragraph) in request.paragraphs.iter().enumerate() {
+        let trimmed = paragraph.trim();
+        if !trimmed.is_empty() {
+            rows.push(vec![format!("paragraph_{}", index + 1), trimmed.to_string()]);
+        }
+    }
+
+    for (index, bullet) in request.bullets.iter().enumerate() {
+        let trimmed = bullet.trim();
+        if !trimmed.is_empty() {
+            rows.push(vec![format!("bullet_{}", index + 1), trimmed.to_string()]);
+        }
+    }
+
+    for (key, value) in &request.transforms {
+        rows.push(vec![key.clone(), value.clone()]);
+    }
+
+    if rows.is_empty() {
+        rows.push(vec![
+            "content".to_string(),
+            "Office Workflow Output".to_string(),
+        ]);
+    }
+
+    rows
 }
 
 fn derive_parallel_template_path(output_path: &Path) -> PathBuf {
@@ -523,7 +575,7 @@ pub fn export_artifact_version_native(
         "pptx" => write_pptx_report(target_path, field_rows.len(), headers.len(), &totals),
         "pdf" => {
             let title = format!(
-                "Artefakt Export {} ({})",
+                "Artifact export {} ({})",
                 input.artifact_version_id, input.source_format
             );
             write_simple_pdf(
@@ -801,7 +853,7 @@ fn write_docx(
     ));
 
     if totals.is_empty() {
-        document.push_str("<w:p><w:r><w:t>Keine numerischen Summen erkannt.</w:t></w:r></w:p>");
+        document.push_str("<w:p><w:r><w:t>No numeric totals detected.</w:t></w:r></w:p>");
     } else {
         document.push_str("<w:p><w:r><w:t>Summen:</w:t></w:r></w:p>");
         for (name, value) in totals {
@@ -1128,7 +1180,7 @@ fn write_simple_pdf(
         format!("Spalten: {}", col_count),
     ];
     if totals.is_empty() {
-        lines.push("Keine numerischen Summen erkannt".to_string());
+        lines.push("No numeric totals detected".to_string());
     } else {
         lines.push("Summen:".to_string());
         for (name, value) in totals.iter().take(8) {

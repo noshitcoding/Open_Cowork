@@ -1,5 +1,6 @@
 import type { CSSProperties } from 'react'
 import { useCoworkStore } from '../stores/coworkStore'
+import { tr } from '../i18n'
 
 export default function ConnectorPanel() {
   const connectors = useCoworkStore((s) => s.connectors)
@@ -19,8 +20,8 @@ export default function ConnectorPanel() {
 
   return (
     <div className="panel">
-      <h2>Connectors</h2>
-      <p className="hint-text">Webhook-URL und API-Key werden lokal gespeichert. Der Verbindungstest laeuft ueber das Rust-Backend, um Webview-CORS zu umgehen.</p>
+      <h2>{tr("Connectors")}</h2>
+      <p className="hint-text">{tr("Webhook URL and API key are saved locally. The connection test runs through the Rust backend to avoid WebView CORS issues.")}</p>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         {connectors.map((connector) => {
@@ -35,8 +36,7 @@ export default function ConnectorPanel() {
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center' }}>
                 <div>
                   <strong>{connector.label}</strong>
-                  <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
-                    Key: {connector.key}
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>{tr("Key:")}{connector.key}
                   </div>
                 </div>
                 <button
@@ -44,45 +44,39 @@ export default function ConnectorPanel() {
                   className="btn-sm"
                   onClick={() => toggleConnector(connector.key, !connector.enabled)}
                 >
-                  {connector.enabled ? 'Deaktivieren' : 'Aktivieren'}
+                  {connector.enabled ? tr('Disable') : tr('Enable')}
                 </button>
               </div>
 
-              <label>
-                Webhook / API URL
-                <input
+              <label>{tr("Webhook / API URL")}<input
                   value={connector.webhookUrl ?? ''}
                   onChange={(event) => updateConnectorConfig(connector.key, { webhookUrl: event.target.value })}
-                  placeholder="https://example.com/webhook"
+                  placeholder={tr("https://example.com/webhook")}
                   style={inputStyle}
                 />
               </label>
 
-              <label>
-                API Key
-                <input
+              <label>{tr("API Key")}<input
                   value={connector.apiKey ?? ''}
                   onChange={(event) => updateConnectorConfig(connector.key, { apiKey: event.target.value })}
-                  placeholder="Optionaler Bearer Token"
+                  placeholder={tr("Optional bearer token")}
                   style={inputStyle}
                 />
               </label>
 
-              <label>
-                Notiz
-                <textarea
+              <label>{tr("Note")}<textarea
                   rows={2}
                   value={connector.note}
                   onChange={(event) => setConnectorNote(connector.key, event.target.value)}
-                  placeholder="Interne Hinweise oder Setup-Kommentare"
+                  placeholder={tr("Internal notes or setup comments")}
                   style={{ ...inputStyle, resize: 'vertical' }}
                 />
               </label>
 
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center' }}>
                 <div style={{ fontSize: 12, color: statusColor }}>
-                  {connector.lastTestMessage ?? 'Noch kein Verbindungstest ausgefuehrt.'}
-                  {connector.lastTestAt ? ` (${new Date(connector.lastTestAt).toLocaleString('de-DE')})` : ''}
+                  {connector.lastTestMessage ?? tr('No connection test has run yet.')}
+                  {connector.lastTestAt ? ` (${new Date(connector.lastTestAt).toLocaleString('en-US')})` : ''}
                 </div>
                 <button
                   type="button"
@@ -90,7 +84,7 @@ export default function ConnectorPanel() {
                   onClick={() => void testConnector(connector.key)}
                   disabled={connector.lastTestStatus === 'testing'}
                 >
-                  {connector.lastTestStatus === 'testing' ? 'Teste...' : 'Verbindung testen'}
+                  {connector.lastTestStatus === 'testing' ? tr('Testing...') : tr('Test connection')}
                 </button>
               </div>
             </div>

@@ -2,13 +2,14 @@ import { useEffect, useState } from 'react'
 import { useTaskStore } from '../stores/taskStore'
 import { useConfigStore } from '../stores/configStore'
 import type { Task, TaskStatus } from '../stores/taskStore'
+import { tr } from '../i18n'
 
 const STATUS_LABELS: Record<TaskStatus, string> = {
-  created: 'Erstellt',
+  created: 'Created',
   planned: 'Geplant',
-  waiting_approval: 'Warte auf Freigabe',
-  running: 'Läuft',
-  completed: 'Abgeschlossen',
+  waiting_approval: 'Waiting for approval',
+  running: 'Running',
+  completed: 'Abclosed',
   failed: 'Fehlgeschlagen',
   cancelled: 'Abgebrochen',
 }
@@ -41,7 +42,7 @@ function TaskCard({ task }: { task: Task }) {
 
       {task.steps.length > 0 && (
         <div className="task-steps">
-          <h4>Schritte</h4>
+          <h4>{tr("Steps")}</h4>
           <ol>
             {task.steps.map((step) => (
               <li key={step.id} className={`step-${step.state}`}>
@@ -66,16 +67,12 @@ function TaskCard({ task }: { task: Task }) {
             <button
               type="button"
               onClick={() => updateTaskStatus(task.id, 'running')}
-            >
-              Freigeben & Starten
-            </button>
+            >{tr("Approve and start")}</button>
             <button
               type="button"
               className="btn-secondary"
               onClick={() => updateTaskStatus(task.id, 'cancelled')}
-            >
-              Abbrechen
-            </button>
+            >{tr("Cancel")}</button>
           </>
         )}
         {task.status === 'running' && (
@@ -83,14 +80,11 @@ function TaskCard({ task }: { task: Task }) {
             type="button"
             className="btn-secondary"
             onClick={() => updateTaskStatus(task.id, 'cancelled')}
-          >
-            Abbrechen
-          </button>
+          >{tr("Cancel")}</button>
         )}
       </div>
 
-      <div className="task-meta">
-        Erstellt: {new Date(task.createdAt).toLocaleString('de-DE')}
+      <div className="task-meta">{tr("Created:")}{new Date(task.createdAt).toLocaleString('en-US')}
       </div>
     </div>
   )
@@ -118,26 +112,18 @@ export default function TaskView() {
 
   return (
     <div className="task-view">
-      <h1>Tasks</h1>
+      <h1>{tr("Tasks")}</h1>
       {multiSelectEnabled && tasks.length > 0 && (
         <div className="actions" style={{ marginBottom: '12px' }}>
-          <button type="button" className="btn-secondary" onClick={() => setSelectedIds(tasks.map((task) => task.id))}>
-            Alle auswaehlen
-          </button>
-          <button type="button" className="btn-secondary" onClick={() => setSelectedIds([])}>
-            Auswahl aufheben
-          </button>
-          <button type="button" onClick={() => applyBatchStatus('completed')} disabled={selectedIds.length === 0}>
-            Auswahl abschliessen
-          </button>
-          <button type="button" className="btn-secondary" onClick={() => applyBatchStatus('cancelled')} disabled={selectedIds.length === 0}>
-            Auswahl abbrechen
-          </button>
+          <button type="button" className="btn-secondary" onClick={() => setSelectedIds(tasks.map((task) => task.id))}>{tr("Select all")}</button>
+          <button type="button" className="btn-secondary" onClick={() => setSelectedIds([])}>{tr("Clear selection")}</button>
+          <button type="button" onClick={() => applyBatchStatus('completed')} disabled={selectedIds.length === 0}>{tr("Finish selection")}</button>
+          <button type="button" className="btn-secondary" onClick={() => applyBatchStatus('cancelled')} disabled={selectedIds.length === 0}>{tr("Cancel selection")}</button>
         </div>
       )}
       {tasks.length === 0 ? (
         <div className="empty-state">
-          <p>Noch keine Tasks vorhanden. Tasks werden automatisch aus dem Chat erstellt, wenn ein Plan Freigabe erfordert.</p>
+          <p>{tr("No tasks available yet. Tasks are created automatically from chat when a plan requires approval.")}</p>
         </div>
       ) : (
         <div className="task-list">
@@ -149,9 +135,7 @@ export default function TaskView() {
                     type="checkbox"
                     checked={selectedIds.includes(task.id)}
                     onChange={() => toggleSelected(task.id)}
-                  />
-                  markieren
-                </label>
+                  />{tr("select")}</label>
               )}
               <TaskCard task={task} />
             </div>

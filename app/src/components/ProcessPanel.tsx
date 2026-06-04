@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useProcessStore, type ProcessStatusResult } from '../stores/processStore'
+import { tr } from '../i18n'
 
 export default function ProcessPanel() {
   const { processes, loading, error, loadProcesses, startProcess, stopProcess, approveProcess } = useProcessStore()
@@ -34,10 +35,10 @@ export default function ProcessPanel() {
 
   const statusLabel = (status: string) => {
     switch (status) {
-      case 'running': return 'Laeuft'
+      case 'running': return 'Running'
       case 'stopped': return 'Gestoppt'
-      case 'failed': return 'Fehler'
-      case 'pending_approval': return 'Warte auf Freigabe'
+      case 'failed': return 'Error'
+      case 'pending_approval': return 'Waiting for approval'
       default: return status
     }
   }
@@ -45,8 +46,8 @@ export default function ProcessPanel() {
   return (
     <div className="panel">
       <div className="panel-heading-row">
-        <h2>⚙️ Prozesse</h2>
-        <button type="button" className="btn-sm" onClick={() => setShowForm(!showForm)}>+ Starten</button>
+        <h2>{tr("⚙️ Processes")}</h2>
+        <button type="button" className="btn-sm" onClick={() => setShowForm(!showForm)}>{tr("Start")}</button>
       </div>
 
       {error && <p style={{ color: 'var(--danger)', fontSize: 12 }}>{error}</p>}
@@ -54,23 +55,19 @@ export default function ProcessPanel() {
       {showForm && (
         <div className="card" style={{ marginBottom: 12 }}>
           <div className="grid" style={{ gridTemplateColumns: '1fr 2fr', marginBottom: 8 }}>
-            <label>
-              Label
-              <input type="text" value={label} onChange={(e) => setLabel(e.target.value)} placeholder="z.B. Dev Server" />
+            <label>{tr("Label")}<input type="text" value={label} onChange={(e) => setLabel(e.target.value)} placeholder={tr("e.g. Dev Server")} />
             </label>
-            <label>
-              Befehl
-              <input type="text" value={command} onChange={(e) => setCommand(e.target.value)} placeholder="z.B. npm run dev" />
+            <label>{tr("Command")}<input type="text" value={command} onChange={(e) => setCommand(e.target.value)} placeholder={tr("e.g. npm run dev")} />
             </label>
           </div>
-          <button type="button" className="btn-sm" onClick={handleStart}>Prozess starten</button>
+          <button type="button" className="btn-sm" onClick={handleStart}>{tr("Start process")}</button>
         </div>
       )}
 
       {loading ? (
-        <p className="panel-empty">Laden...</p>
+        <p className="panel-empty">{tr("Loading...")}</p>
       ) : processes.length === 0 ? (
-        <p className="panel-empty">Keine aktiven Prozesse</p>
+        <p className="panel-empty">{tr("No active Processes")}</p>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           {processes.map((proc: ProcessStatusResult) => (
@@ -80,8 +77,8 @@ export default function ProcessPanel() {
                 <div style={{ fontSize: 12, color: 'var(--text-muted)', fontFamily: 'monospace' }}>{proc.command}</div>
                 <div style={{ fontSize: 11, marginTop: 2 }}>
                   <span style={{ color: statusColor(proc.status) }}>{statusLabel(proc.status)}</span>
-                  {proc.pid != null && <span style={{ color: 'var(--text-muted)', marginLeft: 8 }}>PID: {proc.pid}</span>}
-                  {proc.requiresAdmin && <span style={{ color: 'var(--warning)', marginLeft: 8 }}>Admin</span>}
+                  {proc.pid != null && <span style={{ color: 'var(--text-muted)', marginLeft: 8 }}>{tr("PID:")}{proc.pid}</span>}
+                  {proc.requiresAdmin && <span style={{ color: 'var(--warning)', marginLeft: 8 }}>{tr("Admin")}</span>}
                 </div>
               </div>
               <div style={{ display: 'flex', gap: 6 }}>
@@ -95,7 +92,7 @@ export default function ProcessPanel() {
                 )}
                 {proc.status === 'running' && (
                   <button type="button" className="btn-sm" onClick={async () => { await stopProcess(proc.processId); loadProcesses() }}
-                    style={{ color: 'var(--danger)' }}>Stop</button>
+                    style={{ color: 'var(--danger)' }}>{tr("Stop")}</button>
                 )}
               </div>
             </div>

@@ -110,19 +110,19 @@ function buildChatPrompt(prompt: string, history: Array<{ role: string; content:
     .join('\n')
 
   return [
-    'Du bist Open_Cowork, ein lokaler Assistenz-Agent. Antworte knapp, klar und auf Deutsch.',
-    'Wenn die Aufgabe riskante oder destruktive Aktionen enthalten koennte, schlage einen Plan vor und kennzeichne das als approval-beduerftig.',
+    'You are Open_Cowork, a local assistant agent. Answer concisely, clearly, and in English.',
+    'If the task may involve risky or destructive actions, propose a plan and mark it as approval-required.',
     'WICHTIGE REGELN:',
-    "- Gib niemals Platzhalter- oder Warte-Antworten wie 'ich analysiere', 'bitte warten', 'kommt gleich' oder aehnliches aus.",
-    '- Gib immer direkt eine finale, inhaltliche Antwort in genau dieser Nachricht.',
+    "- Never output placeholder or waiting answers such as 'I am analyzing', 'please wait', 'coming soon', or similar text.",
+    '- Always provide a final substantive answer directly in this message.',
     '- Erfinde niemals Dokumentinhalte.',
-    '- Wenn nur ein Dateipfad vorhanden ist, aber kein extrahierter Dokumenttext im Prompt steht, sage klar, dass der Inhalt nicht vorliegt und bitte um dokumentierten Textauszug oder aktivierte Dateianalyse.',
+    '- If only a file path is available but no extracted document text is in the prompt, clearly state that the content is not available and ask for a documented text excerpt or enabled file analysis.',
     '',
-    'Kontextverlauf:',
+    'Context history:',
     historyText,
-    `Nutzer: ${prompt}`,
+    `User: ${prompt}`,
     '',
-    'Antwort:',
+    'Answer:',
   ].join('\n')
 }
 
@@ -265,13 +265,13 @@ async function callOllamaGenerate(
       if (signal?.aborted) {
         throw new Error('Generierung abgebrochen.')
       }
-      throw new Error(`Zeitueberschreitung nach ${config.timeoutMs}ms beim Aufruf von ${config.baseUrl}/api/generate`)
+      throw new Error(`Timeout after ${config.timeoutMs}ms while calling ${config.baseUrl}/api/generate`)
     }
 
     const message = error instanceof Error ? error.message : String(error)
     if (message.toLowerCase().includes('failed to fetch')) {
       throw new Error(
-        `Ollama ist aus dem Browser nicht erreichbar (${config.baseUrl}). Pruefe Endpoint, HTTPS/CORS und ob Ollama laeuft.`,
+        `Ollama is not reachable from the browser (${config.baseUrl}). Check endpoint, HTTPS/CORS, and whether Ollama is running.`,
       )
     }
 
@@ -297,7 +297,7 @@ async function streamChatTurnViaHttp(
   }
 
   if (!assistantMessage.trim()) {
-    throw new Error('Das Modell hat keine sichtbare Antwort geliefert. Bitte Modell/Prompt pruefen.')
+    throw new Error('The model did not provide a visible response. Please check the model/prompt.')
   }
 
   return buildResponse(config, request.prompt, assistantMessage)
@@ -322,7 +322,7 @@ function normalizeTauriInvokeError(error: unknown): Error {
 
   if (isBridgeMissing) {
     return new Error(
-      'Tauri-Bridge nicht verfuegbar. Die App laeuft vermutlich nicht als Tauri-Desktop-App. Starte Open_Cowork mit "npm run tauri dev" (oder als gebaute Desktop-App).',
+      'Tauri bridge is not available. The app is probably not running as a Tauri desktop app. Start Open_Cowork with "npm run tauri dev" (or as a built desktop app).',
     )
   }
 
@@ -394,7 +394,7 @@ export async function streamChatTurn(
     } catch (fallbackError) {
       const streamMessage = streamError instanceof Error ? streamError.message : String(streamError)
       const fallbackMessage = normalizeTauriInvokeError(fallbackError).message
-      throw new Error(`${streamMessage}\nFallback fehlgeschlagen: ${fallbackMessage}`)
+      throw new Error(`${streamMessage}\nFallback failed: ${fallbackMessage}`)
     }
   } finally {
     options?.signal?.removeEventListener('abort', cancelStream)

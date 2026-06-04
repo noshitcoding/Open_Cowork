@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+﻿import { describe, expect, it } from 'vitest'
 import {
   buildClarificationContinuationPrompt,
   inferClarificationContext,
@@ -15,34 +15,34 @@ describe('followUpPrompt', () => {
   })
 
   it('detects clarifying questions', () => {
-    expect(isLikelyClarifyingQuestion('Bitte geben Sie an, nach welchem Kriterium die Ordner sortiert werden sollen.')).toBe(true)
+    expect(isLikelyClarifyingQuestion('Please specify which criterion should be used to sort the folders.')).toBe(true)
     expect(isLikelyClarifyingQuestion('Nach welchem Kriterium soll ich sortieren?')).toBe(true)
-    expect(isLikelyClarifyingQuestion('Ich habe die Ordner verschoben.')).toBe(false)
+    expect(isLikelyClarifyingQuestion('I moved the folders.')).toBe(false)
   })
 
   it('infers clarification context from previous chat messages', () => {
     const context = inferClarificationContext([
-      { role: 'user', content: 'Sortiere alle Ordner in 2 neue Ordner.' },
-      { role: 'assistant', content: 'Bitte geben Sie an, nach welchem Kriterium die Ordner sortiert werden sollen.' },
+      { role: 'user', content: 'Sort all folders into 2 new folders.' },
+      { role: 'assistant', content: 'Please specify which criterion should be used to sort the folders.' },
     ], 'alphabetisch')
 
     expect(context).toEqual({
-      originalTask: 'Sortiere alle Ordner in 2 neue Ordner.',
-      assistantQuestion: 'Bitte geben Sie an, nach welchem Kriterium die Ordner sortiert werden sollen.',
+      originalTask: 'Sort all folders into 2 new folders.',
+      assistantQuestion: 'Please specify which criterion should be used to sort the folders.',
     })
   })
 
   it('builds a continuation prompt that keeps the original task', () => {
     const prompt = buildClarificationContinuationPrompt(
-      'Sortiere alle Ordner in 2 neue Ordner.',
-      'Bitte geben Sie an, nach welchem Kriterium die Ordner sortiert werden sollen.',
+      'Sort all folders into 2 new folders.',
+      'Please specify which criterion should be used to sort the folders.',
       'alphabetisch',
     )
 
-    expect(prompt).toContain('Urspruengliche Aufgabe:')
-    expect(prompt).toContain('Sortiere alle Ordner in 2 neue Ordner.')
-    expect(prompt).toContain('Antwort des Nutzers:')
+    expect(prompt).toContain('Original task:')
+    expect(prompt).toContain('Sort all folders into 2 new folders.')
+    expect(prompt).toContain('User answer:')
     expect(prompt).toContain('alphabetisch')
-    expect(prompt).toContain('antworte nicht nur mit einer Liste verfuegbarer Tools')
+    expect(prompt).toContain('do not only answer with a list of available tools')
   })
 })

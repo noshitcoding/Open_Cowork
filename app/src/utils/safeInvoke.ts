@@ -6,7 +6,7 @@
 
 import { invoke } from '@tauri-apps/api/core'
 
-const NOT_AVAILABLE_MSG = 'Tauri-Runtime nicht verfuegbar – Funktion nur in der Desktop-App nutzbar.'
+const NOT_AVAILABLE_MSG = 'Tauri runtime is not available - feature can only be used in the desktop app.'
 
 /** Check whether the Tauri runtime is available. */
 export function hasTauriRuntime(): boolean {

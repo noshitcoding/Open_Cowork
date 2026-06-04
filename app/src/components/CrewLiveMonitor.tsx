@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import type { CrewLiveEntry, CrewLiveEntryCategory, CrewLiveState } from '../stores/chatStore'
+import { tr } from '../i18n'
 
 type CrewLiveMonitorProps = {
   live: CrewLiveState
@@ -42,34 +43,34 @@ const CREW_LIVE_OVERSCAN_LINES = 18
 
 const CATEGORY_LABELS: Record<CrewLiveDisplayCategory, string> = {
   status: 'Status',
-  context: 'Kontext',
+  context: 'Context',
   agent: 'Agent',
-  thinking: 'Prozess',
-  handoff: 'Uebergabe',
+  thinking: 'Process',
+  handoff: 'Handoff',
   delegation: 'Delegation',
   tool: 'Tool',
   mcp: 'MCP',
   task: 'Task',
   result: 'Resultat',
-  output: 'Ausgabe',
-  error: 'Fehler',
+  output: 'Output',
+  error: 'Error',
   runtime: 'Runtime',
 }
 
 const FILTERS: Array<{ id: CrewLiveFilter; label: string }> = [
-  { id: 'all', label: 'Alle' },
+  { id: 'all', label: 'All' },
   { id: 'agent', label: 'Agent' },
-  { id: 'handoff', label: 'Uebergabe' },
-  { id: 'thinking', label: 'Prozess' },
+  { id: 'handoff', label: 'Handoff' },
+  { id: 'thinking', label: 'Process' },
   { id: 'mcp', label: 'MCP' },
   { id: 'tool', label: 'Tool' },
-  { id: 'error', label: 'Fehler' },
+  { id: 'error', label: 'Error' },
   { id: 'runtime', label: 'Runtime' },
 ]
 
 function formatTime(timestamp: number): string {
   try {
-    return new Date(timestamp).toLocaleTimeString('de-DE', {
+    return new Date(timestamp).toLocaleTimeString('en-US', {
       hour: '2-digit',
       minute: '2-digit',
       second: '2-digit',
@@ -187,7 +188,7 @@ function formatEntrySummary(entry: CrewLiveEntry, category: CrewLiveDisplayCateg
 function buildEntryMeta(entry: CrewLiveEntry): string[] {
   return [
     entry.provider?.trim() ? `Provider ${entry.provider.trim()}` : '',
-    entry.model?.trim() ? `Modell ${entry.model.trim()}` : '',
+    entry.model?.trim() ? `Model ${entry.model.trim()}` : '',
     entry.taskTitle?.trim() ? `Task ${entry.taskTitle.trim()}` : '',
   ].filter(Boolean)
 }
@@ -433,7 +434,7 @@ export default function CrewLiveMonitor({ live }: CrewLiveMonitorProps) {
     const expanded = expandedKeys.has(line.key)
     const canExpand = line.message.length > CREW_LIVE_COLLAPSED_CHARS
     const message = getCollapsedMessage(line.message, expanded)
-    const rawAgentTitle = line.rawAgentId && line.rawAgentId !== line.agentId ? `Technische ID: ${line.rawAgentId}` : undefined
+    const rawAgentTitle = line.rawAgentId && line.rawAgentId !== line.agentId ? `Technical ID: ${line.rawAgentId}` : undefined
 
     return (
       <div
@@ -446,7 +447,7 @@ export default function CrewLiveMonitor({ live }: CrewLiveMonitorProps) {
         <span className={`crew-live-line-badge tone-${line.category}`}>{categoryLabel}</span>
         <span className="crew-live-line-message">
           <span className="crew-live-line-message-main">
-            {line.label ? <span className="crew-live-line-message-key">{line.label}</span> : null}
+            {line.label ? <span className="crew-live-line-message-key">{tr(line.label)}</span> : null}
             <span>{message}</span>
           </span>
           {line.meta.length > 0 ? (
@@ -458,7 +459,7 @@ export default function CrewLiveMonitor({ live }: CrewLiveMonitorProps) {
               className="crew-live-expand"
               onClick={() => toggleExpanded(line.key)}
             >
-              {expanded ? 'Weniger anzeigen' : 'Mehr anzeigen'}
+              {expanded ? tr('Show less') : tr('Show more')}
             </button>
           ) : null}
         </span>
@@ -470,7 +471,7 @@ export default function CrewLiveMonitor({ live }: CrewLiveMonitorProps) {
     <section className={`crew-live-monitor status-${live.status}`}>
       <div className="crew-live-header">
         <div>
-          <div className="crew-live-kicker">Crew Live Verbose</div>
+          <div className="crew-live-kicker">{tr("Crew Live Verbose")}</div>
           <div className="crew-live-title">{live.title}</div>
         </div>
         <div className={`crew-live-status status-${live.status}`}>
@@ -478,51 +479,50 @@ export default function CrewLiveMonitor({ live }: CrewLiveMonitorProps) {
         </div>
       </div>
 
-      <div className="crew-live-summary" aria-label="Log-Zusammenfassung">
+      <div className="crew-live-summary" aria-label={tr("Log summary")}>
         <div className="crew-live-summary-item">
-          <span className="crew-live-summary-label">Eventliste</span>
+          <span className="crew-live-summary-label">{tr("Event list")}</span>
           <strong className="crew-live-summary-value">
-            {rollingWindowLines.length} Zeilen
-          </strong>
+            {rollingWindowLines.length}{tr("lines")}</strong>
         </div>
         <div className="crew-live-summary-item">
-          <span className="crew-live-summary-label">Personen-Fokus</span>
+          <span className="crew-live-summary-label">{tr("People focus")}</span>
           <strong className="crew-live-summary-value">{focusedStreams.length} / {agentStreams.length}</strong>
         </div>
         <div className="crew-live-summary-item">
-          <span className="crew-live-summary-label">Uebergaben</span>
+          <span className="crew-live-summary-label">{tr("Handoffs")}</span>
           <strong className="crew-live-summary-value tone-handoff">{highlightedCounts.handoff}</strong>
         </div>
         <div className="crew-live-summary-item">
-          <span className="crew-live-summary-label">Prozess</span>
+          <span className="crew-live-summary-label">{tr("Process")}</span>
           <strong className="crew-live-summary-value tone-thinking">{highlightedCounts.thinking}</strong>
         </div>
         <div className="crew-live-summary-item">
-          <span className="crew-live-summary-label">Tool</span>
+          <span className="crew-live-summary-label">{tr("Tool")}</span>
           <strong className="crew-live-summary-value tone-tool">{highlightedCounts.tool}</strong>
         </div>
         <div className="crew-live-summary-item">
-          <span className="crew-live-summary-label">MCP</span>
+          <span className="crew-live-summary-label">{tr("MCP")}</span>
           <strong className="crew-live-summary-value tone-mcp">{highlightedCounts.mcp}</strong>
         </div>
         <div className="crew-live-summary-item">
-          <span className="crew-live-summary-label">Fehler</span>
+          <span className="crew-live-summary-label">{tr("Error")}</span>
           <strong className="crew-live-summary-value tone-error">{highlightedCounts.error}</strong>
         </div>
         <div className="crew-live-summary-item">
-          <span className="crew-live-summary-label">Runtime</span>
+          <span className="crew-live-summary-label">{tr("Runtime")}</span>
           <strong className="crew-live-summary-value tone-runtime">{highlightedCounts.runtime}</strong>
         </div>
       </div>
 
       <div className="crew-live-focus-shell">
         <div className="crew-live-section-title">
-          <span>Aktive Personen</span>
-          <div className="crew-live-gallery-controls" aria-label="Personen-Galerie">
+          <span>{tr("Active people")}</span>
+          <div className="crew-live-gallery-controls" aria-label={tr("People gallery")}>
             <button
               type="button"
               className="crew-live-icon-button"
-              aria-label="Vorherige Personen anzeigen"
+              aria-label={tr("Show previous people")}
               disabled={agentStreams.length <= CREW_LIVE_FOCUS_COLUMNS}
               onClick={() => shiftFocus(-1)}
             >
@@ -531,7 +531,7 @@ export default function CrewLiveMonitor({ live }: CrewLiveMonitorProps) {
             <button
               type="button"
               className="crew-live-icon-button"
-              aria-label="Naechste Personen anzeigen"
+              aria-label={tr("Show next people")}
               disabled={agentStreams.length <= CREW_LIVE_FOCUS_COLUMNS}
               onClick={() => shiftFocus(1)}
             >
@@ -542,7 +542,7 @@ export default function CrewLiveMonitor({ live }: CrewLiveMonitorProps) {
 
         {focusedStreams.length > 0 ? (
           <>
-            <div className="crew-live-focus-tabs" aria-label="Mobile Personen-Auswahl">
+            <div className="crew-live-focus-tabs" aria-label={tr("Mobile people selection")}>
               {focusedStreams.map((stream) => (
                 <button
                   key={stream.agentId}
@@ -550,11 +550,11 @@ export default function CrewLiveMonitor({ live }: CrewLiveMonitorProps) {
                   className={`crew-live-focus-tab${activeMobileAgentId === stream.agentId ? ' active' : ''}`}
                   onClick={() => setMobileAgentId(stream.agentId)}
                 >
-                  {stream.label}
+                  {tr(stream.label)}
                 </button>
               ))}
             </div>
-            <div className="crew-live-focus-grid" aria-label="Aktive Crew-Personen">
+            <div className="crew-live-focus-grid" aria-label={tr("Active crew people")}>
               {focusedStreams.map((stream) => (
                 <article
                   key={stream.agentId}
@@ -563,17 +563,17 @@ export default function CrewLiveMonitor({ live }: CrewLiveMonitorProps) {
                 >
                   <div className="crew-live-focus-header">
                     <div>
-                      <div className="crew-live-focus-name">{stream.label}</div>
-                      <div className="crew-live-focus-time">aktiv {formatTime(stream.lastActiveAt)}</div>
+                      <div className="crew-live-focus-name">{tr(stream.label)}</div>
+                      <div className="crew-live-focus-time">{tr("active")}{formatTime(stream.lastActiveAt)}</div>
                     </div>
                     <div className="crew-live-focus-count">{stream.lines.length}</div>
                   </div>
-                  <div className="crew-live-focus-metrics" aria-label={`${stream.label} Ereignisse`}>
-                    <span className="tone-handoff">Uebergabe {stream.counts.handoff + stream.counts.delegation}</span>
-                    <span className="tone-thinking">Prozess {stream.counts.thinking}</span>
-                    <span className="tone-tool">Tool {stream.counts.tool}</span>
-                    <span className="tone-mcp">MCP {stream.counts.mcp}</span>
-                    <span className="tone-error">Fehler {stream.counts.error}</span>
+                  <div className="crew-live-focus-metrics" aria-label={`${tr(stream.label)} events`}>
+                    <span className="tone-handoff">{tr("Handoff")}{stream.counts.handoff + stream.counts.delegation}</span>
+                    <span className="tone-thinking">{tr("Process")}{stream.counts.thinking}</span>
+                    <span className="tone-tool">{tr("Tool")}{stream.counts.tool}</span>
+                    <span className="tone-mcp">{tr("MCP")}{stream.counts.mcp}</span>
+                    <span className="tone-error">{tr("Error")}{stream.counts.error}</span>
                   </div>
                   <div className="crew-live-focus-events">
                     {stream.lines.slice(-CREW_LIVE_FOCUS_LINES).map((line) => renderLine(line, 'focus'))}
@@ -583,23 +583,23 @@ export default function CrewLiveMonitor({ live }: CrewLiveMonitorProps) {
             </div>
           </>
         ) : (
-          <div className="crew-live-empty">Warte auf Agent-Ausgaben...</div>
+          <div className="crew-live-empty">{tr("Waiting for agent outputs...")}</div>
         )}
       </div>
 
       <div className="crew-live-events">
         <div className="crew-live-section-title">
-          <span>Event-Historie</span>
-          <div className="crew-live-filterbar" aria-label="Log-Filter">
+          <span>{tr("Event history")}</span>
+          <div className="crew-live-filterbar" aria-label={tr("Log filter")}>
             {FILTERS.map((entry) => (
               <button
                 key={entry.id}
                 type="button"
                 className={`crew-live-filter-chip${filter === entry.id ? ' active' : ''}`}
-                aria-label={`Filter ${entry.label}`}
+                aria-label={`Filter ${tr(entry.label)}`}
                 onClick={() => setFilter(entry.id)}
               >
-                {entry.label}
+                {tr(entry.label)}
                 <span>{getFilterCount(rollingWindowLines, entry.id)}</span>
               </button>
             ))}
@@ -607,12 +607,12 @@ export default function CrewLiveMonitor({ live }: CrewLiveMonitorProps) {
         </div>
 
         {filteredLines.length === 0 ? (
-          <div className="crew-live-empty">Keine Ereignisse fuer diesen Filter.</div>
+          <div className="crew-live-empty">{tr("No events for this filter.")}</div>
         ) : (
           <div
             className="crew-live-log"
             ref={logRef}
-            aria-label="Crew-Live-Log"
+            aria-label={tr("Crew-Live-Log")}
             aria-rowcount={filteredLines.length}
             aria-live={live.status === 'running' ? 'polite' : undefined}
             onScroll={handleLogScroll}

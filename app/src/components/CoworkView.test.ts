@@ -21,8 +21,8 @@ describe('CoworkView project context helpers', () => {
   it('builds supplemental project instructions without global override text', () => {
     expect(buildProjectInstructionsPromptContext({
       title: 'Alpha',
-      instructions: 'Nutze die Projektquellen zuerst.  ',
-    })).toBe('Projektanweisungen fuer "Alpha":\nNutze die Projektquellen zuerst.')
+      instructions: 'Use the project sources first.  ',
+    })).toBe('Project instructions for "Alpha":\nUse the project sources first.')
 
     expect(buildProjectInstructionsPromptContext({
       title: 'Alpha',
@@ -33,14 +33,14 @@ describe('CoworkView project context helpers', () => {
   it('fetches project links manually and reports non-blocking failures', async () => {
     safeInvokeMock.mockImplementation(async (_cmd: string, args: { request: { url: string } }) => {
       if (args.request.url.includes('broken')) {
-        throw new Error('Netzwerkfehler')
+        throw new Error('Network error')
       }
       return {
         url: args.request.url,
         status: 200,
         ok: true,
-        title: 'Spezifikation',
-        content: 'Linkinhalt',
+        title: 'Specification',
+        content: 'Link content',
         truncated: false,
       }
     })
@@ -66,10 +66,10 @@ describe('CoworkView project context helpers', () => {
 
     const result = await buildProjectLinkPromptContext(links)
 
-    expect(result.context).toContain('Manuell abgerufene Projektlinks:')
-    expect(result.context).toContain('Quelle: Spec')
-    expect(result.context).toContain('Linkinhalt')
-    expect(result.notice).toContain('Nicht alle Projektlinks konnten abgerufen werden')
-    expect(result.notice).toContain('Broken: Netzwerkfehler')
+    expect(result.context).toContain('Manually fetched project links:')
+    expect(result.context).toContain('Source: Spec')
+    expect(result.context).toContain('Link content')
+    expect(result.notice).toContain('Not all project links could be fetched')
+    expect(result.notice).toContain('Broken: Network error')
   })
 })

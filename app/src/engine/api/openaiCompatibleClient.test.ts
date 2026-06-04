@@ -10,11 +10,11 @@ vi.mock('../../utils/safeInvoke', () => ({
 
 const readToolDef = {
   name: 'Read',
-  description: 'Liest eine Datei.',
+  description: 'Liest eine File.',
   input_schema: {
     type: 'object' as const,
     properties: {
-      file_path: { type: 'string', description: 'Pfad zur Datei' },
+      file_path: { type: 'string', description: 'Pfad zur File' },
     },
     required: ['file_path'] as string[],
   },
@@ -35,7 +35,7 @@ describe('streamOpenAiCompatibleMessages', () => {
           id: 'resp-1',
           model: 'gpt-4.1-mini',
           usage: { prompt_tokens: 10, completion_tokens: 4 },
-          choices: [{ finish_reason: 'stop', message: { content: 'Analyse abgeschlossen.' } }],
+          choices: [{ finish_reason: 'stop', message: { content: 'Analysis completed.' } }],
         }),
         {
           status: 200,
@@ -56,8 +56,8 @@ describe('streamOpenAiCompatibleMessages', () => {
       [{
         role: 'user',
         content: [
-          { type: 'tool_result', tool_use_id: 'tool-1', content: 'Screenshot aufgenommen.' },
-          { type: 'text', text: 'Bitte analysiere den aktuellen Bildschirm.' },
+          { type: 'tool_result', tool_use_id: 'tool-1', content: 'screenshot captured.' },
+          { type: 'text', text: 'Please analyze the current screen.' },
           { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAA' } },
         ],
       }],
@@ -74,11 +74,11 @@ describe('streamOpenAiCompatibleMessages', () => {
     expect(url).toBe('https://api.openai.com/v1/chat/completions')
     expect(body.messages).toEqual([
       { role: 'system', content: 'Systemprompt' },
-      { role: 'tool', content: 'Screenshot aufgenommen.', tool_call_id: 'tool-1' },
+      { role: 'tool', content: 'screenshot captured.', tool_call_id: 'tool-1' },
       {
         role: 'user',
         content: [
-          { type: 'text', text: 'Bitte analysiere den aktuellen Bildschirm.' },
+          { type: 'text', text: 'Please analyze the current screen.' },
           { type: 'image_url', image_url: { url: 'data:image/png;base64,AAA' } },
         ],
       },
@@ -290,8 +290,8 @@ describe('streamOpenAiCompatibleMessages', () => {
           choices: [{
             finish_reason: 'stop',
             message: {
-              reasoning: 'Ich pruefe zuerst die Bedingung.',
-              content: 'Die Antwort ist 4.',
+              reasoning: 'Ich check zuerst die Bedingung.',
+              content: 'Die answer ist 4.',
             },
           }],
         }),
@@ -311,7 +311,7 @@ describe('streamOpenAiCompatibleMessages', () => {
         model: 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free',
         baseUrl: 'https://openrouter.ai/api/v1',
       },
-      [{ role: 'user', content: 'Was ist 2+2?' }],
+      [{ role: 'user', content: 'What is 2+2?' }],
       'Systemprompt',
     )
 
@@ -337,22 +337,22 @@ describe('streamOpenAiCompatibleMessages', () => {
           type: 'content_block_delta',
           delta: {
             type: 'thinking_delta',
-            thinking: 'Ich pruefe zuerst die Bedingung.',
+            thinking: 'Ich check zuerst die Bedingung.',
           },
         }),
         expect.objectContaining({
           type: 'content_block_delta',
           delta: {
             type: 'text_delta',
-            text: 'Die Antwort ist 4.',
+            text: 'Die answer ist 4.',
           },
         }),
       ]),
     )
     expect(result).toMatchObject({
       content: [
-        { type: 'thinking', thinking: 'Ich pruefe zuerst die Bedingung.' },
-        { type: 'text', text: 'Die Antwort ist 4.' },
+        { type: 'thinking', thinking: 'Ich check zuerst die Bedingung.' },
+        { type: 'text', text: 'Die answer ist 4.' },
       ],
     })
   })
@@ -386,11 +386,11 @@ describe('streamOpenAiCompatibleMessages', () => {
         {
           role: 'assistant',
           content: [
-            { type: 'thinking', thinking: 'Ich muss erst den Dateibaum auswerten.' },
-            { type: 'text', text: 'Ich pruefe jetzt die Dateien.' },
+            { type: 'thinking', thinking: 'Ich muss erst den Filebaum auswerten.' },
+            { type: 'text', text: 'Ich check jetzt die Files.' },
           ],
         },
-        { role: 'user', content: 'Bitte mache weiter.' },
+        { role: 'user', content: 'Please mache weiter.' },
       ],
       'Systemprompt',
     )
@@ -405,8 +405,8 @@ describe('streamOpenAiCompatibleMessages', () => {
       expect.arrayContaining([
         expect.objectContaining({
           role: 'assistant',
-          content: 'Ich pruefe jetzt die Dateien.',
-          reasoning: 'Ich muss erst den Dateibaum auswerten.',
+          content: 'Ich check jetzt die Files.',
+          reasoning: 'Ich muss erst den Filebaum auswerten.',
         }),
       ]),
     )
@@ -437,7 +437,7 @@ describe('streamOpenAiCompatibleMessages', () => {
             choices: [{
               finish_reason: 'stop',
               message: {
-                content: 'Ich nutze den Textkontext ohne Bild.',
+                content: 'Ich nutze den Textkontext ohne Image.',
               },
             }],
           }),
@@ -460,7 +460,7 @@ describe('streamOpenAiCompatibleMessages', () => {
       [{
         role: 'user',
         content: [
-          { type: 'text', text: 'Bitte analysiere den Screenshot.' },
+          { type: 'text', text: 'Please analyze the screenshot.' },
           { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAA' } },
         ],
       }],
@@ -486,7 +486,7 @@ describe('streamOpenAiCompatibleMessages', () => {
       {
         role: 'user',
         content: [
-          { type: 'text', text: 'Bitte analysiere den Screenshot.' },
+          { type: 'text', text: 'Please analyze the screenshot.' },
           { type: 'image_url', image_url: { url: 'data:image/png;base64,AAA' } },
         ],
       },
@@ -496,12 +496,12 @@ describe('streamOpenAiCompatibleMessages', () => {
     const secondBody = JSON.parse(String(secondInit.body))
     expect(secondBody.messages).toEqual([
       { role: 'system', content: 'Systemprompt' },
-      { role: 'user', content: 'Bitte analysiere den Screenshot.' },
+      { role: 'user', content: 'Please analyze the screenshot.' },
     ])
     expect(result).toMatchObject({
       model: 'meta-llama/llama-3.3-70b-instruct',
       stopReason: 'end_turn',
-      content: [{ type: 'text', text: 'Ich nutze den Textkontext ohne Bild.' }],
+      content: [{ type: 'text', text: 'Ich nutze den Textkontext ohne Image.' }],
     })
   })
 
@@ -536,7 +536,7 @@ describe('streamOpenAiCompatibleMessages', () => {
         model: 'openai/gpt-4o-mini',
         baseUrl: 'https://openrouter.ai/api/v1',
       },
-      [{ role: 'user', content: 'Bitte antworte.' }],
+      [{ role: 'user', content: 'Please antworte.' }],
       'Systemprompt',
     )
 

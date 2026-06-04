@@ -28,11 +28,12 @@ import { createChatProviderSelection, getChatProviderState } from '../utils/chat
 import { useConfigStore } from '../stores/configStore'
 import { useEngineStore } from '../stores/engineStore'
 import { useUiStore } from '../stores/uiStore'
+import { tr } from '../i18n'
 
 const THREAD_DND_MIME = 'application/open-cowork-thread-id'
 
 function formatDate(timestamp: number): string {
-  return new Date(timestamp).toLocaleDateString('de-DE', {
+  return new Date(timestamp).toLocaleDateString('en-US', {
     day: '2-digit',
     month: '2-digit',
     year: '2-digit',
@@ -130,7 +131,7 @@ export default function ProjectView() {
   }, [activeProject?.id, activeProject?.instructions, activeProject?.title])
 
   const handleCreateProject = () => {
-    const id = addProject(`Projekt ${projects.length + 1}`)
+    const id = addProject(`Project ${projects.length + 1}`)
     setActiveProject(id)
   }
 
@@ -156,9 +157,9 @@ export default function ProjectView() {
       directory: false,
       multiple: true,
       filters: [
-        { name: 'Projektdateien', extensions: ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'odt', 'ods', 'odp', 'txt', 'md', 'rtf', 'csv', 'json', 'yaml', 'yml'] },
-        { name: 'Bilder', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'] },
-        { name: 'Alle Dateien', extensions: ['*'] },
+        { name: 'Project files', extensions: ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'odt', 'ods', 'odp', 'txt', 'md', 'rtf', 'csv', 'json', 'yaml', 'yml'] },
+        { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'] },
+        { name: 'All files', extensions: ['*'] },
       ],
     })
     const paths = normalizeDialogSelection(selected)
@@ -252,11 +253,9 @@ export default function ProjectView() {
     <div className="project-view">
       <aside className="project-list-panel">
         <div className="project-list-header">
-          <h1>Projekte</h1>
+          <h1>{tr("Projects")}</h1>
           <button type="button" className="btn-sm project-icon-button" onClick={handleCreateProject}>
-            <Plus size={14} aria-hidden="true" />
-            Neu
-          </button>
+            <Plus size={14} aria-hidden="true" />{tr("New")}</button>
         </div>
 
         <div className="project-list">
@@ -277,13 +276,12 @@ export default function ProjectView() {
               >
                 <span className="project-list-item-title">{project.title}</span>
                 <span className="project-list-item-meta">
-                  {existingThreadCount} Chats / {project.resources.length} Quellen
-                </span>
+                  {existingThreadCount}{tr("Chats /")}{project.resources.length}{tr("sources")}</span>
               </button>
             )
           })}
           {projects.length === 0 && (
-            <p className="hint-text">Noch keine Projekte.</p>
+            <p className="hint-text">{tr("No projects yet.")}</p>
           )}
         </div>
       </aside>
@@ -292,16 +290,14 @@ export default function ProjectView() {
         {!activeProject ? (
           <div className="project-empty-state">
             <FolderOpen size={38} aria-hidden="true" />
-            <h2>Kein Projekt ausgewaehlt</h2>
-            <button type="button" className="btn-send" onClick={handleCreateProject}>
-              Projekt erstellen
-            </button>
+            <h2>{tr("No project selected")}</h2>
+            <button type="button" className="btn-send" onClick={handleCreateProject}>{tr("Create project")}</button>
           </div>
         ) : (
           <>
             <header className="project-detail-header">
               <div className="project-title-editor">
-                <label htmlFor="project-title">Projektname</label>
+                <label htmlFor="project-title">{tr("Project name")}</label>
                 <input
                   id="project-title"
                   value={titleDraft}
@@ -311,34 +307,28 @@ export default function ProjectView() {
                 />
               </div>
               <div className="project-instructions-editor">
-                <label htmlFor="project-instructions">Projektanweisungen</label>
+                <label htmlFor="project-instructions">{tr("Project instructions")}</label>
                 <textarea
                   id="project-instructions"
                   value={instructionsDraft}
                   rows={3}
                   onChange={(event) => setInstructionsDraft(event.currentTarget.value)}
                   onBlur={commitInstructions}
-                  placeholder="Ergaenzende Anweisungen fuer Chats in diesem Projekt..."
+                  placeholder={tr("Additional instructions for chats in this project...")}
                 />
               </div>
               <div className="project-detail-actions">
                 <button type="button" className="btn-sm project-icon-button" onClick={handleNewProjectChat}>
-                  <MessageSquarePlus size={14} aria-hidden="true" />
-                  Chat
-                </button>
+                  <MessageSquarePlus size={14} aria-hidden="true" />{tr("Chat")}</button>
                 <button type="button" className="btn-sm project-icon-button" onClick={handleAddFiles}>
-                  <FilePlus size={14} aria-hidden="true" />
-                  Dateien
-                </button>
+                  <FilePlus size={14} aria-hidden="true" />{tr("Files")}</button>
                 <button type="button" className="btn-sm project-icon-button" onClick={handleAddFolders}>
-                  <FolderPlus size={14} aria-hidden="true" />
-                  Ordner
-                </button>
+                  <FolderPlus size={14} aria-hidden="true" />{tr("Folder")}</button>
                 <button
                   type="button"
                   className="btn-sm project-icon-button danger"
                   onClick={() => setDeletePromptOpen(true)}
-                  title="Projekt loeschen"
+                  title={tr("Delete project")}
                 >
                   <Trash2 size={14} aria-hidden="true" />
                 </button>
@@ -346,21 +336,15 @@ export default function ProjectView() {
             </header>
 
             {deletePromptOpen && (
-              <div className="project-delete-panel" role="dialog" aria-label="Projekt loeschen">
+              <div className="project-delete-panel" role="dialog" aria-label={tr("Delete project")}>
                 <div>
-                  <strong>Projekt loeschen</strong>
-                  <p>Waehle, ob die zugeordneten Chats erhalten bleiben oder ebenfalls geloescht werden.</p>
+                  <strong>{tr("Delete project")}</strong>
+                  <p>{tr("Choose whether assigned chats should be kept or deleted as well.")}</p>
                 </div>
                 <div className="project-delete-actions">
-                  <button type="button" className="btn-sm" onClick={() => handleDeleteProject(false)}>
-                    Nur Projekt loesen
-                  </button>
-                  <button type="button" className="btn-sm project-icon-button danger" onClick={() => handleDeleteProject(true)}>
-                    Projekt und Chats loeschen
-                  </button>
-                  <button type="button" className="btn-sm" onClick={() => setDeletePromptOpen(false)}>
-                    Abbrechen
-                  </button>
+                  <button type="button" className="btn-sm" onClick={() => handleDeleteProject(false)}>{tr("Detach project only")}</button>
+                  <button type="button" className="btn-sm project-icon-button danger" onClick={() => handleDeleteProject(true)}>{tr("Delete project and chats")}</button>
+                  <button type="button" className="btn-sm" onClick={() => setDeletePromptOpen(false)}>{tr("Cancel")}</button>
                 </div>
               </div>
             )}
@@ -375,14 +359,14 @@ export default function ProjectView() {
               onDragLeave={() => setDropActive(false)}
               onDrop={(event) => handleProjectDrop(event, activeProject.id)}
             >
-              <span>Chats oder Dateien hier ablegen</span>
+              <span>{tr("Drop chats or files here")}</span>
             </section>
 
             <div className="project-detail-grid">
               <section className="project-panel">
                 <div className="project-panel-header">
-                  <h2>Projektquellen</h2>
-                  <span>{activeProject.resources.filter((resource) => resource.enabled).length} aktiv</span>
+                  <h2>{tr("Project sources")}</h2>
+                  <span>{activeProject.resources.filter((resource) => resource.enabled).length}{tr("active")}</span>
                 </div>
                 <div className="project-link-add">
                   <Link2 size={15} aria-hidden="true" />
@@ -395,11 +379,9 @@ export default function ProjectView() {
                         handleAddLink()
                       }
                     }}
-                    placeholder="https://..."
+                    placeholder={tr("https://...")}
                   />
-                  <button type="button" className="btn-sm" onClick={handleAddLink} disabled={!/^https?:\/\/\S+$/i.test(linkDraft.trim())}>
-                    Link
-                  </button>
+                  <button type="button" className="btn-sm" onClick={handleAddLink} disabled={!/^https?:\/\/\S+$/i.test(linkDraft.trim())}>{tr("Link")}</button>
                 </div>
                 <div className="project-resource-list">
                   {activeProject.resources.map((resource) => (
@@ -411,7 +393,7 @@ export default function ProjectView() {
                           onChange={(event) => setResourceEnabled(activeProject.id, resource.id, event.currentTarget.checked)}
                         />
                         <span className="project-resource-kind">
-                          {resource.kind === 'folder' ? 'Ordner' : resource.kind === 'link' ? 'Link' : 'Datei'}
+                          {resource.kind === 'folder' ? 'Folder' : resource.kind === 'link' ? 'Link' : 'File'}
                         </span>
                         <span className="project-resource-name" title={resource.path}>
                           {resource.label ?? getPathName(resource.path)}
@@ -422,21 +404,21 @@ export default function ProjectView() {
                         type="button"
                         className="project-row-action"
                         onClick={() => removeResource(activeProject.id, resource.id)}
-                        title="Quelle entfernen"
+                        title={tr("Source entfernen")}
                       >
                         <X size={14} aria-hidden="true" />
                       </button>
                     </div>
                   ))}
                   {activeProject.resources.length === 0 && (
-                    <p className="hint-text">Keine Quellen verknuepft.</p>
+                    <p className="hint-text">{tr("No sources linked.")}</p>
                   )}
                 </div>
               </section>
 
               <section className="project-panel">
                 <div className="project-panel-header">
-                  <h2>Projekt-Chats</h2>
+                  <h2>{tr("Project chats")}</h2>
                   <span>{projectThreads.length}</span>
                 </div>
                 <div className="project-thread-list">
@@ -455,27 +437,27 @@ export default function ProjectView() {
                         onClick={() => handleOpenThread(thread.id)}
                       >
                         <span>{thread.title}</span>
-                        <small>{thread.messages.filter((message) => message.role !== 'system').length} Nachrichten / {formatDate(thread.updatedAt)}</small>
+                        <small>{thread.messages.filter((message) => message.role !== 'system').length}{tr("Messages /")}{formatDate(thread.updatedAt)}</small>
                       </button>
                       <button
                         type="button"
                         className="project-row-action"
                         onClick={() => detachThread(activeProject.id, thread.id)}
-                        title="Aus Projekt entfernen"
+                        title={tr("Remove from project")}
                       >
                         <X size={14} aria-hidden="true" />
                       </button>
                     </div>
                   ))}
                   {projectThreads.length === 0 && (
-                    <p className="hint-text">Noch keine Chats im Projekt.</p>
+                    <p className="hint-text">{tr("No chats in the project yet.")}</p>
                   )}
                 </div>
               </section>
 
               <section className="project-panel project-panel-wide">
                 <div className="project-panel-header">
-                  <h2>Chats ausserhalb dieses Projekts</h2>
+                  <h2>{tr("Chats outside this project")}</h2>
                   <span>{outsideThreads.length}</span>
                 </div>
                 <div className="project-thread-list compact">
@@ -497,21 +479,19 @@ export default function ProjectView() {
                         >
                           <span>{thread.title}</span>
                           <small>
-                            {sourceProjectTitle ? `Aus ${sourceProjectTitle}` : 'Nicht in diesem Projekt'} / {formatDate(thread.updatedAt)}
+                            {sourceProjectTitle ? `Aus ${sourceProjectTitle}` : tr('Not in this project')} / {formatDate(thread.updatedAt)}
                           </small>
                         </button>
                         <button
                           type="button"
                           className="btn-sm project-icon-button"
                           onClick={() => attachThread(activeProject.id, thread.id)}
-                        >
-                          Hinzufuegen
-                        </button>
+                        >{tr("Add")}</button>
                       </div>
                     )
                   })}
                   {outsideThreads.length === 0 && (
-                    <p className="hint-text">Keine weiteren Chats vorhanden.</p>
+                    <p className="hint-text">{tr("No more chats available.")}</p>
                   )}
                 </div>
               </section>

@@ -218,7 +218,7 @@ impl CrewPythonBridge {
         .status()
         .map_err(|error| {
             format!(
-                "Crew runtime Prozess konnte nicht beendet werden: {}",
+                "Crew runtime process could not be stopped: {}",
                 error
             )
         })?;
@@ -229,7 +229,7 @@ impl CrewPythonBridge {
             .status()
             .map_err(|error| {
                 format!(
-                    "Crew runtime Prozess konnte nicht beendet werden: {}",
+                    "Crew runtime process could not be stopped: {}",
                     error
                 )
             })?;
@@ -244,7 +244,7 @@ fn resolve_runtime_root<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, Strin
         .map(|path| path.join("crew-runtime"))
         .map_err(|error| {
             format!(
-                "Crew runtime root konnte nicht aufgeloest werden: {}",
+                "Crew runtime root could not be resolved: {}",
                 error
             )
         })
@@ -318,7 +318,7 @@ fn ensure_compatible_base_python<R: Runtime>(app: &AppHandle<R>) -> Result<Strin
         if !command.is_empty() && command_available(command) {
             let version = read_python_version(command).ok_or_else(|| {
                 format!(
-                    "Python-Version fuer {} konnte nicht bestimmt werden",
+                    "Python version for {} could not be determined",
                     command
                 )
             })?;
@@ -353,7 +353,7 @@ fn ensure_compatible_base_python<R: Runtime>(app: &AppHandle<R>) -> Result<Strin
 
     #[cfg(not(target_os = "windows"))]
     {
-        Err("Kein kompatibler Python-Interpreter verfuegbar. Unterstuetzt wird Python 3.10 bis 3.13.".to_string())
+        Err("No compatible Python interpreter available. Python 3.10 through 3.13 is supported.".to_string())
     }
 }
 
@@ -372,13 +372,13 @@ fn ensure_managed_uv<R: Runtime>(app: &AppHandle<R>) -> Result<String, String> {
 
     let uv_dir = uv_exe
         .parent()
-        .ok_or_else(|| "uv-Zielordner konnte nicht aufgeloest werden".to_string())?;
+        .ok_or_else(|| "uv target folder could not be resolved".to_string())?;
     fs::create_dir_all(uv_dir)
-        .map_err(|error| format!("uv-Zielordner konnte nicht erstellt werden: {}", error))?;
+        .map_err(|error| format!("uv target folder could not be created: {}", error))?;
     let downloads_dir = runtime_root.join("downloads");
     fs::create_dir_all(&downloads_dir).map_err(|error| {
         format!(
-            "Download-Ordner fuer uv konnte nicht erstellt werden: {}",
+            "download folder for uv could not be created: {}",
             error
         )
     })?;
@@ -387,7 +387,7 @@ fn ensure_managed_uv<R: Runtime>(app: &AppHandle<R>) -> Result<String, String> {
     if !archive_path.exists() {
         let response = reqwest::blocking::get(UV_WINDOWS_DOWNLOAD_URL).map_err(|error| {
             format!(
-                "uv {} konnte nicht heruntergeladen werden: {}",
+                "uv {} could not be downloaded: {}",
                 UV_VERSION, error
             )
         })?;
@@ -400,14 +400,14 @@ fn ensure_managed_uv<R: Runtime>(app: &AppHandle<R>) -> Result<String, String> {
         }
         let bytes = response
             .bytes()
-            .map_err(|error| format!("uv Download konnte nicht gelesen werden: {}", error))?;
+            .map_err(|error| format!("uv download could not be read: {}", error))?;
         fs::write(&archive_path, bytes)
-            .map_err(|error| format!("uv Archiv konnte nicht gespeichert werden: {}", error))?;
+            .map_err(|error| format!("uv archive could not be saved: {}", error))?;
     }
 
     extract_file_from_zip(&archive_path, "uv.exe", &uv_exe)?;
     if !uv_exe.exists() {
-        return Err(format!("uv wurde nicht gefunden: {}", uv_exe.display()));
+        return Err(format!("uv was not found: {}", uv_exe.display()));
     }
 
     Ok(uv_exe.display().to_string())
@@ -418,7 +418,7 @@ fn install_managed_python(uv: &str, runtime_root: &Path) -> Result<(), String> {
     let python_install_dir = runtime_root.join("python").join("managed");
     fs::create_dir_all(&python_install_dir).map_err(|error| {
         format!(
-            "Python-Installationsordner konnte nicht erstellt werden: {}",
+            "Python installation folder could not be created: {}",
             error
         )
     })?;
@@ -431,13 +431,13 @@ fn install_managed_python(uv: &str, runtime_root: &Path) -> Result<(), String> {
     suppress_command_window(&mut command);
     let status = command.status().map_err(|error| {
         format!(
-            "App-interner Python-Download konnte nicht gestartet werden: {}",
+            "App-internal Python download could not be started: {}",
             error
         )
     })?;
     if !status.success() {
         return Err(format!(
-            "App-interner Python-Download beendete sich mit {}",
+            "App-internal Python download beendete sich mit {}",
             status
         ));
     }
@@ -453,14 +453,14 @@ fn extract_file_from_zip(
 ) -> Result<(), String> {
     let file = fs::File::open(zip_path).map_err(|error| {
         format!(
-            "Archiv konnte nicht geoeffnet werden ({}): {}",
+            "archive could not be opened ({}): {}",
             zip_path.display(),
             error
         )
     })?;
     let mut archive = ZipArchive::new(file).map_err(|error| {
         format!(
-            "Archiv konnte nicht gelesen werden ({}): {}",
+            "archive could not be read ({}): {}",
             zip_path.display(),
             error
         )
@@ -469,7 +469,7 @@ fn extract_file_from_zip(
     for index in 0..archive.len() {
         let mut entry = archive.by_index(index).map_err(|error| {
             format!(
-                "Archiv-Eintrag konnte nicht gelesen werden ({}): {}",
+                "archive entry could not be read ({}): {}",
                 zip_path.display(),
                 error
             )
@@ -483,7 +483,7 @@ fn extract_file_from_zip(
         if let Some(parent) = destination.parent() {
             fs::create_dir_all(parent).map_err(|error| {
                 format!(
-                    "Zielordner konnte nicht erstellt werden ({}): {}",
+                    "target folder could not be created ({}): {}",
                     parent.display(),
                     error
                 )
@@ -491,14 +491,14 @@ fn extract_file_from_zip(
         }
         let mut output = fs::File::create(destination).map_err(|error| {
             format!(
-                "Datei konnte nicht geschrieben werden ({}): {}",
+                "file could not be written ({}): {}",
                 destination.display(),
                 error
             )
         })?;
         std::io::copy(&mut entry, &mut output).map_err(|error| {
             format!(
-                "Datei konnte nicht entpackt werden ({}): {}",
+                "file could not be extracted ({}): {}",
                 destination.display(),
                 error
             )
@@ -507,7 +507,7 @@ fn extract_file_from_zip(
     }
 
     Err(format!(
-        "{} wurde im Archiv {} nicht gefunden",
+        "{} was not found in archive {}",
         file_name,
         zip_path.display()
     ))
@@ -596,7 +596,7 @@ fn ensure_bundled_runtime_assets<R: Runtime>(app: &AppHandle<R>) -> Result<(), S
 
     let runtime_root = resolve_runtime_root(app)?;
     fs::create_dir_all(&runtime_root)
-        .map_err(|error| format!("Crew runtime root konnte nicht erstellt werden: {}", error))?;
+        .map_err(|error| format!("Crew runtime root could not be created: {}", error))?;
 
     let python_archive = resource_dir.join(EMBEDDED_WINDOWS_PYTHON_ARCHIVE_RELATIVE_PATH);
     if python_archive.exists() {
@@ -624,7 +624,7 @@ fn extract_zip_if_needed(zip_path: &Path, destination: &Path) -> Result<(), Stri
     let marker = destination.join(".open_cowork_extract_complete");
     let zip_metadata = fs::metadata(zip_path).map_err(|error| {
         format!(
-            "Archiv konnte nicht gelesen werden ({}): {}",
+            "archive could not be read ({}): {}",
             zip_path.display(),
             error
         )
@@ -646,7 +646,7 @@ fn extract_zip_if_needed(zip_path: &Path, destination: &Path) -> Result<(), Stri
         }
         fs::remove_dir_all(destination).map_err(|error| {
             format!(
-                "Veraltete Archivdaten konnten nicht entfernt werden ({}): {}",
+                "Outdated archive data could not be removed ({}): {}",
                 destination.display(),
                 error
             )
@@ -655,7 +655,7 @@ fn extract_zip_if_needed(zip_path: &Path, destination: &Path) -> Result<(), Stri
 
     fs::create_dir_all(destination).map_err(|error| {
         format!(
-            "Zielordner fuer Archiv konnte nicht erstellt werden ({}): {}",
+            "target folder for archive could not be created ({}): {}",
             destination.display(),
             error
         )
@@ -663,14 +663,14 @@ fn extract_zip_if_needed(zip_path: &Path, destination: &Path) -> Result<(), Stri
 
     let file = fs::File::open(zip_path).map_err(|error| {
         format!(
-            "Archiv konnte nicht geoeffnet werden ({}): {}",
+            "archive could not be opened ({}): {}",
             zip_path.display(),
             error
         )
     })?;
     let mut archive = ZipArchive::new(file).map_err(|error| {
         format!(
-            "Archiv konnte nicht gelesen werden ({}): {}",
+            "archive could not be read ({}): {}",
             zip_path.display(),
             error
         )
@@ -679,7 +679,7 @@ fn extract_zip_if_needed(zip_path: &Path, destination: &Path) -> Result<(), Stri
     for index in 0..archive.len() {
         let mut entry = archive.by_index(index).map_err(|error| {
             format!(
-                "Archiv-Eintrag konnte nicht gelesen werden ({}): {}",
+                "archive entry could not be read ({}): {}",
                 zip_path.display(),
                 error
             )
@@ -692,7 +692,7 @@ fn extract_zip_if_needed(zip_path: &Path, destination: &Path) -> Result<(), Stri
         if entry.is_dir() {
             fs::create_dir_all(&output_path).map_err(|error| {
                 format!(
-                    "Archivordner konnte nicht erstellt werden ({}): {}",
+                    "archive folder could not be created ({}): {}",
                     output_path.display(),
                     error
                 )
@@ -703,7 +703,7 @@ fn extract_zip_if_needed(zip_path: &Path, destination: &Path) -> Result<(), Stri
         if let Some(parent) = output_path.parent() {
             fs::create_dir_all(parent).map_err(|error| {
                 format!(
-                    "Archivziel konnte nicht erstellt werden ({}): {}",
+                    "archive target could not be created ({}): {}",
                     parent.display(),
                     error
                 )
@@ -712,14 +712,14 @@ fn extract_zip_if_needed(zip_path: &Path, destination: &Path) -> Result<(), Stri
 
         let mut output = fs::File::create(&output_path).map_err(|error| {
             format!(
-                "Archivdatei konnte nicht geschrieben werden ({}): {}",
+                "archive file could not be written ({}): {}",
                 output_path.display(),
                 error
             )
         })?;
         std::io::copy(&mut entry, &mut output).map_err(|error| {
             format!(
-                "Archivdatei konnte nicht entpackt werden ({}): {}",
+                "archive file could not be extracted ({}): {}",
                 output_path.display(),
                 error
             )
@@ -728,7 +728,7 @@ fn extract_zip_if_needed(zip_path: &Path, destination: &Path) -> Result<(), Stri
 
     fs::write(&marker, expected_marker).map_err(|error| {
         format!(
-            "Archivmarker konnte nicht geschrieben werden ({}): {}",
+            "archive marker could not be written ({}): {}",
             marker.display(),
             error
         )
@@ -775,7 +775,7 @@ where
 
     let mut child = command.spawn().map_err(|error| {
         format!(
-            "Crew runtime Prozess konnte nicht gestartet werden: {}",
+            "Crew runtime process could not be started: {}",
             error
         )
     })?;
@@ -800,11 +800,11 @@ where
     let stdout = child
         .stdout
         .take()
-        .ok_or_else(|| "Crew runtime stdout konnte nicht gelesen werden".to_string())?;
+        .ok_or_else(|| "Crew runtime stdout could not be read".to_string())?;
     let stderr = child
         .stderr
         .take()
-        .ok_or_else(|| "Crew runtime stderr konnte nicht gelesen werden".to_string())?;
+        .ok_or_else(|| "Crew runtime stderr could not be read".to_string())?;
 
     let stderr_handle = thread::spawn(move || {
         let mut output = String::new();
@@ -826,7 +826,7 @@ where
 
     let status = child
         .wait()
-        .map_err(|error| format!("Crew runtime Prozessfehler: {}", error))?;
+        .map_err(|error| format!("Crew runtime processfehler: {}", error))?;
     if let Some((bridge, run_id)) = &active_key {
         bridge.clear_active_run(run_id);
     }
@@ -899,7 +899,7 @@ fn parse_python_json_stdout(stdout: &str, stderr: &str) -> Result<Value, String>
     let mut deserializer = serde_json::Deserializer::from_str(trimmed);
     Value::deserialize(&mut deserializer).map_err(|error| {
         format!(
-            "Crew runtime Antwort konnte nicht gelesen werden: {}. Stdout: {}. Stderr: {}",
+            "Crew runtime response could not be read: {}. Stdout: {}. Stderr: {}",
             error, stdout, stderr
         )
     })
@@ -969,7 +969,7 @@ fn crew_runtime_status_internal<R: Runtime>(
     let runtime_root = resolve_runtime_root(&app)?;
     if !runtime_root.exists() {
         fs::create_dir_all(&runtime_root).map_err(|error| {
-            format!("Crew runtime root konnte nicht erstellt werden: {}", error)
+            format!("Crew runtime root could not be created: {}", error)
         })?;
     }
 
@@ -1018,18 +1018,18 @@ fn crew_runtime_status_internal<R: Runtime>(
     });
 
     let message = if status_json.is_some() {
-        "Crew runtime Status erfolgreich geladen".to_string()
+        "Crew runtime status loaded successfully".to_string()
     } else if detected_python_path.is_some() && !python_compatible {
         format!(
-            "Erkannter Python-Interpreter ({}) ist fuer CrewAI nicht kompatibel. Die App-interne Runtime wird beim Initialisieren mit Python 3.12 vorbereitet.",
+            "Detected Python interpreter ({}) is not compatible with CrewAI. The app-internal runtime will be prepared with Python 3.12 during initialization.",
             detected_python_version
                 .clone()
                 .unwrap_or_else(|| "unbekannt".to_string())
         )
     } else if preferred_python.is_none() {
-        "Crew runtime muss initialisiert werden. Python 3.12 und CrewAI werden isoliert in den App-Datenordner heruntergeladen.".to_string()
+        "Crew runtime must be initialized. Python 3.12 and CrewAI will be downloaded in isolation into the app data folder.".to_string()
     } else {
-        "Crew runtime vorhanden, aber noch nicht vorbereitet".to_string()
+        "Crew runtime exists but is not prepared yet".to_string()
     };
 
     Ok(build_status_from_json(
@@ -1060,7 +1060,7 @@ pub fn crew_runtime_bootstrap(
     ensure_bundled_runtime_assets(&app)?;
     let runtime_root = resolve_runtime_root(&app)?;
     fs::create_dir_all(&runtime_root)
-        .map_err(|error| format!("Crew runtime root konnte nicht erstellt werden: {}", error))?;
+        .map_err(|error| format!("Crew runtime root could not be created: {}", error))?;
     let venv_root = runtime_root.join("venv");
     let venv_python = resolve_venv_python_path(&runtime_root);
     let requirements_path = resolve_requirements_path(&app);
@@ -1093,7 +1093,7 @@ pub fn crew_runtime_bootstrap(
     if venv_root.exists() && (force_reinstall || !venv_python_supported) {
         fs::remove_dir_all(&venv_root).map_err(|error| {
             format!(
-                "Bestehende Crew runtime konnte nicht entfernt werden: {}",
+                "Existing crew runtime could not be removed: {}",
                 error
             )
         })?;
@@ -1119,7 +1119,7 @@ pub fn crew_runtime_bootstrap(
         }
         suppress_command_window(&mut command);
         let status = command.status().map_err(|error| {
-            format!("Crew runtime venv konnte nicht erstellt werden: {}", error)
+            format!("Crew runtime venv could not be created: {}", error)
         })?;
         if !status.success() {
             return Err("Crew runtime venv-Erstellung fehlgeschlagen".to_string());
@@ -1132,9 +1132,9 @@ pub fn crew_runtime_bootstrap(
         suppress_command_window(&mut pip_upgrade_command);
         let pip_upgrade = pip_upgrade_command
             .status()
-            .map_err(|error| format!("pip Upgrade fuer Crew runtime fehlgeschlagen: {}", error))?;
+            .map_err(|error| format!("pip upgrade for crew runtime failed: {}", error))?;
         if !pip_upgrade.success() {
-            return Err("pip Upgrade fuer Crew runtime fehlgeschlagen".to_string());
+            return Err("pip upgrade for crew runtime failed".to_string());
         }
     }
 
@@ -1168,12 +1168,12 @@ pub fn crew_runtime_bootstrap(
 
     let install_requirements = install_requirements_command.status().map_err(|error| {
         format!(
-            "Crew runtime Requirements konnten nicht installiert werden: {}",
+            "Crew runtime requirements could not be installed: {}",
             error
         )
     })?;
     if !install_requirements.success() {
-        return Err("Crew runtime Requirements konnten nicht installiert werden".to_string());
+        return Err("Crew runtime requirements could not be installed".to_string());
     }
 
     bridge.set_last_bootstrap_at(Some(chrono::Utc::now().to_rfc3339()));
@@ -1185,7 +1185,7 @@ pub fn crew_runtime_bootstrap(
         venv_python_path: status.venv_python_path.clone(),
         installed_requirements: true,
         message: if status.ready {
-            "Crew runtime erfolgreich vorbereitet".to_string()
+            "Crew runtime prepared successfully".to_string()
         } else {
             status.message.clone()
         },
@@ -1205,7 +1205,7 @@ where
     let status = crew_runtime_status_internal(app, bridge)?;
     if !status.ready {
         return Err(
-            "Crew runtime ist nicht vorbereitet. Fuehre zuerst die Runtime-Initialisierung aus."
+            "Crew runtime is not prepared. Run runtime initialization first."
                 .to_string(),
         );
     }
@@ -1214,7 +1214,7 @@ where
     let venv_python = resolve_venv_python_path(&runtime_root);
     if !venv_python.exists() {
         return Err(
-            "Crew runtime ist nicht vorbereitet. Fuehre zuerst die Runtime-Initialisierung aus."
+            "Crew runtime is not prepared. Run runtime initialization first."
                 .to_string(),
         );
     }
@@ -1256,7 +1256,7 @@ pub fn crew_runtime_validate_definition(
     let venv_python = resolve_venv_python_path(&runtime_root);
     if !venv_python.exists() {
         return Err(
-            "Crew runtime ist nicht vorbereitet. Fuehre zuerst die Runtime-Initialisierung aus."
+            "Crew runtime is not prepared. Run runtime initialization first."
                 .to_string(),
         );
     }

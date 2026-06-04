@@ -103,7 +103,7 @@ pub fn validate_backend_type(backend_type: &str) -> Result<(), String> {
     match backend_type {
         "local" | "container" | "ssh" | "hpc" | "serverless" => Ok(()),
         other => Err(format!(
-            "Unbekannter Backend-Typ '{}'. Erlaubt: local, container, ssh, hpc, serverless",
+            "Unknown backend type '{}'. Allowed: local, container, ssh, hpc, serverless",
             other
         )),
     }
@@ -113,34 +113,34 @@ pub fn validate_backend_config(backend_type: &str, config_json: &str) -> Result<
     match backend_type {
         "local" => {
             serde_json::from_str::<LocalBackendConfig>(config_json)
-                .map_err(|e| format!("Ungültige Local-Konfiguration: {}", e))?;
+                .map_err(|e| format!("Invalid local configuration: {}", e))?;
         }
         "container" => {
             let cfg: ContainerBackendConfig = serde_json::from_str(config_json)
-                .map_err(|e| format!("Ungültige Container-Konfiguration: {}", e))?;
+                .map_err(|e| format!("Invalid container configuration: {}", e))?;
             if cfg.image.is_empty() {
-                return Err("Container-Image darf nicht leer sein".to_string());
+                return Err("Container image must not be empty".to_string());
             }
         }
         "ssh" => {
             let cfg: SshBackendConfig = serde_json::from_str(config_json)
-                .map_err(|e| format!("Ungültige SSH-Konfiguration: {}", e))?;
+                .map_err(|e| format!("Invalid SSH configuration: {}", e))?;
             if cfg.host.is_empty() || cfg.user.is_empty() {
                 return Err("SSH host und user sind erforderlich".to_string());
             }
         }
         "hpc" => {
             let cfg: HpcBackendConfig = serde_json::from_str(config_json)
-                .map_err(|e| format!("Ungültige HPC-Konfiguration: {}", e))?;
+                .map_err(|e| format!("Invalid HPC configuration: {}", e))?;
             if cfg.image_path.is_empty() {
-                return Err("HPC image_path darf nicht leer sein".to_string());
+                return Err("HPC image_path must not be empty".to_string());
             }
         }
         "serverless" => {
             let cfg: ServerlessBackendConfig = serde_json::from_str(config_json)
-                .map_err(|e| format!("Ungültige Serverless-Konfiguration: {}", e))?;
+                .map_err(|e| format!("Invalid serverless configuration: {}", e))?;
             if cfg.function_name.is_empty() {
-                return Err("Serverless function_name darf nicht leer sein".to_string());
+                return Err("Serverless function_name must not be empty".to_string());
             }
         }
         _ => return Err(format!("Unbekannter Backend-Typ: {}", backend_type)),
@@ -221,7 +221,7 @@ pub fn execute_local(
         Err(e) => BackendExecResponse {
             backend_id: String::new(),
             stdout: String::new(),
-            stderr: format!("Ausführungsfehler: {}", e),
+            stderr: format!("Execution error: {}", e),
             exit_code: None,
             timed_out: false,
         },
@@ -240,11 +240,11 @@ pub fn dispatch_exec(
     let backend = backends
         .into_iter()
         .find(|b| b.id == backend_id)
-        .ok_or_else(|| format!("Backend '{}' nicht gefunden", backend_id))?;
+        .ok_or_else(|| format!("Backend '{}' not found", backend_id))?;
 
     if backend.status != "active" && backend.status != "connected" {
         return Err(format!(
-            "Backend '{}' ist nicht aktiv (Status: {})",
+            "Backend '{}' is not active (status: {})",
             backend.name, backend.status
         ));
     }
@@ -256,7 +256,7 @@ pub fn dispatch_exec(
             BackendExecResponse {
                 backend_id: backend_id.to_string(),
                 stdout: String::new(),
-                stderr: "Container-Backend noch nicht implementiert".to_string(),
+                stderr: "Container backend is not implemented yet".to_string(),
                 exit_code: None,
                 timed_out: false,
             }
@@ -264,21 +264,21 @@ pub fn dispatch_exec(
         "ssh" => BackendExecResponse {
             backend_id: backend_id.to_string(),
             stdout: String::new(),
-            stderr: "SSH-Backend noch nicht implementiert".to_string(),
+            stderr: "SSH backend is not implemented yet".to_string(),
             exit_code: None,
             timed_out: false,
         },
         "hpc" => BackendExecResponse {
             backend_id: backend_id.to_string(),
             stdout: String::new(),
-            stderr: "HPC-Backend noch nicht implementiert".to_string(),
+            stderr: "HPC backend is not implemented yet".to_string(),
             exit_code: None,
             timed_out: false,
         },
         "serverless" => BackendExecResponse {
             backend_id: backend_id.to_string(),
             stdout: String::new(),
-            stderr: "Serverless-Backend noch nicht implementiert".to_string(),
+            stderr: "Serverless backend is not implemented yet".to_string(),
             exit_code: None,
             timed_out: false,
         },
@@ -317,5 +317,5 @@ pub fn ensure_default_local_backend(db: &Arc<Database>) -> Result<TerminalBacken
         .map_err(|e| e.to_string())?
         .into_iter()
         .find(|b| b.id == id)
-        .ok_or_else(|| "Default-Backend konnte nicht erstellt werden".to_string())
+        .ok_or_else(|| "Default backend could not be created".to_string())
 }

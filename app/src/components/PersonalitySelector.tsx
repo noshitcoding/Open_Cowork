@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { usePersonalityStore, type Personality } from '../stores/personalityStore'
 import { useConfigStore } from '../stores/configStore'
 import type { AgentRole } from '../stores/crewStore'
+import { tr } from '../i18n'
 
 type PersonalityForm = {
   name: string
@@ -65,24 +66,16 @@ function PersonalityEditor({
   return (
     <div>
       <div className="grid" style={{ gridTemplateColumns: '80px 1fr 160px 1fr', marginBottom: 8 }}>
-        <label>
-          Icon
-          <input type="text" value={form.icon} onChange={(e) => onChange({ ...form, icon: e.target.value })} maxLength={4} />
+        <label>{tr("Icon")}<input type="text" value={form.icon} onChange={(e) => onChange({ ...form, icon: e.target.value })} maxLength={4} />
         </label>
-        <label>
-          Name
-          <input type="text" value={form.name} onChange={(e) => onChange({ ...form, name: e.target.value })} />
+        <label>{tr("Name")}<input type="text" value={form.name} onChange={(e) => onChange({ ...form, name: e.target.value })} />
         </label>
-        <label>
-          Rolle
-          <select value={form.role} onChange={(e) => onChange({ ...form, role: e.target.value as AgentRole })}>
+        <label>{tr("Rolle")}<select value={form.role} onChange={(e) => onChange({ ...form, role: e.target.value as AgentRole })}>
             {ROLE_OPTIONS.map((role) => <option key={role} value={role}>{role}</option>)}
           </select>
         </label>
-        <label>
-          Modell
-          <select value={form.modelOverride} onChange={(e) => onChange({ ...form, modelOverride: e.target.value })}>
-            <option value="">Standard</option>
+        <label>{tr("Model")}<select value={form.modelOverride} onChange={(e) => onChange({ ...form, modelOverride: e.target.value })}>
+            <option value="">{tr("Standard")}</option>
             {availableModels.map((model) => <option key={model} value={model}>{model}</option>)}
             {form.modelOverride && !availableModels.includes(form.modelOverride) && (
               <option value={form.modelOverride}>{form.modelOverride}</option>
@@ -90,27 +83,21 @@ function PersonalityEditor({
           </select>
         </label>
       </div>
-      <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13, marginBottom: 8 }}>
-        Ziel / Prompt-Fokus
-        <textarea
+      <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13, marginBottom: 8 }}>{tr("Target / Prompt-Fokus")}<textarea
           value={form.goal}
           onChange={(e) => onChange({ ...form, goal: e.target.value })}
           rows={3}
           style={{ padding: '6px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)', fontSize: 13, resize: 'vertical' }}
         />
       </label>
-      <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13, marginBottom: 8 }}>
-        Hintergrund / System-Prompt
-        <textarea
+      <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13, marginBottom: 8 }}>{tr("Hintergrund / System-Prompt")}<textarea
           value={form.systemPrompt}
           onChange={(e) => onChange({ ...form, systemPrompt: e.target.value })}
           rows={8}
           style={{ padding: '6px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)', fontSize: 13, resize: 'vertical', fontFamily: 'monospace' }}
         />
       </label>
-      <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13, marginBottom: 8 }}>
-        skills.md
-        <textarea
+      <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13, marginBottom: 8 }}>{tr("skills.md")}<textarea
           value={form.skillsMarkdown}
           onChange={(e) => onChange({ ...form, skillsMarkdown: e.target.value })}
           rows={4}
@@ -118,9 +105,7 @@ function PersonalityEditor({
         />
       </label>
       <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 8 }}>
-        <label style={{ fontSize: 13 }}>
-          Temperatur
-          <input
+        <label style={{ fontSize: 13 }}>{tr("Temperatur")}<input
             type="number"
             value={form.temperature}
             onChange={(e) => onChange({ ...form, temperature: e.target.value })}
@@ -132,14 +117,12 @@ function PersonalityEditor({
         </label>
         {showDefaultToggle && (
           <label style={{ fontSize: 13, display: 'flex', gap: 6, alignItems: 'center' }}>
-            <input type="checkbox" checked={form.isDefault} onChange={(e) => onChange({ ...form, isDefault: e.target.checked })} />
-            Als Standard verwenden
-          </label>
+            <input type="checkbox" checked={form.isDefault} onChange={(e) => onChange({ ...form, isDefault: e.target.checked })} />{tr("Als Standard verwenden")}</label>
         )}
       </div>
       <div style={{ display: 'flex', gap: 8 }}>
-        <button type="button" className="btn-sm" onClick={onSave}>Speichern</button>
-        {onCancel && <button type="button" className="btn-sm" onClick={onCancel}>Abbrechen</button>}
+        <button type="button" className="btn-sm" onClick={onSave}>{tr("Save")}</button>
+        {onCancel && <button type="button" className="btn-sm" onClick={onCancel}>{tr("Cancel")}</button>}
       </div>
     </div>
   )
@@ -196,8 +179,8 @@ export default function PersonalitySelector() {
   return (
     <div className="panel">
       <div className="panel-heading-row">
-        <h2>Persoenlichkeiten verwalten</h2>
-        <button type="button" className="btn-sm" onClick={() => setShowAdd(!showAdd)}>+ Neu</button>
+        <h2>{tr("Manage personalities")}</h2>
+        <button type="button" className="btn-sm" onClick={() => setShowAdd(!showAdd)}>{tr("New")}</button>
       </div>
 
       {error && <p style={{ color: 'var(--danger)', fontSize: 12 }}>{error}</p>}
@@ -216,9 +199,9 @@ export default function PersonalitySelector() {
       )}
 
       {loading ? (
-        <p className="panel-empty">Laden...</p>
+        <p className="panel-empty">{tr("Loading...")}</p>
       ) : personalities.length === 0 ? (
-        <p className="panel-empty">Keine Persoenlichkeiten konfiguriert. Erstelle eine, um den Agent-Stil anzupassen.</p>
+        <p className="panel-empty">{tr("No personalities configured. Create one to adjust the agent style.")}</p>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {personalities.map((personality) => (
@@ -252,28 +235,24 @@ export default function PersonalitySelector() {
                     <div>
                       <div style={{ fontWeight: 600, fontSize: 14 }}>
                         {personality.name}
-                        {activeId === personality.id && <span style={{ fontSize: 10, color: 'var(--accent)', marginLeft: 6 }}>aktiv</span>}
-                        {personality.is_default && <span style={{ fontSize: 10, color: 'var(--info)', marginLeft: 6 }}>Standard</span>}
+                        {activeId === personality.id && <span style={{ fontSize: 10, color: 'var(--accent)', marginLeft: 6 }}>{tr("active")}</span>}
+                        {personality.is_default && <span style={{ fontSize: 10, color: 'var(--info)', marginLeft: 6 }}>{tr("Standard")}</span>}
                       </div>
                       <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>{personality.goal || personality.description}</div>
                       <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4, display: 'flex', gap: 10 }}>
-                        <span>Rolle: {personality.role}</span>
-                        {personality.model_override && <span>Modell: {personality.model_override}</span>}
-                        {personality.temperature != null && <span>Temp: {personality.temperature}</span>}
+                        <span>{tr("Rolle:")}{personality.role}</span>
+                        {personality.model_override && <span>{tr("Model:")}{personality.model_override}</span>}
+                        {personality.temperature != null && <span>{tr("Temp:")}{personality.temperature}</span>}
                       </div>
                     </div>
                   </div>
                   <div style={{ display: 'flex', gap: 6 }}>
-                    <button type="button" className="btn-sm" onClick={(event) => { event.stopPropagation(); startEdit(personality) }}>
-                      Bearbeiten
-                    </button>
+                    <button type="button" className="btn-sm" onClick={(event) => { event.stopPropagation(); startEdit(personality) }}>{tr("Edit")}</button>
                     <button
                       type="button"
                       onClick={(event) => { event.stopPropagation(); void deletePersonality(personality.id).then(loadPersonalities) }}
                       style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger)', fontSize: 14 }}
-                    >
-                      x
-                    </button>
+                    >{tr("x")}</button>
                   </div>
                 </div>
               )}

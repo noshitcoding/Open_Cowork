@@ -16,11 +16,11 @@ describe('sessionPersistence', () => {
     const title = generateSessionTitle([
       {
         type: 'user',
-        content: [{ type: 'text', text: 'Analysiere bitte die letzten Build-Fehler und priorisiere die Fixes fuer mich.' }],
+        content: [{ type: 'text', text: 'Analyze the latest build errors and prioritize the fixes for me.' }],
       } as never,
     ])
 
-    expect(title).toContain('Analysiere bitte die letzten Build-Fehler')
+    expect(title).toContain('Analyze the latest build errors')
     expect(title.endsWith('...')).toBe(true)
   })
 

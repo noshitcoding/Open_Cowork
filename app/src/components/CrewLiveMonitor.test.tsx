@@ -18,7 +18,7 @@ function createEntry(index: number, overrides: Partial<CrewLiveEntry> = {}): Cre
     taskId: `task-${index}`,
     action: 'runtime_stdout',
     category: 'output',
-    title: `Zeile ${index}`,
+    title: `Line ${index}`,
     detail: '',
     ...overrides,
   }
@@ -27,7 +27,7 @@ function createEntry(index: number, overrides: Partial<CrewLiveEntry> = {}): Cre
 function createLive(entries: CrewLiveEntry[]): CrewLiveState {
   return {
     streamId: 'stream-1',
-    title: 'Crew Testlauf',
+    title: 'Crew test run',
     status: 'running',
     entries,
     agentColors: AGENT_COLORS,
@@ -43,17 +43,17 @@ describe('CrewLiveMonitor', () => {
     const log = screen.getByLabelText('Crew-Live-Log')
 
     expect(container.querySelectorAll('.crew-live-line').length).toBeLessThan(510)
-    expect(screen.getByText('510 Zeilen')).toBeInTheDocument()
+    expect(screen.getByText((_content, element) => element?.textContent === '510lines')).toBeInTheDocument()
     expect(log).toHaveAttribute('aria-rowcount', '510')
-    expect(within(log).getByText('Zeile 1')).toBeInTheDocument()
+    expect(within(log).getByText('Line 1')).toBeInTheDocument()
   })
 
   it('renders the three most recently active agents in focus columns', () => {
     const entries = [
-      createEntry(1, { agentId: 'agent-architect', title: 'Architect arbeitet' }),
-      createEntry(2, { agentId: 'agent-builder', title: 'Builder arbeitet' }),
-      createEntry(3, { agentId: 'agent-reviewer', title: 'Reviewer arbeitet' }),
-      createEntry(4, { agentId: 'agent-researcher', title: 'Researcher arbeitet' }),
+      createEntry(1, { agentId: 'agent-architect', title: 'Architect is working' }),
+      createEntry(2, { agentId: 'agent-builder', title: 'Builder is working' }),
+      createEntry(3, { agentId: 'agent-reviewer', title: 'Reviewer is working' }),
+      createEntry(4, { agentId: 'agent-researcher', title: 'Researcher is working' }),
     ]
 
     const { container } = render(<CrewLiveMonitor live={createLive(entries)} />)
@@ -67,14 +67,14 @@ describe('CrewLiveMonitor', () => {
 
   it('uses gallery arrows for manual focus and keeps that focus across new activity', () => {
     const initial = [
-      createEntry(1, { agentId: 'agent-architect', title: 'Architect arbeitet' }),
-      createEntry(2, { agentId: 'agent-builder', title: 'Builder arbeitet' }),
-      createEntry(3, { agentId: 'agent-reviewer', title: 'Reviewer arbeitet' }),
-      createEntry(4, { agentId: 'agent-researcher', title: 'Researcher arbeitet' }),
+      createEntry(1, { agentId: 'agent-architect', title: 'Architect is working' }),
+      createEntry(2, { agentId: 'agent-builder', title: 'Builder is working' }),
+      createEntry(3, { agentId: 'agent-reviewer', title: 'Reviewer is working' }),
+      createEntry(4, { agentId: 'agent-researcher', title: 'Researcher is working' }),
     ]
     const { container, rerender } = render(<CrewLiveMonitor live={createLive(initial)} />)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Naechste Personen anzeigen' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Show next people' }))
 
     let columns = container.querySelectorAll('.crew-live-focus-column')
     expect(within(columns[0] as HTMLElement).getByText('reviewer')).toBeInTheDocument()
@@ -83,7 +83,7 @@ describe('CrewLiveMonitor', () => {
 
     rerender(<CrewLiveMonitor live={createLive([
       ...initial,
-      createEntry(5, { agentId: 'agent-researcher', title: 'Researcher neuer Output' }),
+      createEntry(5, { agentId: 'agent-researcher', title: 'Researcher new output' }),
     ])} />)
 
     columns = container.querySelectorAll('.crew-live-focus-column')
@@ -101,19 +101,19 @@ describe('CrewLiveMonitor', () => {
       }),
       createEntry(2, {
         category: 'mcp',
-        title: 'MCP-Kontext oder MCP-Zugriff',
+        title: 'MCP context or MCP access',
         detail: 'Server: workspace\nTool: search',
       }),
       createEntry(3, {
         category: 'error',
-        title: 'Crew-Fehler',
+        title: 'Crew-Error',
         detail: 'Traceback: boom',
       }),
       createEntry(4, {
         agentId: 'python-runtime',
         action: 'runtime_context',
         category: 'context',
-        title: 'Runtime-Kontext geladen',
+        title: 'Runtime-Context loaded',
         detail: 'subject=workspace-user',
       }),
     ]
@@ -122,21 +122,21 @@ describe('CrewLiveMonitor', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Filter MCP' }))
     let log = screen.getByLabelText('Crew-Live-Log')
-    expect(within(log).getByText('MCP-Kontext oder MCP-Zugriff').closest('.crew-live-line')).toHaveClass('tone-mcp')
-    expect(within(log).queryByText('Crew-Fehler')).not.toBeInTheDocument()
+    expect(within(log).getByText('MCP context or MCP access').closest('.crew-live-line')).toHaveClass('tone-mcp')
+    expect(within(log).queryByText('Crew-Error')).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Filter Tool' }))
     log = screen.getByLabelText('Crew-Live-Log')
     expect(within(log).getByText('Tool: ReadFile').closest('.crew-live-line')).toHaveClass('tone-tool')
-    expect(within(log).queryByText('Runtime-Kontext geladen')).not.toBeInTheDocument()
+    expect(within(log).queryByText('Runtime-Context loaded')).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Filter Fehler' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Filter Error' }))
     log = screen.getByLabelText('Crew-Live-Log')
-    expect(within(log).getByText('Crew-Fehler').closest('.crew-live-line')).toHaveClass('tone-error')
+    expect(within(log).getByText('Crew-Error').closest('.crew-live-line')).toHaveClass('tone-error')
 
     fireEvent.click(screen.getByRole('button', { name: 'Filter Runtime' }))
     log = screen.getByLabelText('Crew-Live-Log')
-    expect(within(log).getByText('Runtime-Kontext geladen').closest('.crew-live-line')).toHaveClass('tone-runtime')
+    expect(within(log).getByText('Runtime-Context loaded').closest('.crew-live-line')).toHaveClass('tone-runtime')
   })
 
   it('uses speaking agent names as primary labels and keeps technical ids in details', () => {
@@ -145,16 +145,16 @@ describe('CrewLiveMonitor', () => {
       createEntry(1, {
         agentId: technicalId,
         rawAgentId: technicalId,
-        agentName: 'Kreativer',
+        agentName: 'Creativeer',
         category: 'agent',
-        title: 'Kreativer bereit',
-        detail: `Technische ID: ${technicalId}\nRole: custom`,
+        title: 'Creativeer ready',
+        detail: `Technical ID: ${technicalId}\nRole: custom`,
       }),
     ])} />)
 
-    expect(container.querySelector('.crew-live-focus-name')).toHaveTextContent('Kreativer')
+    expect(container.querySelector('.crew-live-focus-name')).toHaveTextContent('Creativeer')
     expect(container.querySelector('.crew-live-focus-name')).not.toHaveTextContent(technicalId)
-    expect(screen.getAllByText('Kreativer').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('Creativeer').length).toBeGreaterThan(0)
     expect(screen.getAllByText(technicalId).length).toBeGreaterThan(0)
   })
 
@@ -164,37 +164,37 @@ describe('CrewLiveMonitor', () => {
         category: 'handoff',
         action: 'task_handoff',
         title: 'Analyst -> Executor',
-        summary: 'Task uebergeben',
+        summary: 'Task handed over',
         sourceAgent: 'Analyst',
         targetAgent: 'Executor',
         agentName: 'Executor',
         provider: 'openrouter',
         model: 'anthropic/claude',
-        taskTitle: 'Spiel verbessern',
-        detail: 'Status: gestartet',
+        taskTitle: 'Improve game',
+        detail: 'Status: started',
       }),
       createEntry(2, {
         category: 'thinking',
         action: 'thinking_phase',
-        title: 'Arbeitsprozess: Executor',
-        detail: 'Arbeitsprotokoll: Executor prueft den Task.',
+        title: 'Work process: Executor',
+        detail: 'Work log: Executor checks the task.',
       }),
     ])} />)
 
     expect(screen.getAllByText(/Analyst -> Executor/).length).toBeGreaterThan(0)
-    expect(screen.getAllByText(/Modell anthropic\/claude/).length).toBeGreaterThan(0)
+    expect(screen.getAllByText(/Model anthropic\/claude/).length).toBeGreaterThan(0)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Filter Uebergabe' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Filter Handoff' }))
     const log = screen.getByLabelText('Crew-Live-Log')
     expect(within(log).getByText(/Analyst -> Executor/).closest('.crew-live-line')).toHaveClass('tone-handoff')
-    expect(within(log).queryByText('Arbeitsprozess: Executor')).not.toBeInTheDocument()
+    expect(within(log).queryByText('Work process: Executor')).not.toBeInTheDocument()
   })
 
   it('collapses long details and expands them on demand', () => {
     const longDetail = `${'A'.repeat(340)} UNIQUE_LONG_SUFFIX`
     render(<CrewLiveMonitor live={createLive([
       createEntry(1, {
-        title: 'Lange Ausgabe',
+        title: 'Long output',
         detail: `Output: ${longDetail}`,
       }),
     ])} />)
@@ -202,7 +202,7 @@ describe('CrewLiveMonitor', () => {
     const log = screen.getByLabelText('Crew-Live-Log')
     expect(within(log).queryByText(/UNIQUE_LONG_SUFFIX/)).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getAllByText('Mehr anzeigen')[0])
+    fireEvent.click(screen.getAllByText('Show more')[0])
 
     expect(within(log).getByText(/UNIQUE_LONG_SUFFIX/)).toBeInTheDocument()
   })

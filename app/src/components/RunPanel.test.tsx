@@ -82,9 +82,9 @@ describe('RunPanel', () => {
     render(<RunPanel />)
 
     await waitFor(() => {
-      expect(screen.getByText('Workspace: C:/workspace')).toBeInTheDocument()
+      expect(screen.getByText((_content, element) => element?.textContent === 'Workspace:C:/workspace')).toBeInTheDocument()
       expect(screen.getByText('{"step":"collect"}')).toBeInTheDocument()
     })
-    expect(screen.getByText('Retry Count: 2')).toBeInTheDocument()
+    expect(screen.getByText((_content, element) => element?.textContent === 'Retry Count:2')).toBeInTheDocument()
   })
 })

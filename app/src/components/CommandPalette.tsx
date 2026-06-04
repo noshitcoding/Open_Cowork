@@ -2,17 +2,18 @@ import { useMemo, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useUiStore } from '../stores/uiStore'
 import { useCommandRegistry, type SlashCommandCategory } from '../stores/commandRegistryStore'
+import { tr } from '../i18n'
 
 const CATEGORY_LABELS: Record<SlashCommandCategory, string> = {
   navigation: '🧭 Navigation',
-  workspace: '📁 Arbeitsbereich',
+  workspace: '📁 Workspace',
   agent: '🤖 Agent',
-  model: '⚡ Modell',
-  memory: '🧠 Gedaechtnis',
+  model: '⚡ Model',
+  memory: '🧠 Memory',
   tools: '🔧 Tools',
   session: '💬 Session',
-  config: '⚙️ Konfiguration',
-  security: '🔒 Sicherheit',
+  config: '?? Configuration',
+  security: '🔒 security',
   display: '🎨 Anzeige',
   plugins: '🔌 Plugins',
   crew: '🚀 Crew AI',
@@ -43,12 +44,12 @@ export default function CommandPalette() {
 
   const legacyCommands = useMemo(
     () => [
-      { id: 'switch-work', label: 'Zu Arbeitsbereich wechseln', hint: 'Ctrl+1', action: () => { setActiveMode('work'); navigate('/') } },
-      { id: 'switch-settings', label: 'Zu Einstellungen wechseln', hint: 'Ctrl+2', action: () => { setActiveMode('settings'); navigate('/settings') } },
-      { id: 'switch-crew', label: 'Zum Crew-Bereich wechseln', hint: 'Ctrl+3', action: () => { setActiveMode('crew'); navigate('/crew') } },
+      { id: 'switch-work', label: 'Switch to workspace', hint: 'Ctrl+1', action: () => { setActiveMode('work'); navigate('/') } },
+      { id: 'switch-settings', label: 'Switch to settings', hint: 'Ctrl+2', action: () => { setActiveMode('settings'); navigate('/settings') } },
+      { id: 'switch-crew', label: 'Switch to crew area', hint: 'Ctrl+3', action: () => { setActiveMode('crew'); navigate('/crew') } },
       { id: 'toggle-left-sidebar', label: leftSidebarOpen ? 'Seitenleiste ausblenden' : 'Seitenleiste einblenden', hint: 'Ctrl+Shift+B', action: () => toggleLeftSidebar() },
-      { id: 'show-shortcuts', label: 'Shortcut-Uebersicht anzeigen', hint: 'Ctrl+Shift+?', action: () => setShortcutsOverlayOpen(true) },
-      { id: 'toggle-theme', label: theme === 'light' ? 'Dark Theme aktivieren' : 'Light Theme aktivieren', hint: 'Ctrl+Shift+L', action: () => toggleTheme() },
+      { id: 'show-shortcuts', label: 'Show shortcut overview', hint: 'Ctrl+Shift+?', action: () => setShortcutsOverlayOpen(true) },
+      { id: 'toggle-theme', label: theme === 'light' ? 'Enable dark theme' : 'Enable light theme', hint: 'Ctrl+Shift+L', action: () => toggleTheme() },
     ],
     [leftSidebarOpen, navigate, setActiveMode, setShortcutsOverlayOpen, theme, toggleLeftSidebar, toggleTheme]
   )
@@ -60,8 +61,8 @@ export default function CommandPalette() {
       const normalizedQuery = query.toLowerCase()
       let filtered = registeredCommands.filter(cmd =>
         cmd.command.toLowerCase().includes(normalizedQuery) ||
-        cmd.label.toLowerCase().includes(normalizedQuery.slice(1)) ||
-        cmd.description.toLowerCase().includes(normalizedQuery.slice(1))
+        tr(cmd.label).toLowerCase().includes(normalizedQuery.slice(1)) ||
+        tr(cmd.description).toLowerCase().includes(normalizedQuery.slice(1))
       )
       if (selectedCategory) {
         filtered = filtered.filter(cmd => cmd.category === selectedCategory)
@@ -80,9 +81,9 @@ export default function CommandPalette() {
       })), ...registeredCommands]
     }
     const matchingRegistry = registeredCommands.filter(cmd =>
-      cmd.label.toLowerCase().includes(normalizedQuery) ||
+      tr(cmd.label).toLowerCase().includes(normalizedQuery) ||
       cmd.command.toLowerCase().includes(normalizedQuery) ||
-      cmd.description.toLowerCase().includes(normalizedQuery)
+      tr(cmd.description).toLowerCase().includes(normalizedQuery)
     )
     const matchingLegacy = legacyCommands.filter(c =>
       c.label.toLowerCase().includes(normalizedQuery) || c.hint.toLowerCase().includes(normalizedQuery)
@@ -126,16 +127,14 @@ export default function CommandPalette() {
             autoFocus
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder={isSlashQuery ? 'Slash-Command eingeben...' : 'Befehl suchen oder / fuer Commands...'}
+            placeholder={isSlashQuery ? 'Enter slash command...' : 'Search command or / for commands...'}
             onKeyDown={(event) => {
               if (event.key === 'Enter' && filteredCommands.length > 0) {
                 handleExecute(filteredCommands[0])
               }
             }}
           />
-          <button type="button" onClick={() => { setCommandPaletteOpen(false); setSelectedCategory(null) }}>
-            Esc
-          </button>
+          <button type="button" onClick={() => { setCommandPaletteOpen(false); setSelectedCategory(null) }}>{tr("Esc")}</button>
         </div>
 
         <div style={{ display: 'flex', gap: 2, flexWrap: 'wrap', padding: '4px 12px', borderBottom: '1px solid var(--border-color)' }}>
@@ -146,9 +145,7 @@ export default function CommandPalette() {
               color: selectedCategory === null ? 'white' : 'var(--text-secondary)',
               border: 'none', cursor: 'pointer',
             }}
-            onClick={() => setSelectedCategory(null)}>
-            Alle
-          </button>
+            onClick={() => setSelectedCategory(null)}>{tr("All")}</button>
           {CATEGORY_ORDER.map(cat => (
             <button key={cat} type="button"
               style={{
@@ -178,10 +175,10 @@ export default function CommandPalette() {
                         <button type="button" onClick={() => handleExecute(cmd)}>
                           <span>
                             {cmd.command && <span style={{ color: 'var(--accent)', marginRight: 6, fontFamily: 'monospace', fontSize: 12 }}>{cmd.command}</span>}
-                            {cmd.label}
+                            {tr(cmd.label)}
                           </span>
                           <span style={{ fontSize: 11, color: 'var(--text-muted)', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {cmd.description}
+                            {tr(cmd.description)}
                           </span>
                         </button>
                       </li>
@@ -195,21 +192,20 @@ export default function CommandPalette() {
                 <button type="button" onClick={() => handleExecute(cmd)}>
                   <span>
                     {cmd.command && <span style={{ color: 'var(--accent)', marginRight: 6, fontFamily: 'monospace', fontSize: 12 }}>{cmd.command}</span>}
-                    {cmd.label}
+                    {tr(cmd.label)}
                   </span>
                   <span style={{ fontSize: 11, color: 'var(--text-muted)', maxWidth: 250, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {cmd.description}
+                    {tr(cmd.description)}
                   </span>
                 </button>
               </li>
             ))
           )}
           {filteredCommands.length === 0 && (
-            <li className="command-palette-empty">Keine Treffer fuer &quot;{query}&quot;</li>
+            <li className="command-palette-empty">{tr("No results for &quot;")}{query}{tr("&quot;")}</li>
           )}
           <li style={{ padding: '8px 12px', fontSize: 10, color: 'var(--text-muted)', textAlign: 'center' }}>
-            {registeredCommands.length} Commands verfuegbar • Tippe / fuer Slash-Commands
-          </li>
+            {registeredCommands.length}{tr("Commands available • Type / for slash commands")}</li>
         </ul>
       </div>
     </div>

@@ -9,11 +9,13 @@ mod file_watch;
 mod insights;
 mod mcp;
 mod memory_engine;
+mod office_integration;
 mod ollama;
 mod process_manager;
 mod scheduler;
 mod skill_engine;
 mod terminal_backends;
+mod terminal_sessions;
 mod worker_sandbox;
 
 use claude_code_bridge::ClaudeCodeBridge;
@@ -48,6 +50,7 @@ use std::thread;
 use std::time::Duration;
 use std::time::Instant;
 use tauri::{Emitter, Manager};
+use terminal_sessions::TerminalSessionRegistry;
 use url::Url;
 
 #[cfg(target_os = "windows")]
@@ -574,7 +577,7 @@ fn normalize_openai_model_rows(rows: Vec<OpenAiModelRow>) -> Vec<String> {
 fn parse_openai_models_response(body: &str) -> Result<Vec<String>, String> {
     serde_json::from_str::<OpenAiModelsResponse>(body)
         .map(|payload| normalize_openai_model_rows(payload.data))
-        .map_err(|error| format!("Modellliste konnte nicht gelesen werden: {}", error))
+        .map_err(|error| format!("Model list could not be read: {}", error))
 }
 
 fn model_name_suffix(value: &str) -> &str {
@@ -1304,7 +1307,7 @@ fn queue_crew_governance_approval(
 
     if let Some(approval) = pending_approval {
         return Ok(format!(
-            "Crew wartet auf Freigabe: {} ({})",
+            "Crew is waiting for approval: {} ({})",
             reason, approval.id,
         ));
     }
@@ -1330,7 +1333,7 @@ fn queue_crew_governance_approval(
         .map_err(|error| error.to_string())?;
 
     Ok(format!(
-        "Crew wartet auf Freigabe: {} ({})",
+        "Crew is waiting for approval: {} ({})",
         reason, approval_id,
     ))
 }
@@ -1450,10 +1453,10 @@ fn collect_crew_memory_payload(
         .collect::<Vec<_>>();
 
     let summary = if entries.is_empty() && user_profile.is_empty() {
-        "Kein gespeichertes Crew-Wissen gefunden. Arbeite konservativ und markiere Annahmen explizit.".to_string()
+        "No saved crew knowledge found. Work conservatively and mark assumptions explicitly.".to_string()
     } else {
         format!(
-            "{} Memory-Eintraege und {} Profilhinweise stehen als Crew-Kontext bereit. Nutze sie als Arbeitshypothesen und verifiziere strittige Punkte.",
+            "{} memory entries and {} profile notes are available as crew context. Use them as working hypotheses and verify disputed points.",
             entries.len(),
             user_profile.len(),
         )
@@ -1515,7 +1518,7 @@ fn collect_crew_governance_payload(
             .any(|role| crew_role_allows_execution(role))
     {
         return Err(format!(
-            "Crew-Start fuer Subject '{}' blockiert: keine passende Runner-Rolle fuer Crew {} hinterlegt.",
+            "Crew start for subject '{}' blocked: no matching runner role is stored for crew {} hinterlegt.",
             subject, request.id,
         ));
     }
@@ -1646,14 +1649,14 @@ fn collect_crew_governance_payload(
             .any(|role| crew_role_allows_tool_operations(role))
     {
         return Err(format!(
-            "Crew-Start fuer Subject '{}' blockiert: Live-Tools und Delegation erfordern Owner/Admin oder Operator/Runner.",
+            "Crew start for subject '{}' blocked: live tools and delegation require owner/admin or operator/runner.",
             subject,
         ));
     }
 
     if governance_mode == "read-only" && requested_risky_actions {
         return Err(
-      "Crew-Governance blockiert: Modus 'Nur lesen' erlaubt nur Lesezugriffe (read_file, grep, glob, web_fetch, web_search, todo).".to_string()
+      "Crew governance blocked: mode 'Read only' allows only read access (read_file, grep, glob, web_fetch, web_search, todo).".to_string()
     );
     }
 
@@ -1663,7 +1666,7 @@ fn collect_crew_governance_payload(
                 database,
                 request,
                 "run_gate",
-                "Modus 'Immer vor Aktionen fragen' erfordert eine Freigabe vor dem Start.",
+                "Mode 'always ask before actions' requires approval before start.",
             )?);
         }
 
@@ -1672,7 +1675,7 @@ fn collect_crew_governance_payload(
                 database,
                 request,
                 "run_gate",
-                "riskante Aktionen wurden erkannt und muessen vor dem Start bestaetigt werden.",
+                "risky actions were detected and must be confirmed before start.",
             )?);
         }
     }
@@ -1683,7 +1686,7 @@ fn collect_crew_governance_payload(
         && requested_live_tools
     {
         return Err(format!(
-            "Crew-Start blockiert: offene tool_gate-Freigaben fuer Crew {}.",
+            "Crew start blocked: open tool_gate approvals for Crew {}.",
             request.id,
         ));
     }
@@ -1694,7 +1697,7 @@ fn collect_crew_governance_payload(
         && requested_delegation
     {
         return Err(format!(
-            "Crew-Start blockiert: offene delegation_gate-Freigaben fuer Crew {}.",
+            "Crew start blocked: open delegation_gate approvals for Crew {}.",
             request.id,
         ));
     }
@@ -1727,7 +1730,7 @@ fn persist_crew_run_memory_summary(
                 .output
                 .as_deref()
                 .map(|value| truncate_chars_with_ellipsis(&normalize_whitespace(value), 220))
-                .unwrap_or_else(|| "kein Output".to_string());
+                .unwrap_or_else(|| "no output".to_string());
             format!("- {} [{}]: {}", task.task_id, task.status, output)
         })
         .collect::<Vec<_>>();
@@ -1797,7 +1800,7 @@ fn find_gateway_context(tool_name: &str, gateways: &[db::ToolGatewayRow]) -> Opt
         })
         .map(|entry| {
             format!(
-                "Tool-Gateway: {} ({})\nKonfiguration: {}",
+                "Tool gateway: {} ({})\nConfiguration: {}",
                 entry.name, entry.tool_type, entry.config_json
             )
         })
@@ -1836,7 +1839,7 @@ async fn execute_pipeline_web_fetch(url: &str) -> Result<String, String> {
 async fn execute_pipeline_web_search(query: &str) -> Result<String, String> {
     let trimmed = query.trim();
     if trimmed.is_empty() {
-        return Err("web_search benoetigt eine Suchanfrage".to_string());
+        return Err("web_search requires a search query".to_string());
     }
 
     let encoded_query =
@@ -1883,12 +1886,12 @@ async fn execute_pipeline_llm_step(
             None
         } else {
             Some(format!(
-                "Bisheriger Pipeline-Kontext:\n{}",
+                "Previous pipeline context:\n{}",
                 previous_context
             ))
         },
         gateway_context,
-        Some(format!("Tool: {}\nAufgabe:\n{}", tool_name, prompt)),
+        Some(format!("Tool: {}\nTask:\n{}", tool_name, prompt)),
     ]
     .into_iter()
     .flatten()
@@ -1957,25 +1960,25 @@ fn validate_crew_request(
         if let Some(manager_id) = &request.manager_agent_id {
             if !enabled_agents.contains_key(manager_id) {
                 return Err(format!(
-                    "Manager-Agent {} ist nicht aktiv oder nicht vorhanden",
+                    "Manager agent {} is not active or does not exist",
                     manager_id
                 ));
             }
         } else {
-            return Err("Hierarchische Crew benoetigt einen aktiven Manager-Agenten".to_string());
+            return Err("Hierarchical crew requires an active manager agent".to_string());
         }
     }
 
     for task in &request.tasks {
         if !enabled_agents.contains_key(&task.agent_id) {
             return Err(format!(
-                "Task {} verweist auf einen inaktiven oder fehlenden Agenten {}",
+                "Task {} references an inactive or missing agent {}",
                 task.id, task.agent_id
             ));
         }
 
         if !task_ids.insert(task.id.clone()) {
-            return Err(format!("Task-ID {} ist mehrfach vorhanden", task.id));
+            return Err(format!("Task ID {} appears multiple times", task.id));
         }
 
         if task
@@ -1984,7 +1987,7 @@ fn validate_crew_request(
             .any(|dependency| dependency == &task.id)
         {
             return Err(format!(
-                "Task {} darf nicht von sich selbst abhaengen",
+                "Task {} must not depend on itself",
                 task.id
             ));
         }
@@ -1996,7 +1999,7 @@ fn validate_crew_request(
         for dependency in &task.dependencies {
             if !task_ids.contains(dependency) {
                 return Err(format!(
-                    "Task {} verweist auf unbekannte Abhaengigkeit {}",
+                    "Task {} references unknown dependency {}",
                     task.id, dependency
                 ));
             }
@@ -2141,7 +2144,7 @@ fn ensure_crew_run_is_approved(database: &Arc<Database>, crew_id: &str) -> Resul
         .join(", ");
 
     Err(format!(
-        "Crew-Start blockiert: offene run_gate-Freigaben fuer Crew {} ({}).",
+        "Crew start blocked: open run_gate approvals for Crew {} ({}).",
         crew_id, approval_ids,
     ))
 }
@@ -2219,7 +2222,7 @@ async fn execute_crew_request(
     request: CrewExecuteRequest,
 ) -> Result<CrewExecutionResponse, String> {
     if request.tasks.is_empty() {
-        return Err("Crew enthaelt keine Tasks".to_string());
+        return Err("Crew contains no tasks".to_string());
     }
 
     let enabled_agents: HashMap<String, CrewExecuteAgentRequest> = request
@@ -2231,7 +2234,7 @@ async fn execute_crew_request(
         .collect();
 
     if enabled_agents.is_empty() {
-        return Err("Crew enthaelt keine aktiven Agenten".to_string());
+        return Err("Crew contains no active agents".to_string());
     }
 
     validate_crew_request(&request, &enabled_agents)?;
@@ -2300,7 +2303,7 @@ async fn execute_crew_request(
                 .unwrap_or_else(|| "runtime".to_string()),
             action: "run_started".to_string(),
             result: format!(
-                "Crew '{}' startet mit {} Task(s), Prozess {}.",
+                "Crew '{}' starts with {} task(s), process {}.",
                 request.name,
                 request.tasks.len(),
                 request.process
@@ -2377,7 +2380,7 @@ async fn execute_crew_request(
             Ok(response)
         }
         Err(error) => {
-            if error.contains("Crew runtime ist nicht vorbereitet")
+            if error.contains("Crew runtime is not prepared")
                 || error.contains("Crew runtime Skript fehlt")
             {
                 return Err(error);
@@ -2440,7 +2443,7 @@ async fn pipeline_execute(
         .map_err(|err| err.to_string())?
         .into_iter()
         .find(|entry| entry.id == request.id)
-        .ok_or_else(|| format!("Pipeline {} nicht gefunden", request.id))?;
+        .ok_or_else(|| format!("Pipeline {} not found", request.id))?;
 
     let steps: Vec<PipelineStepDefinition> = serde_json::from_str(&pipeline.steps_json)
         .map_err(|err| format!("Ungueltige Steps-JSON: {}", err))?;
@@ -2641,7 +2644,7 @@ async fn crew_run_replay(
     let snapshot_json = state
         .get_crew_run_snapshot(&run_id)
         .map_err(|error| error.to_string())?
-        .ok_or_else(|| format!("Kein Crew-Snapshot fuer Run {} vorhanden", run_id))?;
+        .ok_or_else(|| format!("No crew snapshot exists for run {}", run_id))?;
 
     let mut request = serde_json::from_str::<CrewExecuteRequest>(&snapshot_json)
         .map_err(|error| error.to_string())?;
@@ -2740,7 +2743,7 @@ async fn crew_approval_resolve(
     let approval = state
         .get_crew_approval(&request.id)
         .map_err(|error| error.to_string())?
-        .ok_or_else(|| format!("Crew-Approval {} nicht gefunden", request.id))?;
+        .ok_or_else(|| format!("Crew approval {} not found", request.id))?;
 
     let resolved = state
         .resolve_crew_approval(
@@ -3463,7 +3466,7 @@ fn capture_screenshot_for_display_payload(
 
         if request_count > 1 {
             payload["nextStepHint"] = Value::String(
-        "Screenshot wurde bereits vor kurzem aufgenommen. Nutze dieses Bild weiter, es sei denn ein Refresh ist explizit erforderlich."
+        "A screenshot was captured recently. Keep using this image unless a refresh is explicitly required."
           .to_string(),
       );
         }
@@ -4208,7 +4211,7 @@ async fn web_fetch_url(
 ) -> Result<WebFetchResponse, String> {
     let requested_url = request.url.trim();
     if requested_url.is_empty() {
-        return Err("url darf nicht leer sein".to_string());
+        return Err("url must not be empty".to_string());
     }
 
     let policy = load_policy_state(&state)?;
@@ -4270,7 +4273,7 @@ async fn web_search(
 ) -> Result<WebSearchResponse, String> {
     let query = request.query.trim();
     if query.is_empty() {
-        return Err("query darf nicht leer sein".to_string());
+        return Err("query must not be empty".to_string());
     }
 
     let policy = load_policy_state(&state)?;
@@ -4336,7 +4339,7 @@ fn exec_command(
 
     let command_text = request.command.trim();
     if command_text.is_empty() {
-        return Err("command darf nicht leer sein".to_string());
+        return Err("command must not be empty".to_string());
     }
 
     let policy = load_policy_state(&state)?;
@@ -4521,7 +4524,7 @@ fn project_upsert(
 ) -> Result<(), String> {
     let title = request.title.trim();
     if title.is_empty() {
-        return Err("Projektname darf nicht leer sein".to_string());
+        return Err("Project name must not be empty".to_string());
     }
 
     let now = chrono::Utc::now().to_rfc3339();
@@ -4557,7 +4560,7 @@ fn project_resource_upsert(
 ) -> Result<(), String> {
     let path = request.path.trim();
     if path.is_empty() {
-        return Err("Quelle darf nicht leer sein".to_string());
+        return Err("Source must not be empty".to_string());
     }
 
     let now = chrono::Utc::now().to_rfc3339();
@@ -4900,7 +4903,7 @@ fn execute_task(
 
             if current_status == "cancelled" {
                 state
-                    .update_step_state(&step_id, "skipped", Some("Task wurde abgebrochen"))
+                    .update_step_state(&step_id, "skipped", Some("Task was cancelled"))
                     .map_err(|e| e.to_string())?;
                 return Ok(());
             }
@@ -4919,12 +4922,12 @@ fn execute_task(
                 .unwrap_or_else(|| "failed".to_string());
             if current_status == "cancelled" {
                 state
-                    .update_step_state(&step_id, "skipped", Some("Task wurde abgebrochen"))
+                    .update_step_state(&step_id, "skipped", Some("Task was cancelled"))
                     .map_err(|e| e.to_string())?;
                 return Ok(());
             }
 
-            let output = format!("Automatisch ausgefuehrt: {}", title);
+            let output = format!("Automatisch executed: {}", title);
             state
                 .update_step_state(&step_id, "completed", Some(&output))
                 .map_err(|e| e.to_string())?;
@@ -5751,7 +5754,7 @@ fn fs_export_artifact_version(
             }))
             .map_err(|err| err.to_string())?,
             "md" | "markdown" => format!(
-                "# Artefakt-Export\n\n- Artefakt-Version: {}\n- Run-ID: {}\n- Label: {}\n- Quelle: {}\n- Format: {}\n- Groesse: {} Bytes\n\n## Summary\n\n{}\n\n## Preview\n\n```\n{}\n```\n",
+                "# Artifact export\n\n- Artifact version: {}\n- Run-ID: {}\n- Label: {}\n- Source: {}\n- Format: {}\n- Size: {} Bytes\n\n## Summary\n\n{}\n\n## Preview\n\n```\n{}\n```\n",
                 version_id,
                 run_id.clone().unwrap_or_else(|| "-".to_string()),
                 label.clone().unwrap_or_else(|| "-".to_string()),
@@ -5762,7 +5765,7 @@ fn fs_export_artifact_version(
                 preview,
             ),
             _ => format!(
-                "Artefakt-Version: {}\nRun-ID: {}\nLabel: {}\nQuelle: {}\nFormat: {}\nGroesse: {} Bytes\n\nSummary:\n{}\n\nPreview:\n{}\n",
+                "Artifact version: {}\nRun-ID: {}\nLabel: {}\nSource: {}\nFormat: {}\nSize: {} Bytes\n\nSummary:\n{}\n\nPreview:\n{}\n",
                 version_id,
                 run_id.clone().unwrap_or_else(|| "-".to_string()),
                 label.clone().unwrap_or_else(|| "-".to_string()),
@@ -5993,6 +5996,86 @@ fn fs_generate_office_workflow(
     Ok(response)
 }
 
+#[tauri::command]
+fn office_detect_apps() -> office_integration::OfficeDetectResponse {
+    office_integration::detect_office_apps()
+}
+
+#[tauri::command]
+fn office_open_document(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Arc<Database>>,
+    request: office_integration::OfficeOpenRequest,
+    run_id: Option<String>,
+) -> Result<office_integration::OfficeOpenResponse, String> {
+    let canonical_target =
+        ensure_run_file_access(&state, run_id.as_deref(), &request.path, false)?;
+    let response = office_integration::open_document(
+        canonical_target.as_path(),
+        request.app_kind.as_deref(),
+    )?;
+
+    let app_data_dir = app.path().app_data_dir().map_err(|err| err.to_string())?;
+    let details = serde_json::json!({
+      "path": response.path,
+      "format": response.format,
+      "officeApp": response.office_app,
+      "launched": response.launched,
+    });
+    let _ = audit::append_audit_event(
+        app_data_dir,
+        "document_workspace",
+        "office_open_document",
+        Some(details),
+    );
+
+    Ok(response)
+}
+
+#[tauri::command]
+fn document_render_preview(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Arc<Database>>,
+    request: office_integration::DocumentPreviewRequest,
+    run_id: Option<String>,
+) -> Result<office_integration::DocumentPreviewResponse, String> {
+    let canonical_target =
+        ensure_run_file_access(&state, run_id.as_deref(), &request.path, false)?;
+    let app_data_dir = app.path().app_data_dir().map_err(|err| err.to_string())?;
+    let response = office_integration::render_document_preview(
+        canonical_target.as_path(),
+        app_data_dir.as_path(),
+        request.max_pages,
+        request.target_width,
+    )?;
+
+    let details = serde_json::json!({
+      "sourcePath": response.source_path,
+      "format": response.format,
+      "previewPages": response.pages.len(),
+      "exportedPdfPath": response.exported_pdf_path,
+      "officeApp": response.office_app,
+    });
+    let _ = audit::append_audit_event(
+        app_data_dir,
+        "document_workspace",
+        "document_render_preview",
+        Some(details),
+    );
+
+    Ok(response)
+}
+
+#[tauri::command]
+fn office_export_preview(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Arc<Database>>,
+    request: office_integration::DocumentPreviewRequest,
+    run_id: Option<String>,
+) -> Result<office_integration::DocumentPreviewResponse, String> {
+    document_render_preview(app, state, request, run_id)
+}
+
 fn map_scheduled_task_row(
     row: (
         String,
@@ -6068,7 +6151,7 @@ fn run_scheduled_task_once(
     {
         let snapshot = crew_snapshot_json
             .filter(|value| !value.trim().is_empty())
-            .ok_or_else(|| "crewSnapshotJson fehlt fuer geplanten Crew-Job".to_string());
+            .ok_or_else(|| "crewSnapshotJson is missing for scheduled crew job".to_string());
 
         match snapshot {
             Ok(snapshot_json) => match serde_json::from_str::<CrewExecuteRequest>(snapshot_json) {
@@ -6095,7 +6178,7 @@ fn run_scheduled_task_once(
                         Err(error) => Err(error),
                     }
                 }
-                Err(error) => Err(format!("Crew-Snapshot ungueltig: {}", error)),
+                Err(error) => Err(format!("Invalid crew snapshot: {}", error)),
             },
             Err(error) => Err(error),
         }
@@ -6103,7 +6186,7 @@ fn run_scheduled_task_once(
         let runtime_config = match model_config_json.filter(|value| !value.trim().is_empty()) {
             Some(raw_json) => serde_json::from_str::<ScheduledPromptRuntimeConfig>(raw_json)
                 .map(Some)
-                .map_err(|error| format!("modelConfigJson ungueltig: {}", error)),
+                .map_err(|error| format!("Invalid modelConfigJson: {}", error)),
             None => Ok(None),
         };
 
@@ -6118,7 +6201,7 @@ fn run_scheduled_task_once(
                     .map(|value| {
                         vec![ChatMessage {
                             role: "system".to_string(),
-                            content: format!("Arbeitsverzeichnis: {}", value),
+                            content: format!("Working directory: {}", value),
                         }]
                     })
                     .unwrap_or_default();
@@ -6541,7 +6624,7 @@ fn interpret_connector_status(status: StatusCode) -> (bool, String) {
                 status
             ),
         ),
-        404 => (false, format!("Endpoint nicht gefunden ({})", status)),
+        404 => (false, format!("Endpoint not found ({})", status)),
         _ if status.is_server_error() => (
             false,
             format!("Endpoint antwortet mit Serverfehler ({})", status),
@@ -6746,7 +6829,7 @@ async fn crew_provider_health_check(
             endpoint: health.endpoint,
             message: health.error.unwrap_or_else(|| {
                 format!(
-                    "Ollama erreichbar, {} Modell(e) gefunden",
+                    "Ollama reachable, {} model(s) found",
                     health.models.len()
                 )
             }),
@@ -6785,7 +6868,7 @@ async fn crew_provider_health_check(
                                 status: Some(status.as_u16()),
                                 endpoint,
                                 message: format!(
-                                    "Endpoint erreichbar, Modell '{}' verfuegbar",
+                                    "Endpoint reachable, model '{}' available",
                                     model
                                 ),
                                 checked_at,
@@ -6795,12 +6878,12 @@ async fn crew_provider_health_check(
                             let suggestion = find_model_suggestion(&models, model);
                             let message = if let Some(suggestion) = suggestion {
                                 format!(
-                                    "Konfiguriertes Modell '{}' ist nicht exakt in der Modellliste. Meinst du '{}'? Nutze 'Modelle laden' oder trage exakt diesen Wert ein.",
+                                    "Configured model '{}' is not exactly in the model list. Did you mean '{}'? Use 'Load models' or enter exactly this value.",
                                     model, suggestion
                                 )
                             } else {
                                 format!(
-                                    "Konfiguriertes Modell '{}' ist nicht in der Modellliste. Verfuegbar: {}",
+                                    "Configured model '{}' is not in the model list. Available: {}",
                                     model,
                                     format_model_sample(&models)
                                 )
@@ -6819,7 +6902,7 @@ async fn crew_provider_health_check(
                                 reachable: false,
                                 status: Some(status.as_u16()),
                                 endpoint,
-                                message: "Modellliste ist leer. Trage das Modell manuell ein; die App nutzt dann den Chat-Endpoint.".to_string(),
+                                message: "Model list is empty. Enter the model manually; the app will then use the chat endpoint.".to_string(),
                                 checked_at,
                             });
                         }
@@ -6906,7 +6989,7 @@ async fn crew_provider_health_check(
             reachable: false,
             status: Some(status.as_u16()),
             endpoint: last_endpoint,
-            message: "Modellliste nicht verfuegbar. Trage das Modell manuell ein; die App nutzt dann den Chat-Endpoint.".to_string(),
+            message: "Model list is not available. Enter the model manually; the app will then use the chat endpoint.".to_string(),
             checked_at,
         });
     }
@@ -6972,7 +7055,7 @@ async fn crew_provider_models_list(
     }
 
     Err(last_error.unwrap_or_else(|| {
-        "Modellliste nicht verfuegbar. Trage das Modell manuell ein.".to_string()
+        "Model list is not available. Enter the model manually.".to_string()
     }))
 }
 
@@ -7247,7 +7330,7 @@ fn engine_run_resume(state: tauri::State<'_, Arc<Database>>, id: String) -> Resu
         .ok_or_else(|| "run not found".to_string())?;
 
     if existing.checkpoint_json.is_none() {
-        return Err("run hat keinen checkpoint".to_string());
+        return Err("run has no checkpoint".to_string());
     }
 
     state
@@ -7384,12 +7467,12 @@ fn worker_sandbox_create(
         .to_lowercase();
     if mode != "workspace_copy" && mode != "native" && mode != "wsl" {
         return Err(format!(
-            "sandbox mode '{}' wird nicht unterstuetzt (erlaubt: workspace_copy, native, wsl)",
+            "sandbox mode '{}' is not supported (allowed: workspace_copy, native, wsl)",
             mode
         ));
     }
     if mode == "wsl" && !cfg!(target_os = "windows") {
-        return Err("sandbox mode 'wsl' ist nur unter Windows verfuegbar".to_string());
+        return Err("sandbox mode 'wsl' ist nur unter Windows available".to_string());
     }
 
     let source_cwd = PathBuf::from(&request.source_cwd)
@@ -7406,7 +7489,7 @@ fn worker_sandbox_create(
             .map_err(|err| err.to_string())?
             .into_iter()
             .find(|item| item.id == backend_id)
-            .ok_or_else(|| format!("backend '{}' nicht gefunden", backend_id))?
+            .ok_or_else(|| format!("backend '{}' not found", backend_id))?
     } else {
         terminal_backends::ensure_default_local_backend(&state)?
     };
@@ -7485,7 +7568,7 @@ fn worker_sandbox_create(
     state
         .get_worker_sandbox(&request.id)
         .map_err(|err| err.to_string())?
-        .ok_or_else(|| "sandbox konnte nicht geladen werden".to_string())
+        .ok_or_else(|| "sandbox could not be loaded".to_string())
 }
 
 #[tauri::command]
@@ -7758,7 +7841,7 @@ fn enforce_worker_sandbox_flag(
     capability: &str,
 ) -> Result<(), String> {
     if sandbox.status != "active" {
-        return Err(format!("sandbox {} ist nicht aktiv", sandbox.id));
+        return Err(format!("sandbox {} is not active", sandbox.id));
     }
     if !allowed {
         return Err(format!("sandbox {} blockiert {}", sandbox.id, capability));
@@ -7803,7 +7886,7 @@ fn ensure_run_file_access(
                     .is_ok()
                 {
                     return Err(format!(
-                        "sandbox {} erlaubt nur lesen fuer {}",
+                        "sandbox {} allows read-only access for {}",
                         sandbox.id, path
                     ));
                 }
@@ -8005,7 +8088,7 @@ fn enforce_shell_command_guard(
     }
 
     if command_contains_path_traversal(command_text) {
-        return Err("command blockiert: path traversal (..) ist nicht erlaubt".to_string());
+        return Err("command blocked: path traversal (..) is not allowed".to_string());
     }
 
     for path_candidate in extract_absolute_path_candidates(command_text) {
@@ -8315,11 +8398,11 @@ fn resolve_exec_runtime(
             .map_err(|err| err.to_string())?
             .into_iter()
             .find(|item| item.id == active_backend_id)
-            .ok_or_else(|| format!("backend '{}' nicht gefunden", active_backend_id))?;
+            .ok_or_else(|| format!("backend '{}' not found", active_backend_id))?;
 
         if backend.backend_type != "local" {
             return Err(format!(
-                "backend '{}' wird fuer sandboxed exec noch nicht unterstuetzt",
+                "backend '{}' is not supported for sandboxed exec yet",
                 backend.backend_type
             ));
         }
@@ -8993,6 +9076,55 @@ fn backend_ensure_local(
     terminal_backends::ensure_default_local_backend(&db_arc)
 }
 
+#[tauri::command]
+fn terminal_create(
+    app: tauri::AppHandle,
+    registry: tauri::State<'_, TerminalSessionRegistry>,
+    request: terminal_sessions::TerminalCreateRequest,
+) -> Result<terminal_sessions::TerminalCreateResponse, String> {
+    terminal_sessions::create_terminal_session(app, registry, request)
+}
+
+#[tauri::command]
+fn terminal_write(
+    registry: tauri::State<'_, TerminalSessionRegistry>,
+    request: terminal_sessions::TerminalWriteRequest,
+) -> Result<(), String> {
+    terminal_sessions::write_terminal_session(registry, request)
+}
+
+#[tauri::command]
+fn terminal_resize(
+    registry: tauri::State<'_, TerminalSessionRegistry>,
+    request: terminal_sessions::TerminalResizeRequest,
+) -> Result<(), String> {
+    terminal_sessions::resize_terminal_session(registry, request)
+}
+
+#[tauri::command]
+fn terminal_interrupt(
+    registry: tauri::State<'_, TerminalSessionRegistry>,
+    request: terminal_sessions::TerminalSessionRequest,
+) -> Result<(), String> {
+    terminal_sessions::interrupt_terminal_session(registry, request)
+}
+
+#[tauri::command]
+fn terminal_kill(
+    registry: tauri::State<'_, TerminalSessionRegistry>,
+    request: terminal_sessions::TerminalSessionRequest,
+) -> Result<(), String> {
+    terminal_sessions::kill_terminal_session(registry, request)
+}
+
+#[tauri::command]
+fn terminal_close(
+    registry: tauri::State<'_, TerminalSessionRegistry>,
+    request: terminal_sessions::TerminalSessionRequest,
+) -> Result<(), String> {
+    terminal_sessions::close_terminal_session(registry, request)
+}
+
 // -- Process manager commands -----------------------------------------------
 
 #[tauri::command]
@@ -9305,6 +9437,7 @@ pub fn run() {
             app.manage(WatchRegistry::default());
             app.manage(CrewExecutionRegistry::default());
             app.manage(ChatStreamRegistry::default());
+            app.manage(TerminalSessionRegistry::default());
             app.manage(CrewPythonBridge::default());
             app.manage(ClaudeCodeBridge::new());
             configure_pdfium_search_paths(app.handle());
@@ -9395,6 +9528,10 @@ pub fn run() {
             task_run_sub_agents,
             fs_generate_pro_outputs,
             fs_generate_office_workflow,
+            office_detect_apps,
+            office_open_document,
+            office_export_preview,
+            document_render_preview,
             scheduler_upsert_task,
             scheduler_list_tasks,
             scheduler_delete_task,
@@ -9473,6 +9610,12 @@ pub fn run() {
             backend_delete,
             backend_exec,
             backend_ensure_local,
+            terminal_create,
+            terminal_write,
+            terminal_resize,
+            terminal_interrupt,
+            terminal_kill,
+            terminal_close,
             // Process manager
             process_start,
             process_stop,

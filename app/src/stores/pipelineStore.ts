@@ -186,7 +186,7 @@ export const usePipelineStore = create<PipelineState>()((set, get) => ({
     if (!pipeline) {
       const result: PipelineExecutionResult = {
         pipelineId: id, status: 'failed', stepResults: [],
-        error: 'Pipeline nicht gefunden.',
+        error: 'Pipeline not found.',
       }
       set({ lastResult: result })
       return result
@@ -201,7 +201,7 @@ export const usePipelineStore = create<PipelineState>()((set, get) => ({
     } catch (e) {
       const result: PipelineExecutionResult = {
         pipelineId: id, status: 'failed', stepResults: [],
-        error: `Ungueltige Steps-JSON: ${e}`,
+        error: `Unvalide Steps-JSON: ${e}`,
       }
       set({ executing: null, lastResult: result })
       return result
@@ -218,7 +218,7 @@ export const usePipelineStore = create<PipelineState>()((set, get) => ({
         // Execute via Ollama
         const previousContext = stepResults.map(r => `[${r.tool}]: ${r.result}`).join('\n')
         const fullPrompt = previousContext
-          ? `Kontext bisheriger Schritte:\n${previousContext}\n\nAktuelle Aufgabe:\n${prompt}`
+          ? `Context bisheriger Schritte:\n${previousContext}\n\nAktuelle Task:\n${prompt}`
           : prompt
 
         const response = await fetch(`${ollamaUrl}/api/generate`, {

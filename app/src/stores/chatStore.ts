@@ -1,4 +1,4 @@
-import { create } from 'zustand'
+﻿import { create } from 'zustand'
 import { invoke } from '@tauri-apps/api/core'
 import { hydrateStoredMessage, serializeChatMessageForStorage } from '../utils/sessionThreads'
 import type { ChatAttachment } from '../utils/chatAttachments'
@@ -244,7 +244,7 @@ export const useChatStore = create<ChatState>()((set) => ({
       }))
       const hydratedThreadIds = new Set(hydratedThreads.map((thread) => thread.id))
       
-      // Finde den neuesten Thread (nach updatedAt sortiert)
+      // Find the newest thread (sorted by updatedAt)
       const sortedThreads = [...hydratedThreads].sort((a, b) => b.updatedAt - a.updatedAt)
       const mostRecentThread = sortedThreads[0] || null
       
@@ -253,36 +253,33 @@ export const useChatStore = create<ChatState>()((set) => ({
           ...state.threads.filter((thread) => !hydratedThreadIds.has(thread.id)),
           ...hydratedThreads,
         ],
-        // Setze activeThreadId auf den neuesten Thread, falls keiner aktiv ist
+        // Setze activeThreadId auf den neuesten Thread, falls none aktiv ist
         activeThreadId: state.activeThreadId && hydratedThreads.some(t => t.id === state.activeThreadId)
           ? state.activeThreadId
           : mostRecentThread?.id ?? state.activeThreadId,
       }))
       
-      // Bereinige leere Threads nach dem Laden
-      // cleanupEmptyThreads wird über set() aufgerufen
+      // Remove empty threads after loading
+        // cleanupEmptyThreads is called through set()
       set((state) => {
-        // Finde alle leeren "Neuer Chat" Threads (nur mit System-Nachricht)
+        // Find all empty "New chat" threads (system message only)
         const emptyThreadIds = state.threads
           .filter(t => 
-            t.title === 'Neuer Chat' && 
+            t.title === 'New chat' && 
             t.messages.length <= 1 && 
             t.messages.every(m => m.role === 'system')
           )
           .map(t => t.id)
-        
-        // Behalte nur den neuesten leeren Thread, lösche die restlichen
+        // Keep only the newest empty thread, delete the rest
         if (emptyThreadIds.length <= 1) return state
         
         const sortedEmptyThreads = state.threads
           .filter(t => emptyThreadIds.includes(t.id))
           .sort((a, b) => b.updatedAt - a.updatedAt)
-        
-        // Behalte den neuesten, lösche die restlichen
+        // Keep the newest one, delete the rest
         const keepId = sortedEmptyThreads[0]?.id
         const deleteIds = sortedEmptyThreads.slice(1).map(t => t.id)
-        
-        // Lösche aus der Datenbank
+        // Delete from the database
         for (const id of deleteIds) {
           void persistInvoke('db_delete_thread', { id }, 'db_delete_thread cleanup')
         }
@@ -306,7 +303,7 @@ export const useChatStore = create<ChatState>()((set) => ({
     const systemMsg: ChatMessage = {
       id: generateId(),
       role: 'system',
-      content: 'Open_Cowork ist bereit. Sende eine Aufgabe, um Planung und Ausfuehrung im Chatmodus zu starten.',
+      content: 'Open_Cowork is ready. Send a task to start planning and execution in chat mode.',
       timestamp: now,
     }
     const thread: ChatThread = {
@@ -340,29 +337,26 @@ export const useChatStore = create<ChatState>()((set) => ({
       timestamp: systemMsg.timestamp,
     }, 'db_save_message system')
     
-    // Bereinige leere Threads nach dem Erstellen eines neuen
+    // Bereinige leere Threads nach dem Createn eines neuen
     set((state) => {
-      // Finde alle leeren "Neuer Chat" Threads (nur mit System-Nachricht)
+      // Find all empty "New chat" threads (system message only)
       const emptyThreadIds = state.threads
         .filter(t => 
-          t.title === 'Neuer Chat' && 
+          t.title === 'New chat' && 
           t.messages.length <= 1 && 
           t.messages.every(m => m.role === 'system')
         )
         .map(t => t.id)
-      
-      // Behalte nur den neuesten leeren Thread, lösche die restlichen
+        // Keep only the newest empty thread, delete the rest
       if (emptyThreadIds.length <= 1) return state
       
       const sortedEmptyThreads = state.threads
         .filter(t => emptyThreadIds.includes(t.id))
         .sort((a, b) => b.updatedAt - a.updatedAt)
-      
-      // Behalte den neuesten, lösche die restlichen
+        // Keep the newest one, delete the rest
       const keepId = sortedEmptyThreads[0]?.id
       const deleteIds = sortedEmptyThreads.slice(1).map(t => t.id)
-      
-      // Lösche aus der Datenbank
+        // Delete from the database
       for (const deleteId of deleteIds) {
         void persistInvoke('db_delete_thread', { id: deleteId }, 'db_delete_thread cleanup')
       }

@@ -120,7 +120,7 @@ pub fn generate_memory_hints(db: &Arc<Database>) -> Vec<MemoryHint> {
             hints.push(MemoryHint {
                 hint_type: "compaction_suggested".to_string(),
                 message: format!(
-                    "{} Memory-Einträge mit niedriger Konfidenz – Memory bereinigen?",
+                    "{} memory entries with low confidence – clean up memory?",
                     low_confidence_count
                 ),
                 suggested_key: None,
@@ -132,7 +132,7 @@ pub fn generate_memory_hints(db: &Arc<Database>) -> Vec<MemoryHint> {
         if total > 100 {
             hints.push(MemoryHint {
                 hint_type: "memory_large".to_string(),
-                message: format!("{} Memory-Einträge gespeichert. Kategorien prüfen?", total),
+                message: format!("{} memory entries saved. Review categories?", total),
                 suggested_key: None,
                 suggested_category: None,
             });
@@ -172,7 +172,7 @@ pub fn validate_scope(scope: &str) -> Result<&str, String> {
     match scope {
         "agent" | "user" | "session" | "shared" => Ok(scope),
         _ => Err(format!(
-            "Ungültiger Memory-Scope: {}. Erlaubt: agent, user, session, shared",
+            "Invalid memory scope: {}. Allowed: agent, user, session, shared",
             scope
         )),
     }

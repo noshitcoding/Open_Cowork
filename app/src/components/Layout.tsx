@@ -1,17 +1,34 @@
-﻿import { useEffect } from 'react'
+import { Suspense, useEffect } from 'react'
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
+import { Command, Menu, Moon, Sun } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useUiStore } from '../stores/uiStore'
 import { useConfigStore } from '../stores/configStore'
 import LeftSidebar from './LeftSidebar'
 import CommandPalette from './CommandPalette'
+import LanguageSwitcher from './LanguageSwitcher'
+import { tr } from '../i18n'
+
+function ViewLoadingState() {
+  const { t } = useTranslation()
+
+  return (
+    <div className="view-loading-state" aria-busy="true" aria-live="polite">
+      <div className="view-loading-bar" aria-hidden="true">
+        <span />
+      </div>
+      <span>{t('common.preparingView')}</span>
+    </div>
+  )
+}
 
 export default function Layout() {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const navigate = useNavigate()
   
   const {
     leftSidebarOpen,
+    theme,
     toggleLeftSidebar,
     toggleTheme,
     setCommandPaletteOpen,
@@ -75,56 +92,66 @@ export default function Layout() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [commandPaletteOpen, navigate, setCommandPaletteOpen, setShortcutsOverlayOpen, shortcutOverlayEnabled, toggleLeftSidebar, toggleTheme])
 
+  const shortcuts = [
+    { label: t('shortcuts.commandPalette'), keys: 'Ctrl+K' },
+    { label: t('shortcuts.workspace'), keys: 'Ctrl+1' },
+    { label: t('shortcuts.settings'), keys: 'Ctrl+2' },
+    { label: t('shortcuts.crew'), keys: 'Ctrl+3' },
+    { label: t('shortcuts.sidebar'), keys: 'Ctrl+Shift+B' },
+    { label: t('shortcuts.theme'), keys: 'Ctrl+Shift+L' },
+    { label: t('shortcuts.show'), keys: 'Ctrl+Shift+?' },
+  ]
+
   return (
     <div className="app-shell">
-      {/* Top Bar */}
       <div className="top-bar">
         <div className="top-bar-brand">
-          <button type="button" className="btn-toggle-sidebar" onClick={toggleLeftSidebar} title="Sidebar (Ctrl+Shift+B)">
-            Menu
+          <button type="button" className="top-icon-button" onClick={toggleLeftSidebar} title={t('layout.sidebarShortcut')} aria-label={t('layout.toggleSidebar')}>
+            <Menu size={17} strokeWidth={2} />
           </button>
-          <span className="brand-icon">*</span>
-          <span className="brand-name">Open_Cowork</span>
+          <span className="brand-name">{t('app.name')}</span>
         </div>
 
         <div className="top-tabs">
-          <NavLink to="/" end className={({isActive}) => `top-tab${isActive ? ' active' : ''}`}>
-            {t('Cowork')}
+          <NavLink to="/" end className={({isActive}) => 'top-tab' + (isActive ? ' active' : '')}>
+            {t('nav.cowork')}
           </NavLink>
-          <NavLink to="/tasks" className={({isActive}) => `top-tab${isActive ? ' active' : ''}`}>
-            {t('Tasks')}
+          <NavLink to="/tasks" className={({isActive}) => 'top-tab' + (isActive ? ' active' : '')}>
+            {t('nav.tasks')}
           </NavLink>
-          <NavLink to="/crew" className={({isActive}) => `top-tab${isActive ? ' active' : ''}`}>
-            {t('Crew')}
+          <NavLink to="/crew" className={({isActive}) => 'top-tab' + (isActive ? ' active' : '')}>
+            {t('nav.crew')}
           </NavLink>
-          <NavLink to="/projects" className={({isActive}) => `top-tab${isActive ? ' active' : ''}`}>
-            Projekte
+          <NavLink to="/projects" className={({isActive}) => 'top-tab' + (isActive ? ' active' : '')}>
+            {t('nav.projects')}
           </NavLink>
-          <NavLink to="/settings" className={({isActive}) => `top-tab${isActive ? ' active' : ''}`}>
-            {t('Settings')}
+          <NavLink to="/settings" className={({isActive}) => 'top-tab' + (isActive ? ' active' : '')}>
+            {t('nav.settings')}
           </NavLink>
         </div>
 
         <div className="top-bar-actions">
-          <button type="button" className="btn-toggle-sidebar" onClick={toggleTheme} title="Theme (Ctrl+Shift+L)">
-            Theme
+          <LanguageSwitcher />
+          <button type="button" className="top-icon-button" onClick={toggleTheme} title={t('layout.themeShortcut')} aria-label={t('layout.toggleTheme')}>
+            {theme === 'light' ? <Moon size={16} strokeWidth={2} /> : <Sun size={16} strokeWidth={2} />}
           </button>
-          <button type="button" className="btn-toggle-sidebar" onClick={() => setCommandPaletteOpen(true)} title="Command Palette (Ctrl+K)">
-            Ctrl K
+          <button type="button" className="top-command-button" onClick={() => setCommandPaletteOpen(true)} title={t('layout.commandPaletteShortcut')} aria-label={t('layout.openCommandPalette')}>
+            <Command size={15} strokeWidth={2} />
+            <kbd>{tr("Ctrl K")}</kbd>
           </button>
         </div>
       </div>
 
-      {/* Body: sidebar + main */}
       <div className="app-body">
         {leftSidebarOpen && !focusMode && (
           <LeftSidebar />
         )}
 
-        <div className="main-content">
-          <Outlet />
+        <div className="main-content" key={i18n.resolvedLanguage ?? i18n.language}>
+          <Suspense fallback={<ViewLoadingState />}>
+            <Outlet />
+          </Suspense>
         </div>
-
       </div>
 
       <CommandPalette />
@@ -133,19 +160,11 @@ export default function Layout() {
         <div className="command-palette-overlay" onClick={() => setShortcutsOverlayOpen(false)}>
           <div className="command-palette" onClick={(e) => e.stopPropagation()}>
             <div className="command-palette-header">
-              <strong style={{ flex: 1, fontSize: 15 }}>Shortcuts</strong>
-              <button type="button" onClick={() => setShortcutsOverlayOpen(false)}>Esc</button>
+              <strong style={{ flex: 1, fontSize: 15 }}>{t('shortcuts.title')}</strong>
+              <button type="button" onClick={() => setShortcutsOverlayOpen(false)}>{tr("Esc")}</button>
             </div>
             <ul className="command-palette-list">
-              {[
-                { label: 'Command Palette', keys: 'Ctrl+K' },
-                { label: 'Arbeitsbereich', keys: 'Ctrl+1' },
-                { label: 'Einstellungen', keys: 'Ctrl+2' },
-                { label: 'Crew Bereich', keys: 'Ctrl+3' },
-                { label: 'Sidebar ein-/ausblenden', keys: 'Ctrl+Shift+B' },
-                { label: 'Theme wechseln', keys: 'Ctrl+Shift+L' },
-                { label: 'Shortcuts anzeigen', keys: 'Ctrl+Shift+?' },
-              ].map((s, i) => (
+              {shortcuts.map((s, i) => (
                 <li key={i}>
                   <button type="button" onClick={() => setShortcutsOverlayOpen(false)}>
                     <span>{s.label}</span>

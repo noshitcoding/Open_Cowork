@@ -81,7 +81,7 @@ function normalizeTask(raw: Partial<WorkTask> & { id?: unknown }): WorkTask | nu
     scheduleEnabled: Boolean(raw.scheduleEnabled) && Boolean(scheduleExpr),
     status,
     output: typeof raw.output === 'string' ? raw.output : null,
-    error: interrupted ? 'Task-Lauf wurde unterbrochen.' : typeof raw.error === 'string' ? raw.error : null,
+    error: interrupted ? 'Task-Run was unterbrochen.' : typeof raw.error === 'string' ? raw.error : null,
     lastRunAt: typeof raw.lastRunAt === 'number' ? raw.lastRunAt : null,
     createdAt,
     updatedAt: interrupted ? Date.now() : updatedAt,
@@ -96,7 +96,7 @@ export const useWorkTasksStore = create<WorkTasksState>()(
       addTask: (input) => {
         const prompt = input.prompt.trim()
         if (!prompt) {
-          throw new Error('Task-Prompt darf nicht leer sein.')
+          throw new Error('Task prompt must not be empty.')
         }
 
         const now = Date.now()

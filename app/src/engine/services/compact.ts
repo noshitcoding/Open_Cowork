@@ -72,15 +72,15 @@ export function getTokenWarningLevel(
 // Mirrors: claude-code-main/src/services/compact/autoCompact.ts
 // When context exceeds threshold, summarize older messages via LLM call.
 
-const COMPACTION_PROMPT = `Du bist ein Kontext-Komprimierer. Fasse die bisherige Konversation praezise zusammen. Behalte:
+const COMPACTION_PROMPT = `You are a context compactor. Summarize the conversation precisely. Keep:
 
-1. **Aufgabe/Ziel**: Was der Benutzer erreichen will
-2. **Getroffene Entscheidungen**: Welche Ans??tze gewaehlt wurden
-3. **Ausgefuehrte Aenderungen**: Welche Dateien bearbeitet, welche Tools genutzt
-4. **Offene Punkte**: Was noch zu tun ist
-5. **Wichtiger Kontext**: Dateipfade, Konfigurationen, Fehlermeldungen
+1. **Task/target**: what the user wants to achieve
+2. **Important decisions**: selected approaches and constraints
+3. **Current state**: completed work, open tasks, and relevant files
+4. **Risks/blockers**: unresolved problems and assumptions
+5. **Next steps**: concrete recommended actions
 
-Antworte NUR mit der Zusammenfassung, keine Meta-Kommentare.`
+Reply only with the summary. Do not include meta comments.`
 
 /**
  * Compact conversation using LLM-based summarization.
@@ -148,7 +148,7 @@ export async function autoCompact(
 
     // Create compact boundary message
     const boundaryMessage = createSystemMessage(
-      `[Kontext komprimiert — ${toSummarize.length} Nachrichten zusammengefasst]\n\n${summary}`,
+      `[Context compacted — ${toSummarize.length} Messages summarized]\n\n${summary}`,
       'compact_boundary',
     )
 
@@ -202,7 +202,7 @@ export function fallbackCompact(
   }
 
   const summary = [
-    `[Komprimiert: ${toSummarize.length} Nachrichten]`,
+    `[Komprimiert: ${toSummarize.length} Messages]`,
     '',
     ...summaryParts.slice(0, 20),
     toolSummaries.length > 0 ? `\nTools: ${toolSummaries.slice(0, 15).join(', ')}` : '',
@@ -222,7 +222,7 @@ export function fallbackCompact(
 // Truncates large tool results to save tokens.
 
 const MAX_TOOL_RESULT_CHARS = 30000
-const TRUNCATION_NOTICE = '\n\n[... Ergebnis abgeschnitten (zu lang) ...]'
+const TRUNCATION_NOTICE = '\n\n[... Result abgeschnitten (zu lang) ...]'
 
 /**
  * Apply a budget to tool results in messages.
@@ -269,7 +269,7 @@ export function generateToolUseSummary(
       return `[Write ${input.file_path ?? '?'}]: Geschrieben`
     case 'Edit':
     case 'edit_file':
-      return `[Edit ${input.file_path ?? '?'}]: Bearbeitet`
+      return `[Edit ${input.file_path ?? '?'}]: Edited`
     case 'Bash':
     case 'bash':
       return `[Bash]: ${(input.command as string)?.slice(0, 80) ?? '?'} → ${resultSnippet}`

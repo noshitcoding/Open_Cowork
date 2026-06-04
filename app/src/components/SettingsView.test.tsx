@@ -62,7 +62,7 @@ function resetConfigStore() {
       },
       {
         id: 'default-openai-compatible',
-        name: 'OpenAI-kompatibel',
+        name: 'OpenAI-compatible',
         provider: 'openai-compatible',
         baseUrl: 'https://api.openai.com/v1',
         model: 'gpt-4.1-mini',
@@ -129,6 +129,7 @@ function resetConfigStore() {
       ollamaStreamAutosave: true,
       dbCleanupOnStart: false,
       taskBatchMultiSelectEnabled: true,
+      terminalPersistenceMode: 'runtime',
     },
     availableModels: [],
     mcpServer: { name: '', command: '', args: '', env: {} },
@@ -177,10 +178,10 @@ describe('SettingsView', () => {
     expect(buttons.length).toBe(9)
   })
 
-  /* ── 2. default category is KI & Modell ── */
-  it('shows KI & Modell content by default', () => {
+  /* ── 2. default category is AI & model ── */
+  it('shows AI & model content by default', () => {
     render(<SettingsView />)
-    expect(screen.getByRole('heading', { level: 1, name: 'KI & Modell' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 1, name: 'AI & model' })).toBeInTheDocument()
   })
 
   /* ── 3. navigation switches categories ── */
@@ -190,21 +191,21 @@ describe('SettingsView', () => {
     expect(screen.getByRole('heading', { level: 1, name: 'Agent & Skills' })).toBeInTheDocument()
   })
 
-  /* ── 4. Oberflaeche category ── */
-  it('switches to Oberflaeche category', () => {
+  /* ── 4. Interface category ── */
+  it('switches to Interface category', () => {
     render(<SettingsView />)
-    fireEvent.click(screen.getByText('Oberflaeche'))
-    expect(screen.getByRole('heading', { level: 1, name: 'Oberflaeche' })).toBeInTheDocument()
-    expect(screen.getByText('Fokusmodus')).toBeInTheDocument()
-    expect(screen.getByText('Kompaktmodus')).toBeInTheDocument()
+    fireEvent.click(screen.getByText('Interface'))
+    expect(screen.getByRole('heading', { level: 1, name: 'Interface' })).toBeInTheDocument()
+    expect(screen.getByText('Focus mode')).toBeInTheDocument()
+    expect(screen.getByText('Compact mode')).toBeInTheDocument()
   })
 
-  /* ── 5. Sicherheit category ── */
-  it('switches to Sicherheit & Daten category', () => {
+  /* ── 5. security category ── */
+  it('switches to Security & data category', () => {
     render(<SettingsView />)
-    fireEvent.click(screen.getByText('Sicherheit & Daten'))
-    expect(screen.getByRole('heading', { level: 1, name: 'Sicherheit & Daten' })).toBeInTheDocument()
-    expect(screen.getByText('Nur-Lesen-Modus')).toBeInTheDocument()
+    fireEvent.click(screen.getByText('Security & data'))
+    expect(screen.getByRole('heading', { level: 1, name: 'Security & data' })).toBeInTheDocument()
+    expect(screen.getByText('Nur-Lesen-Mode')).toBeInTheDocument()
   })
 
   /* ── 6. System & Info shows version ── */
@@ -215,11 +216,11 @@ describe('SettingsView', () => {
     expect(screen.getByText(/v0\.2\.0/)).toBeInTheDocument()
   })
 
-  /* ── 7. Gedaechtnis category renders ── */
-  it('switches to Gedaechtnis category', () => {
+  /* ── 7. Memory category renders ── */
+  it('switches to Memory category', () => {
     render(<SettingsView />)
-    fireEvent.click(screen.getByText('Gedaechtnis'))
-    expect(screen.getByRole('heading', { level: 1, name: 'Gedaechtnis' })).toBeInTheDocument()
+    fireEvent.click(screen.getByText('Memory'))
+    expect(screen.getByRole('heading', { level: 1, name: 'Memory' })).toBeInTheDocument()
   })
 
   /* ── 8. Sessions & Insights category renders ── */
@@ -229,11 +230,13 @@ describe('SettingsView', () => {
     expect(screen.getByRole('heading', { level: 1, name: 'Sessions & Insights' })).toBeInTheDocument()
   })
 
-  /* ── 9. Terminal & Prozesse category renders ── */
-  it('switches to Terminal & Prozesse', () => {
+  /* ── 9. Terminal & Processes category renders ── */
+  it('switches to Terminal & Processes', () => {
     render(<SettingsView />)
-    fireEvent.click(screen.getByText('Terminal & Prozesse'))
-    expect(screen.getByRole('heading', { level: 1, name: 'Terminal & Prozesse' })).toBeInTheDocument()
+    fireEvent.click(screen.getByText('Terminal & Processes'))
+    expect(screen.getByRole('heading', { level: 1, name: 'Terminal & Processes' })).toBeInTheDocument()
+    expect(screen.getByText('Terminal-Dock')).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: 'Persistence' })).toHaveValue('runtime')
   })
 
   /* ── 10. MCP Server category renders ── */
@@ -241,14 +244,14 @@ describe('SettingsView', () => {
     render(<SettingsView />)
     fireEvent.click(screen.getByText('MCP Server'))
     // McpView also has an h1 "MCP Server", so check for the settings toggle instead
-    expect(screen.getByText('Auto-Reconnect')).toBeInTheDocument()
-    expect(screen.getByText('Verbose Logging')).toBeInTheDocument()
+    expect(screen.getByText('Auto-reconnect')).toBeInTheDocument()
+    expect(screen.getByText('Verbose logging')).toBeInTheDocument()
   })
 
   /* ── 11. Legacy Ollama config section removed ── */
-  it('does not render the legacy Ollama Konfiguration section', () => {
+  it('does not render the legacy Ollama configuration section', () => {
     render(<SettingsView />)
-    expect(screen.queryByRole('heading', { level: 2, name: /Ollama Konfiguration/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { level: 2, name: /Ollama configuration/ })).not.toBeInTheDocument()
   })
 
   it('does not render OpenAI Computer Use settings', () => {
@@ -272,7 +275,7 @@ describe('SettingsView', () => {
     useConfigStore.getState().setLlmProfileModels('default-ollama', ['llama3.1:8b', 'mistral:7b'])
     render(<SettingsView />)
     const profileCard = screen.getByText('Lokales Ollama', { selector: 'strong' }).closest('.card') as HTMLElement
-    const modelControl = within(profileCard).getByLabelText('Modell')
+    const modelControl = within(profileCard).getByLabelText('Model')
     expect(modelControl.tagName).toBe('SELECT')
     fireEvent.change(modelControl, { target: { value: 'mistral:7b' } })
     expect(useConfigStore.getState().ollama.model).toBe('mistral:7b')
@@ -283,7 +286,7 @@ describe('SettingsView', () => {
   it('toggles autoApproveSafeTools preference', () => {
     render(<SettingsView />)
     fireEvent.click(screen.getByText('Agent & Skills'))
-    const toggleBtn = screen.getByText('Sichere Tools automatisch genehmigen').closest('.toggle-row')!.querySelector('button[role="switch"]')!
+    const toggleBtn = screen.getByText('Automatically approve safe tools').closest('.toggle-row')!.querySelector('button[role="switch"]')!
     expect(toggleBtn.getAttribute('aria-checked')).toBe('true')
     fireEvent.click(toggleBtn)
     expect(useConfigStore.getState().preferences.autoApproveSafeTools).toBe(false)
@@ -294,7 +297,7 @@ describe('SettingsView', () => {
     useConfigStore.getState().setLlmProfileModels('default-ollama', ['llama3.1:8b', 'mistral:7b', 'codellama:13b'])
     render(<SettingsView />)
     const profileCard = screen.getByText('Lokales Ollama', { selector: 'strong' }).closest('.card') as HTMLElement
-    const modelControl = within(profileCard).getByLabelText('Modell')
+    const modelControl = within(profileCard).getByLabelText('Model')
     expect(modelControl.tagName).toBe('SELECT')
   })
 
@@ -316,15 +319,15 @@ describe('SettingsView', () => {
     })
 
     render(<SettingsView />)
-    const profileCards = screen.getAllByText('OpenAI-kompatibel', { selector: 'strong' })
+    const profileCards = screen.getAllByText('OpenAI-compatible', { selector: 'strong' })
     const profileCard = profileCards[1].closest('.card') as HTMLElement
-    fireEvent.click(within(profileCard).getByRole('button', { name: 'Modelle laden' }))
+    fireEvent.click(within(profileCard).getByRole('button', { name: 'Load models' }))
 
     await waitFor(() => {
       expect(useConfigStore.getState().llmProfiles.find((profile) => profile.id === 'default-openai-compatible')?.model)
         .toBe('0xSero/Hy3-preview-nvfp4')
     })
-    expect(await within(profileCard).findByText('Modell automatisch auf 0xSero/Hy3-preview-nvfp4 gesetzt.')).toBeInTheDocument()
+    expect(await within(profileCard).findByText('Model automatisch auf 0xSero/Hy3-preview-nvfp4 gesetzt.')).toBeInTheDocument()
   })
 
   /* ── 17. Number input for maxToolCalls ── */
@@ -336,10 +339,10 @@ describe('SettingsView', () => {
     expect(useConfigStore.getState().preferences.maxToolCallsPerLoop).toBe(25)
   })
 
-  /* ── 18. Font scale input in Oberflaeche ── */
+  /* ── 18. Font scale input in Interface ── */
   it('updates fontScale preference', () => {
     render(<SettingsView />)
-    fireEvent.click(screen.getByText('Oberflaeche'))
+    fireEvent.click(screen.getByText('Interface'))
     const input = screen.getByDisplayValue('100')
     fireEvent.change(input, { target: { value: '110' } })
     expect(useConfigStore.getState().preferences.fontScale).toBe(110)
@@ -350,11 +353,11 @@ describe('SettingsView', () => {
     render(<SettingsView />)
     const nav = screen.getByRole('navigation', { name: 'Einstellungs-Kategorien' })
     const aiBtn = nav.querySelector('.settings-nav-item.active')!
-    expect(aiBtn.textContent).toContain('KI & Modell')
+    expect(aiBtn.textContent).toContain('AI & model')
 
-    fireEvent.click(screen.getByText('Oberflaeche'))
+    fireEvent.click(screen.getByText('Interface'))
     const uiBtn = nav.querySelector('.settings-nav-item.active')!
-    expect(uiBtn.textContent).toContain('Oberflaeche')
+    expect(uiBtn.textContent).toContain('Interface')
   })
 
   /* ── 20. sidebar has navigation role ── */

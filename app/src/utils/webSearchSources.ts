@@ -27,7 +27,7 @@ export function mergeWebSearchSources(
 
 export function parseWebSearchSourcesFromToolResult(result: string): WebSearchSource[] {
   const trimmed = result.trim()
-  if (!trimmed || /^(Keine Treffer|Web-Suche fehlgeschlagen)/i.test(trimmed)) {
+  if (!trimmed || /^(No results|Web-Suche failed)/i.test(trimmed)) {
     return []
   }
 
@@ -65,7 +65,7 @@ export function formatWebSearchSourcesBlock(sources: WebSearchSource[]): string 
   if (sources.length === 0) return ''
 
   return [
-    'Quellen:',
+    'Sources:',
     ...sources.map((source, index) => {
       const lines = [`${index + 1}. ${source.title}`, source.url]
       if (source.snippet) {
@@ -101,12 +101,12 @@ export function extractWebSearchSources(answer: string): {
     return { content: '', sources: [] }
   }
 
-  const marker = '\n\nQuellen:\n'
+  const marker = '\n\nSources:\n'
   const inlineMarkerIndex = trimmedAnswer.lastIndexOf(marker)
   const blockStart = inlineMarkerIndex >= 0
     ? inlineMarkerIndex + marker.length
-    : trimmedAnswer.startsWith('Quellen:\n')
-      ? 'Quellen:\n'.length
+    : trimmedAnswer.startsWith('Sources:\n')
+      ? 'Sources:\n'.length
       : -1
 
   if (blockStart === -1) {

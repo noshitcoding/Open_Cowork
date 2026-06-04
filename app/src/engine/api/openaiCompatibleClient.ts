@@ -108,7 +108,7 @@ type RequestFailure = Error & {
 }
 
 function getProviderLabel(provider: OpenAiCompatibleConfig['provider']): string {
-  return provider === 'openrouter' ? 'OpenRouter' : 'OpenAI-kompatibler Provider'
+  return provider === 'openrouter' ? 'OpenRouter' : 'OpenAI-compatible provider'
 }
 
 function buildEndpoint(baseUrl: string): string {
@@ -445,7 +445,7 @@ function formatChoiceError(providerLabel: string, error: OpenAiCompatibleChoiceE
 
   const message = typeof error.message === 'string' && error.message.trim()
     ? error.message.trim()
-    : 'Unbekannter Fehler'
+    : 'Unknown Error'
   const code = typeof error.code === 'number' ? ` (${error.code})` : ''
 
   return `${providerLabel} API Error${code}: ${message}`
@@ -583,7 +583,7 @@ export async function* streamOpenAiCompatibleMessages(
     throw new Error(`${providerLabel} API-Key fehlt.`)
   }
   if (!config.model.trim()) {
-    throw new Error(`${providerLabel} Modell fehlt.`)
+    throw new Error(`${providerLabel} Model fehlt.`)
   }
 
   const endpoint = buildEndpoint(config.baseUrl)
@@ -756,7 +756,7 @@ export async function* streamOpenAiCompatibleMessages(
       const finishReasonSuffix = finishReason && finishReason !== 'stop'
         ? ` (finish_reason: ${finishReason})`
         : ''
-      throw new Error(`${providerLabel} lieferte keine Antwort${finishReasonSuffix}.`)
+      throw new Error(`${providerLabel} did not return a response${finishReasonSuffix}.`)
     }
 
     const stopReason = mapStopReason(choice?.finish_reason, toolCalls.length > 0)

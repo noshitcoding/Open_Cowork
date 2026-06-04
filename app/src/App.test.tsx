@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+﻿import { fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach } from 'vitest'
 import App from './App'
 import { useChatStore } from './stores/chatStore'
@@ -16,8 +16,8 @@ describe('App', () => {
 
   it('starts directly in an empty chat', async () => {
     render(<App />)
-    expect(await screen.findByPlaceholderText('Nächste Anweisung...', undefined, { timeout: 3000 })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '+ Neuer Chat' })).toBeInTheDocument()
+    expect(await screen.findByPlaceholderText('Next instruction...', undefined, { timeout: 3000 })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '+ New chat' })).toBeInTheDocument()
   })
 
   it('shows top navigation links', async () => {
@@ -31,6 +31,6 @@ describe('App', () => {
     render(<App />)
     fireEvent.click(await screen.findByRole('link', { name: 'Tasks' }))
     expect(await screen.findByRole('heading', { name: 'Tasks' })).toBeInTheDocument()
-    expect(await screen.findByRole('heading', { name: '➕ Neuer Task' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: '➕ New Task' })).toBeInTheDocument()
   })
 })

@@ -6,7 +6,7 @@ import {
 
 const openAiProfile = {
   id: 'default-openai-compatible',
-  name: 'OpenAI-kompatibel',
+  name: 'OpenAI-compatible',
   provider: 'openai-compatible' as const,
   baseUrl: 'https://mlis.example.test/v1',
   model: '0xSero/Hy3-preview-nvfp4',

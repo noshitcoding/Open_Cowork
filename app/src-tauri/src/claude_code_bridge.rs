@@ -85,7 +85,7 @@ pub fn get_claude_code_commands() -> Vec<ClaudeCodeCommandInfo> {
         // Session Management
         (
             "clear",
-            "Kontext loeschen und neue Session starten",
+            "Clear context and start a new session",
             "session",
         ),
         (
@@ -94,37 +94,37 @@ pub fn get_claude_code_commands() -> Vec<ClaudeCodeCommandInfo> {
             "session",
         ),
         ("resume", "Vorherige Session fortsetzen", "session"),
-        ("recap", "Zusammenfassung der aktuellen Session", "session"),
+        ("recap", "Summary of the current session", "session"),
         ("exit", "Session beenden", "session"),
         (
             "cost",
-            "Aktuelle Kosten und Token-Verbrauch anzeigen",
+            "Show current costs and token usage",
             "session",
         ),
-        ("stats", "Session-Statistiken anzeigen", "session"),
-        ("status", "Status der aktuellen Session", "session"),
+        ("stats", "Show session statistics", "session"),
+        ("status", "Status of the current session", "session"),
         ("export", "Session exportieren", "session"),
         // Configuration
-        ("config", "Konfiguration anzeigen und aendern", "config"),
-        ("model", "Modell wechseln (z.B. opus, sonnet)", "config"),
+        ("config", "Show and edit configuration", "config"),
+        ("model", "Switch model (e.g. opus, sonnet)", "config"),
         (
             "memory",
-            "Projektgedaechtnis (CLAUDE.md) bearbeiten",
+            "Edit project memory (CLAUDE.md)",
             "config",
         ),
-        ("permissions", "Berechtigungen verwalten", "config"),
-        ("init", "Projekt initialisieren (.claude/ Ordner)", "config"),
+        ("permissions", "Manage permissions", "config"),
+        ("init", "Initialize project (.claude/ folder)", "config"),
         ("login", "API-Authentifizierung", "config"),
         ("logout", "API-Session beenden", "config"),
         ("theme", "Farbschema aendern", "config"),
         ("color", "Farbeinstellungen", "config"),
-        ("keybindings", "Tastenkuerzel anzeigen", "config"),
+        ("keybindings", "Show keyboard shortcuts", "config"),
         // Code & Files
-        ("diff", "Aenderungen als Diff anzeigen", "code"),
+        ("diff", "Aenderungen als Show diff", "code"),
         ("review", "Code-Review durchfuehren", "code"),
         ("security-review", "Sicherheits-Review durchfuehren", "code"),
         ("autofix-pr", "PR automatisch reparieren", "code"),
-        ("branch", "Git Branch erstellen/wechseln", "code"),
+        ("branch", "Create/change Git branch", "code"),
         ("commit", "Aenderungen committen", "code"),
         // Planning & Execution
         (
@@ -144,32 +144,32 @@ pub fn get_claude_code_commands() -> Vec<ClaudeCodeCommandInfo> {
         ),
         ("simplify", "Code vereinfachen", "planning"),
         // Agent & Tasks
-        ("agents", "Sub-Agenten verwalten", "agents"),
-        ("tasks", "Aktive Tasks anzeigen und verwalten", "agents"),
+        ("agents", "Sub-Manage agents", "agents"),
+        ("tasks", "Show and manage active tasks", "agents"),
         ("batch", "Batch-Operationen ausfuehren", "agents"),
-        ("loop", "Schleife fuer wiederkehrende Aufgaben", "agents"),
-        ("schedule", "Aufgabe zeitgesteuert ausfuehren", "agents"),
+        ("loop", "Loop for recurring tasks", "agents"),
+        ("schedule", "Run task on a schedule", "agents"),
         // Tools & Extensions
-        ("mcp", "MCP-Server verwalten", "tools"),
+        ("mcp", "Manage MCP servers", "tools"),
         ("skills", "Skills durchsuchen und ausfuehren", "tools"),
         ("plugin", "Plugins verwalten", "tools"),
         ("web-setup", "Web-Integration einrichten", "tools"),
         ("chrome", "Chrome-Integration", "tools"),
         ("desktop", "Desktop-Interaktion", "tools"),
-        ("voice", "Spracheingabe", "tools"),
+        ("voice", "Voice input", "tools"),
         // IDE & Bridge
         ("ide", "IDE-Integration verwalten", "bridge"),
         ("bridge", "Bridge-Verbindung verwalten", "bridge"),
         ("remote-env", "Remote-Umgebung konfigurieren", "bridge"),
         ("remote-control", "Fernsteuerung", "bridge"),
         // Debugging
-        ("debug", "Debug-Modus aktivieren", "debug"),
+        ("debug", "Debug-Mode aktivieren", "debug"),
         ("doctor", "System-Diagnose ausfuehren", "debug"),
-        ("feedback", "Feedback senden", "debug"),
+        ("feedback", "Send feedback", "debug"),
         // Advanced
-        ("context", "Kontext anzeigen und bearbeiten", "advanced"),
-        ("focus", "Fokus auf bestimmte Dateien/Ordner", "advanced"),
-        ("add-dir", "Verzeichnis zum Kontext hinzufuegen", "advanced"),
+        ("context", "Show and edit context", "advanced"),
+        ("focus", "Focus on specific files/folders", "advanced"),
+        ("add-dir", "Add directory to context", "advanced"),
         ("sandbox", "Sandbox-Umgebung nutzen", "advanced"),
         (
             "effort",
@@ -179,10 +179,10 @@ pub fn get_claude_code_commands() -> Vec<ClaudeCodeCommandInfo> {
         ("fast", "Schnellmodus (weniger Denkzeit)", "advanced"),
         (
             "rewind",
-            "Zu einem frueheren Zustand zurueckspringen",
+            "Jump back to an earlier state",
             "advanced",
         ),
-        ("insights", "Erkenntnisse und Muster anzeigen", "advanced"),
+        ("insights", "Show insights and patterns", "advanced"),
         ("release-notes", "Release Notes generieren", "advanced"),
     ];
 
@@ -201,32 +201,32 @@ pub fn get_claude_code_tools() -> Vec<ClaudeCodeToolInfo> {
     vec![
         ClaudeCodeToolInfo {
             name: "bash".into(),
-            description: "Shell-Befehle ausfuehren".into(),
+            description: "Run shell commands".into(),
             category: "execution".into(),
         },
         ClaudeCodeToolInfo {
             name: "read".into(),
-            description: "Dateien lesen".into(),
+            description: "Read files".into(),
             category: "file".into(),
         },
         ClaudeCodeToolInfo {
             name: "write".into(),
-            description: "Dateien schreiben".into(),
+            description: "Write files".into(),
             category: "file".into(),
         },
         ClaudeCodeToolInfo {
             name: "edit".into(),
-            description: "Dateien editieren (Diff-basiert)".into(),
+            description: "Edit files (diff-based)".into(),
             category: "file".into(),
         },
         ClaudeCodeToolInfo {
             name: "glob".into(),
-            description: "Dateien per Muster suchen".into(),
+            description: "Search files by pattern".into(),
             category: "file".into(),
         },
         ClaudeCodeToolInfo {
             name: "grep".into(),
-            description: "Textsuche in Dateien".into(),
+            description: "Text search in files".into(),
             category: "file".into(),
         },
         ClaudeCodeToolInfo {
@@ -246,12 +246,12 @@ pub fn get_claude_code_tools() -> Vec<ClaudeCodeToolInfo> {
         },
         ClaudeCodeToolInfo {
             name: "task_create".into(),
-            description: "Aufgabe erstellen".into(),
+            description: "Create task".into(),
             category: "agents".into(),
         },
         ClaudeCodeToolInfo {
             name: "task_stop".into(),
-            description: "Aufgabe stoppen".into(),
+            description: "Stop task".into(),
             category: "agents".into(),
         },
         ClaudeCodeToolInfo {
@@ -266,7 +266,7 @@ pub fn get_claude_code_tools() -> Vec<ClaudeCodeToolInfo> {
         },
         ClaudeCodeToolInfo {
             name: "mcp_tool".into(),
-            description: "MCP-Tool aufrufen".into(),
+            description: "MCP-Call tool".into(),
             category: "mcp".into(),
         },
         ClaudeCodeToolInfo {
@@ -276,22 +276,22 @@ pub fn get_claude_code_tools() -> Vec<ClaudeCodeToolInfo> {
         },
         ClaudeCodeToolInfo {
             name: "lsp".into(),
-            description: "Language Server Anfrage".into(),
+            description: "Language server request".into(),
             category: "code".into(),
         },
         ClaudeCodeToolInfo {
             name: "notebook_edit".into(),
-            description: "Jupyter Notebook bearbeiten".into(),
+            description: "Edit Jupyter notebook".into(),
             category: "code".into(),
         },
         ClaudeCodeToolInfo {
             name: "config_tool".into(),
-            description: "Konfiguration aendern".into(),
+            description: "Change configuration".into(),
             category: "config".into(),
         },
         ClaudeCodeToolInfo {
             name: "plan_mode".into(),
-            description: "Plan-Modus umschalten".into(),
+            description: "Toggle plan mode".into(),
             category: "planning".into(),
         },
     ]
@@ -322,7 +322,7 @@ impl ClaudeCodeBridge {
         let mut guard = self.process.lock().map_err(|e| e.to_string())?;
 
         if guard.is_some() {
-            return Err("Claude Code laeuft bereits. Stoppe zuerst die aktuelle Session.".into());
+            return Err("Claude Code is already running. Stop the current session first.".into());
         }
 
         let bun_path = resolve_bun_path(&config.bun_path)?;
@@ -352,7 +352,7 @@ impl ClaudeCodeBridge {
 
         let child = cmd.spawn().map_err(|e| {
             format!(
-                "Claude Code konnte nicht gestartet werden: {}. Stelle sicher dass Bun installiert ist ({}).",
+                "Claude Code could not be started: {}. Make sure Bun is installed ({}).",
                 e, bun_path
             )
         })?;
@@ -534,7 +534,7 @@ impl ClaudeCodeBridge {
             .spawn()
             .map_err(|e| format!("Claude Code Aufruf fehlgeschlagen: {}", e))?;
 
-        let stdout = child.stdout.take().ok_or("Kein stdout verfuegbar")?;
+        let stdout = child.stdout.take().ok_or("No stdout available")?;
         let reader = BufReader::new(stdout);
         let mut full_content = String::new();
         let mut tools_used: Vec<String> = vec![];
@@ -629,7 +629,7 @@ fn resolve_claude_code_path(configured: &str) -> Result<PathBuf, String> {
     let path = PathBuf::from(configured);
     if !path.exists() {
         return Err(format!(
-            "Claude Code Pfad nicht gefunden: {}. Bitte den korrekten Pfad in den Einstellungen angeben.",
+            "Claude Code Path not found: {}. Please enter the correct path in Settings.",
             configured
         ));
     }

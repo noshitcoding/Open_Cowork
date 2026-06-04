@@ -47,7 +47,7 @@ function normalizePersonality(raw: Partial<Personality> & { systemPrompt?: strin
 
   return {
     id: raw.id ?? `pers-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    name: raw.name?.trim() || 'Persoenlichkeit',
+    name: raw.name?.trim() || 'Personality',
     description: typeof raw.description === 'string' ? raw.description : goal,
     role: normalizeRole(raw.role),
     goal,
@@ -63,7 +63,7 @@ function normalizePersonality(raw: Partial<Personality> & { systemPrompt?: strin
 }
 
 function buildUniqueName(name: string, id: string, personalities: Personality[]): string {
-  const baseName = name.trim() || 'Persoenlichkeit'
+  const baseName = name.trim() || 'Personality'
   let candidate = baseName
   let index = 2
 

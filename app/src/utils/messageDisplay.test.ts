@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+﻿import { describe, expect, it } from 'vitest'
 import { resolveAssistantPresentation, resolveDisplayedAssistantContent, resolveDisplayedThinkingContent } from './messageDisplay'
 
 describe('resolveAssistantPresentation', () => {
@@ -15,28 +15,28 @@ describe('resolveAssistantPresentation', () => {
   it('falls back to explicit fallback text when there is no content', () => {
     const result = resolveAssistantPresentation('', {
       verboseMode: false,
-      fallbackText: 'Keine sichtbare Antwort geliefert.',
+      fallbackText: 'No visible response provided.',
     })
 
-    expect(result.content).toBe('Keine sichtbare Antwort geliefert.')
+    expect(result.content).toBe('No visible response provided.')
   })
 
   it('prefers visible assistant text over fallback content', () => {
-    const result = resolveAssistantPresentation('Fertige Antwort', {
+    const result = resolveAssistantPresentation('Fertige answer', {
       verboseMode: false,
       fallbackText: 'Fallback',
       thinkingContent: 'Thinking',
     })
 
-    expect(result.content).toBe('Fertige Antwort')
+    expect(result.content).toBe('Fertige answer')
   })
 
   it('extracts OpenWebUI-style reasoning tags from assistant text', () => {
-    const result = resolveAssistantPresentation('<thinking>Analyse</thinking>\nFinale Antwort', {
+    const result = resolveAssistantPresentation('<thinking>Analyse</thinking>\nFinale answer', {
       verboseMode: false,
     })
 
-    expect(result.content).toBe('Finale Antwort')
+    expect(result.content).toBe('Finale answer')
     expect(result.thinkingContent).toBe('Analyse')
   })
 })
@@ -52,21 +52,21 @@ describe('resolveDisplayedThinkingContent', () => {
   })
 
   it('keeps the persisted thinking content when the message is not streaming', () => {
-    const result = resolveDisplayedThinkingContent('abgeschlossene analyse', 'kuerzer live rest', {
+    const result = resolveDisplayedThinkingContent('abclosede analyse', 'kuerzer live rest', {
       streaming: false,
       preferLive: true,
     })
 
-    expect(result).toBe('abgeschlossene analyse')
+    expect(result).toBe('abclosede analyse')
   })
 
   it('keeps message thinking when live thinking belongs to a different thread', () => {
-    const result = resolveDisplayedThinkingContent('thinking aus aktivem chat', 'thinking aus anderem chat', {
+    const result = resolveDisplayedThinkingContent('thinking aus activem chat', 'thinking aus anderem chat', {
       streaming: true,
       preferLive: false,
     })
 
-    expect(result).toBe('thinking aus aktivem chat')
+    expect(result).toBe('thinking aus activem chat')
   })
 })
 
@@ -76,6 +76,6 @@ describe('resolveDisplayedAssistantContent', () => {
   })
 
   it('keeps visible assistant text when it differs from thinking', () => {
-    expect(resolveDisplayedAssistantContent('sichtbare antwort', 'interner gedanke')).toBe('sichtbare antwort')
+    expect(resolveDisplayedAssistantContent('visible answer', 'internal thought')).toBe('visible answer')
   })
 })

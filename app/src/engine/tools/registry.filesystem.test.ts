@@ -47,7 +47,7 @@ describe('filesystem tool extensions', () => {
       { cwd: 'C:\\workspace', runId: 'run-create' } as never,
     )
 
-    expect(result.data).toBe('Verzeichnis erstellt: C:\\workspace\\sorted')
+    expect(result.data).toBe('directory created: C:\\workspace\\sorted')
     expect(invokeMock).toHaveBeenCalledWith('fs_create_directory', {
       path: 'C:\\workspace\\sorted',
       runId: 'run-create',
@@ -60,7 +60,7 @@ describe('filesystem tool extensions', () => {
 
     invokeMock.mockResolvedValue({
       sourcePath: 'C:\\workspace\\Downloads\\file.txt',
-      destinationPath: 'C:\\workspace\\Archiv\\file.txt',
+      destinationPath: 'C:\\workspace\\archive\\file.txt',
       itemKind: 'file',
       createdParent: true,
       replacedExisting: false,
@@ -72,17 +72,17 @@ describe('filesystem tool extensions', () => {
     const result = await tool!.call(
       {
         source_path: 'C:\\workspace\\Downloads\\file.txt',
-        destination_path: 'C:\\workspace\\Archiv\\file.txt',
+        destination_path: 'C:\\workspace\\archive\\file.txt',
         overwrite: false,
       },
       { cwd: 'C:\\workspace', runId: 'run-move' } as never,
     )
 
-    expect(result.data).toContain('file verschoben: C:\\workspace\\Downloads\\file.txt -> C:\\workspace\\Archiv\\file.txt')
-    expect(result.data).toContain('Zielordner wurde automatisch erstellt.')
+    expect(result.data).toContain('file verschoben: C:\\workspace\\Downloads\\file.txt -> C:\\workspace\\archive\\file.txt')
+    expect(result.data).toContain('Targetordner was automatisch created.')
     expect(invokeMock).toHaveBeenCalledWith('fs_move_path', {
       sourcePath: 'C:\\workspace\\Downloads\\file.txt',
-      destinationPath: 'C:\\workspace\\Archiv\\file.txt',
+      destinationPath: 'C:\\workspace\\archive\\file.txt',
       overwrite: false,
       runId: 'run-move',
     })
@@ -113,7 +113,7 @@ describe('filesystem tool extensions', () => {
     )
 
     expect(result.data).toContain('directory kopiert: C:\\workspace\\src -> C:\\workspace\\backup\\src')
-    expect(result.data).toContain('Bestehendes Ziel wurde ersetzt.')
+    expect(result.data).toContain('Existing Target was replaced.')
     expect(invokeMock).toHaveBeenCalledWith('fs_copy_path', {
       sourcePath: 'C:\\workspace\\src',
       destinationPath: 'C:\\workspace\\backup\\src',
@@ -173,12 +173,12 @@ describe('filesystem tool extensions', () => {
     const tool = getAllTools().find((entry) => entry.name === 'Bash')
     expect(tool).toBeTruthy()
 
-    let appState = { cwd: 'C:\\workspace\\OrdnerA' }
+    let appState = { cwd: 'C:\\workspace\\FolderA' }
 
     const result = await tool!.call(
       { command: 'cd ..; pwd' },
       {
-        cwd: 'C:\\workspace\\OrdnerA',
+        cwd: 'C:\\workspace\\FolderA',
         runId: 'run-bash-fallback',
         setAppState: (updater: (prev: typeof appState) => typeof appState) => {
           appState = updater(appState)
@@ -206,7 +206,7 @@ describe('filesystem tool extensions', () => {
     const result = await tool!.call(
       { command: 'cd ..; pwd' },
       {
-        cwd: 'C:\\workspace\\OrdnerA',
+        cwd: 'C:\\workspace\\FolderA',
         runId: 'run-bash-pwd',
         setAppState: () => undefined,
       } as never,
@@ -233,7 +233,7 @@ describe('filesystem tool extensions', () => {
       coordinateOverlay: true,
     })
 
-    const tool = getAllTools().find((entry) => entry.name === 'DesktopScreenshot')
+    const tool = getAllTools().find((entry) => entry.name === 'Desktopscreenshot')
     expect(tool).toBeTruthy()
 
     const result = await tool!.call(
@@ -241,9 +241,9 @@ describe('filesystem tool extensions', () => {
       { cwd: 'C:\\workspace', runId: 'run-desktop-screenshot' } as never,
     )
 
-    expect(result.data).toContain('Desktop screenshot aufgenommen: Bild 1280x720')
-    expect(result.data).toContain('Koordinatenraster')
-    expect(result.data).toContain('Attachment fuer visuelle Analyse')
+    expect(result.data).toContain('Desktop screenshot captured: Image 1280x720')
+    expect(result.data).toContain('coordinate grid')
+    expect(result.data).toContain('attached for visual analysis')
     expect(invokeMock).toHaveBeenCalledWith('desktop_capture_primary_annotated_screenshot')
     expect(result.newMessages).toHaveLength(1)
     expect(result.newMessages?.[0]).toEqual(expect.objectContaining({
@@ -262,7 +262,7 @@ describe('filesystem tool extensions', () => {
     }))
 
     const defs = getToolDefinitions()
-    expect(defs.find((entry) => entry.name === 'DesktopScreenshot')).toBeTruthy()
+    expect(defs.find((entry) => entry.name === 'Desktopscreenshot')).toBeTruthy()
   })
 
   it('translates display-relative desktop click coordinates using the primary display origin', async () => {
@@ -323,7 +323,7 @@ describe('filesystem tool extensions', () => {
       { cwd: 'C:\\workspace', runId: 'run-desktop-click' } as never,
     )
 
-    expect(result.data).toContain('Display-Koordinaten (580, 180) wurden mit Display-Ursprung (1920, 0) zu Bildschirmkoordinaten (2500, 180) umgerechnet')
+    expect(result.data).toContain('Display coordinates (580, 180) were converted from display origin (1920, 0) to screen coordinates (2500, 180) umgerechnet')
     expect(result.newMessages).toHaveLength(1)
   })
 
@@ -365,8 +365,8 @@ describe('filesystem tool extensions', () => {
       { cwd: 'C:\\workspace', runId: 'run-desktop-keypress' } as never,
     )
 
-    expect(result.data).toContain('Tastendruck wurde gesendet: CTRL + L')
-    expect(result.data).toContain('Verifikations-Screenshot wurde angehaengt')
+    expect(result.data).toContain('Keystroke was sent: CTRL + L')
+    expect(result.data).toContain('A current verification screenshot was attached')
     expect(invokeMock).toHaveBeenCalledWith('desktop_keypress', {
       request: {
         keys: ['CTRL', 'L'],
@@ -393,7 +393,7 @@ describe('filesystem tool extensions', () => {
       { cwd: 'C:\\workspace', runId: 'run-delete' } as never,
     )
 
-    expect(result.data).toContain('Datei geloescht: C:\\workspace\\temp.txt')
+    expect(result.data).toContain('File geloescht: C:\\workspace\\temp.txt')
     expect(invokeMock).toHaveBeenCalledWith('fs_delete_file', {
       path: 'C:\\workspace\\temp.txt',
       confirmToken: 'DELETE',
@@ -412,7 +412,7 @@ describe('filesystem tool extensions', () => {
       { cwd: 'C:\\workspace', runId: 'run-delete' } as never,
     )
 
-    expect(result.data).toContain('confirm muss auf true gesetzt werden')
+    expect(result.data).toContain('confirm must be set to true')
     expect(invokeMock).not.toHaveBeenCalled()
   })
 
@@ -444,7 +444,7 @@ describe('filesystem tool extensions', () => {
       { cwd: 'C:\\workspace', runId: 'run-info' } as never,
     )
 
-    expect(result.data).toContain('Datei: config.json')
+    expect(result.data).toContain('File: config.json')
     expect(result.data).toContain('Extension: .json')
     expect(result.data).toContain('Sprache: JSON')
     expect(invokeMock).toHaveBeenCalledWith('fs_collect_attachment_metadata', {
@@ -508,8 +508,8 @@ describe('filesystem tool extensions', () => {
       { cwd: 'C:\\workspace', runId: 'run-ls' } as never,
     )
 
-    expect(result.data).toContain('Verzeichnis: C:\\workspace')
-    expect(result.data).toContain('3 Dateien')
+    expect(result.data).toContain('directory: C:\\workspace')
+    expect(result.data).toContain('3 Files')
     expect(result.data).toContain('index.ts')
     expect(result.data).toContain('TypeScript')
     // Should NOT call exec_command (PowerShell) — must use native IPC

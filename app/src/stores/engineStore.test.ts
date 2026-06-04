@@ -140,12 +140,12 @@ describe('engineStore history seeding', () => {
         messages: [
           {
             role: 'user',
-            content: 'sortiere alle ordner in 2 neue ordner',
-            debugContent: 'sortiere alle ordner in 2 neue ordner\n\nVerbundene Pfade (1):\n1. Ordner: C:/workspace',
+            content: 'sort all folders into 2 new folders',
+            debugContent: 'sort all folders into 2 new folders\n\nConnected paths (1):\n1. Folder: C:/workspace',
           },
           {
             role: 'assistant',
-            content: 'Bitte geben Sie an, nach welchem Kriterium die Ordner sortiert werden sollen.',
+            content: 'Please specify which criterion should be used to sort the folders.',
           },
         ],
       },
@@ -157,7 +157,7 @@ describe('engineStore history seeding', () => {
 
     const firstSeededMessage = queryCalls[0]?.messages[0] as { type: string; content: Array<{ type: string; text: string }> }
     expect(firstSeededMessage.type).toBe('user')
-    expect(firstSeededMessage.content[0]?.text).toContain('Verbundene Pfade (1)')
+    expect(firstSeededMessage.content[0]?.text).toContain('Connected paths (1)')
   })
 
   it('serializes concurrent sendMessage calls instead of rejecting', async () => {
@@ -201,7 +201,7 @@ describe('engineStore history seeding', () => {
 
     loadSessionMock.mockResolvedValueOnce({
       id: 'session-1',
-      title: 'Persistierte Analyse',
+      title: 'Persisted analysis',
       cwd: 'C:/workspace',
       messages: [
         {

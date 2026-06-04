@@ -4982,7 +4982,7 @@ mod tests {
         db.upsert_project(
             "p1",
             "Kundenanalyse",
-            "Antworte knapp.",
+            "Answer concisely.",
             "2026-05-11T09:00:00Z",
             "2026-05-11T09:00:00Z",
         )
@@ -5011,7 +5011,7 @@ mod tests {
 
         let projects = db.list_projects().unwrap();
         assert_eq!(projects.len(), 1);
-        assert_eq!(projects[0].instructions, "Antworte knapp.");
+        assert_eq!(projects[0].instructions, "Answer concisely.");
 
         let resources = db.list_project_resources().unwrap();
         assert_eq!(resources.len(), 2);

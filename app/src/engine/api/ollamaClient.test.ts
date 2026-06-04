@@ -2,11 +2,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const readToolDef = {
   name: 'Read',
-  description: 'Liest eine Datei.',
+  description: 'Liest eine File.',
   input_schema: {
     type: 'object' as const,
     properties: {
-      file_path: { type: 'string', description: 'Pfad zur Datei' },
+      file_path: { type: 'string', description: 'Pfad zur File' },
     },
     required: ['file_path'] as string[],
   },
@@ -44,7 +44,7 @@ describe('sampleOllamaMessage', () => {
   it('forwards image attachments alongside tool results to Ollama chat requests', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(
-        '{"model":"qwen3.6:35b","message":{"role":"assistant","content":"Analyse abgeschlossen."},"done":true,"done_reason":"stop"}\n',
+        '{"model":"qwen3.6:35b","message":{"role":"assistant","content":"Analyse abclosed."},"done":true,"done_reason":"stop"}\n',
         {
           status: 200,
           headers: { 'Content-Type': 'application/x-ndjson' },
@@ -63,8 +63,8 @@ describe('sampleOllamaMessage', () => {
       [{
         role: 'user',
         content: [
-          { type: 'tool_result', tool_use_id: 'tool-1', content: 'Screenshot aufgenommen.' },
-          { type: 'text', text: 'Bitte analysiere den aktuellen Bildschirm.' },
+          { type: 'tool_result', tool_use_id: 'tool-1', content: 'screenshot captured.' },
+          { type: 'text', text: 'Please analyze the current screen.' },
           { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAA' } },
         ],
       }],
@@ -74,8 +74,8 @@ describe('sampleOllamaMessage', () => {
     const body = JSON.parse(String(fetchMock.mock.calls[0][1].body))
     expect(body.messages).toEqual([
       { role: 'system', content: 'Systemprompt' },
-      { role: 'tool', content: 'Screenshot aufgenommen.' },
-      { role: 'user', content: 'Bitte analysiere den aktuellen Bildschirm.', images: ['AAA'] },
+      { role: 'tool', content: 'screenshot captured.' },
+      { role: 'user', content: 'Please analyze the current screen.', images: ['AAA'] },
     ])
   })
 
@@ -93,12 +93,12 @@ describe('sampleOllamaMessage', () => {
       [{
         role: 'user',
         content: [
-          { type: 'tool_result', tool_use_id: 'tool-1', content: 'Desktop screenshot aufgenommen: 1280x720 auf \\\\.\\DISPLAY1.' },
-          { type: 'text', text: 'Bitte nutze lokale Display-Koordinaten.' },
+          { type: 'tool_result', tool_use_id: 'tool-1', content: 'Desktop screenshot captured: 1280x720 auf \\\\.\\DISPLAY1.' },
+          { type: 'text', text: 'Please nutze lokale Display coordinates.' },
           { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } },
         ],
       }],
-      'Systemprompt fuer Desktopsteuerung',
+      'Systemprompt for Desktopsteuerung',
       [readToolDef],
     )
 
@@ -112,10 +112,10 @@ describe('sampleOllamaMessage', () => {
     })
     const preview = JSON.parse(request.debugPreview)
     expect(preview.messageCount).toBe(3)
-    expect(preview.messages[0].content).toBe('Systemprompt fuer Desktopsteuerung')
-    expect(preview.messages[1].content).toContain('Desktop screenshot aufgenommen: 1280x720 auf')
+    expect(preview.messages[0].content).toBe('Systemprompt for Desktopsteuerung')
+    expect(preview.messages[1].content).toContain('Desktop screenshot captured: 1280x720 auf')
     expect(preview.messages[1].content).toContain('DISPLAY1')
-    expect(preview.messages[2].content).toBe('Bitte nutze lokale Display-Koordinaten.')
+    expect(preview.messages[2].content).toBe('Please nutze lokale Display coordinates.')
     expect(preview.messages[2].images).toEqual(['[base64 image 1, 4 chars]'])
     expect(preview.toolCount).toBe(1)
     expect(preview.tools).toEqual(['Read'])
@@ -148,14 +148,14 @@ describe('sampleOllamaMessage', () => {
         timeoutMs: 200000,
         temperature: 0.1,
       },
-      [{ role: 'user', content: 'Teste den Stream' }],
+      [{ role: 'user', content: 'Test the stream' }],
       'Systemprompt',
     )
 
     expect(fetchMock).toHaveBeenCalledTimes(1)
     expect(invokeMock).toHaveBeenCalledWith('chat_turn', expect.objectContaining({
       request: expect.objectContaining({
-        prompt: expect.stringContaining('Teste den Stream'),
+        prompt: expect.stringContaining('Test the stream'),
       }),
     }))
     expect(result.content).toEqual([
@@ -170,7 +170,7 @@ describe('sampleOllamaMessage', () => {
     })
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(
-        '{"model":"qwen3.6:35b","message":{"role":"assistant","thinking":"kurz"},"done":false}\n{"model":"qwen3.6:35b","message":{"role":"assistant","content":"Antwort"},"done":true,"done_reason":"stop"}\n',
+        '{"model":"qwen3.6:35b","message":{"role":"assistant","thinking":"kurz"},"done":false}\n{"model":"qwen3.6:35b","message":{"role":"assistant","content":"answer"},"done":true,"done_reason":"stop"}\n',
         {
           status: 200,
           headers: { 'Content-Type': 'application/x-ndjson' },
@@ -187,7 +187,7 @@ describe('sampleOllamaMessage', () => {
         timeoutMs: 200000,
         thinkingEnabled: true,
       },
-      [{ role: 'user', content: 'Teste Thinking' }],
+      [{ role: 'user', content: 'Test thinking' }],
       'Systemprompt',
     )
 
@@ -213,7 +213,7 @@ describe('sampleOllamaMessage', () => {
   it('streams OpenWebUI-compatible reasoning fields as live thinking deltas', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(
-        '{"model":"qwen3.6:35b","message":{"role":"assistant","reasoning":"Plan"},"done":false}\n{"model":"qwen3.6:35b","thinking":"Top"}\n{"model":"qwen3.6:35b","message":{"role":"assistant","content":"Antwort"},"done":true,"done_reason":"stop"}\n',
+        '{"model":"qwen3.6:35b","message":{"role":"assistant","reasoning":"Plan"},"done":false}\n{"model":"qwen3.6:35b","thinking":"Top"}\n{"model":"qwen3.6:35b","message":{"role":"assistant","content":"answer"},"done":true,"done_reason":"stop"}\n',
         {
           status: 200,
           headers: { 'Content-Type': 'application/x-ndjson' },
@@ -230,7 +230,7 @@ describe('sampleOllamaMessage', () => {
         timeoutMs: 200000,
         thinkingEnabled: true,
       },
-      [{ role: 'user', content: 'Teste Reasoning' }],
+      [{ role: 'user', content: 'Test reasoning' }],
       'Systemprompt',
     )
 
@@ -254,7 +254,7 @@ describe('sampleOllamaMessage', () => {
   it('parses split reasoning tags without leaking them into visible text', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(
-        '{"model":"qwen3.6:35b","message":{"role":"assistant","content":"Vor "},"done":false}\n{"model":"qwen3.6:35b","message":{"role":"assistant","content":"<thi"},"done":false}\n{"model":"qwen3.6:35b","message":{"role":"assistant","content":"nk>abc</thi"},"done":false}\n{"model":"qwen3.6:35b","message":{"role":"assistant","content":"nk>Antwort"},"done":true,"done_reason":"stop"}\n',
+        '{"model":"qwen3.6:35b","message":{"role":"assistant","content":"Vor "},"done":false}\n{"model":"qwen3.6:35b","message":{"role":"assistant","content":"<thi"},"done":false}\n{"model":"qwen3.6:35b","message":{"role":"assistant","content":"nk>abc</thi"},"done":false}\n{"model":"qwen3.6:35b","message":{"role":"assistant","content":"nk>answer"},"done":true,"done_reason":"stop"}\n',
         {
           status: 200,
           headers: { 'Content-Type': 'application/x-ndjson' },
@@ -271,7 +271,7 @@ describe('sampleOllamaMessage', () => {
         timeoutMs: 200000,
         thinkingEnabled: true,
       },
-      [{ role: 'user', content: 'Teste geteilte Tags' }],
+      [{ role: 'user', content: 'Test shared tags' }],
       'Systemprompt',
     )
 
@@ -293,15 +293,15 @@ describe('sampleOllamaMessage', () => {
     }
 
     expect(thinkingDeltas.join('')).toBe('abc')
-    expect(textDeltas.join('')).toBe('Vor Antwort')
+    expect(textDeltas.join('')).toBe('Vor answer')
     expect(result?.content).toContainEqual({ type: 'thinking', thinking: 'abc' })
-    expect(result?.content).toContainEqual({ type: 'text', text: 'Vor Antwort' })
+    expect(result?.content).toContainEqual({ type: 'text', text: 'Vor answer' })
   })
 
   it('announces native Ollama tool calls before the final assistant result', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(
-        '{"model":"qwen3.6:35b","message":{"role":"assistant","tool_calls":[{"function":{"name":"Read","arguments":{"filename":"README.md"}}}]},"done":false}\n{"model":"qwen3.6:35b","message":{"role":"assistant","content":"Ich lese die Datei."},"done":true,"done_reason":"stop"}\n',
+        '{"model":"qwen3.6:35b","message":{"role":"assistant","tool_calls":[{"function":{"name":"Read","arguments":{"filename":"README.md"}}}]},"done":false}\n{"model":"qwen3.6:35b","message":{"role":"assistant","content":"Ich lese die File."},"done":true,"done_reason":"stop"}\n',
         {
           status: 200,
           headers: { 'Content-Type': 'application/x-ndjson' },
@@ -384,7 +384,7 @@ describe('sampleOllamaMessage', () => {
         model: 'qwen3.6:35b',
         timeoutMs: 200000,
       },
-      [{ role: 'user', content: 'Stream bitte' }],
+      [{ role: 'user', content: 'Stream please' }],
       'Systemprompt',
     )
 
@@ -533,11 +533,11 @@ describe('sampleOllamaMessage', () => {
             type: 'function',
             function: {
               name: 'Read',
-              description: 'Liest eine Datei.',
+              description: 'Liest eine File.',
               parameters: {
                 type: 'object',
                 properties: {
-                  file_path: { type: 'string', description: 'Pfad zur Datei' },
+                  file_path: { type: 'string', description: 'Pfad zur File' },
                 },
                 required: ['file_path'],
               },

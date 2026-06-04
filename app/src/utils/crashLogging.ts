@@ -40,7 +40,7 @@ export function registerGlobalCrashLogging(): void {
     useLogStore.getState().addLog({
       level: 'error',
       area: 'runtime',
-      message: 'Unbehandelter Frontend-Fehler',
+      message: 'Unhandled frontend error',
       details,
     })
 
@@ -57,7 +57,7 @@ export function registerGlobalCrashLogging(): void {
     useLogStore.getState().addLog({
       level: 'error',
       area: 'runtime',
-      message: 'Unbehandelte Promise-Ablehnung',
+      message: 'Unhandled promise rejection',
       details,
     })
 

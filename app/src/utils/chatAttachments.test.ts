@@ -1,17 +1,17 @@
-import { describe, expect, it } from 'vitest'
+﻿import { describe, expect, it } from 'vitest'
 import { extractAttachmentsFromContent, getAttachmentDisplayName, isImageAttachment, isImageAttachmentPath, toImageContentBlock } from './chatAttachments'
 
 describe('extractAttachmentsFromContent', () => {
   it('extracts files and folders from prompt content and strips the block', () => {
     const parsed = extractAttachmentsFromContent([
-      'Bitte analysiere dieses Projekt.',
+      'Please analyze this project.',
       '',
-      'Verbundene Pfade (2):',
-      '1. Datei: C:\\workspace\\notes.txt',
-      '2. Ordner: C:\\workspace\\src',
+      'Connected paths (2):',
+      '1. File: C:\\workspace\\notes.txt',
+      '2. Folder: C:\\workspace\\src',
     ].join('\n'))
 
-    expect(parsed.content).toBe('Bitte analysiere dieses Projekt.')
+    expect(parsed.content).toBe('Please analyze this project.')
     expect(parsed.attachments).toEqual([
       { path: 'C:\\workspace\\notes.txt', kind: 'file' },
       { path: 'C:\\workspace\\src', kind: 'folder' },
@@ -27,23 +27,23 @@ describe('extractAttachmentsFromContent', () => {
 
   it('strips generated metadata and retrieval blocks from augmented prompts', () => {
     const parsed = extractAttachmentsFromContent([
-      'sortiere den inhalt abweschselnd in zwei ordner a und b um',
+      'sort the content alternately into two folders a and b',
       '',
-      'Verbundene Pfade (1):',
-      '1. Ordner: C:\\workspace\\javastuff',
+      'Connected paths (1):',
+      '1. Folder: C:\\workspace\\javastuff',
       '',
-      'Datei-Metadaten (ohne Volltext):',
-      '- Ordner C:\\workspace\\javastuff | Dateien gesamt 11 | betrachtet 11',
+      'File metadata (without full text):',
+      '- Folder C:\\workspace\\javastuff | total files 11 | inspected 11',
       '',
-      'Retrieval-Kontext (selektiv gelesen):',
+      'Retrieval context (selective read):',
       'Selektierte Kandidaten (Ranking):',
-      '1. Film.java | Score 9 | Sprache Java | Ordner-Anhang C:\\workspace\\javastuff',
+      '1. Film.java | Score 9 | Sprache Java | Folder-attachment C:\\workspace\\javastuff',
       '',
-      'Nicht analysierbare Anhaenge:',
+      'Unprocessable attachments:',
       '- C:\\workspace\\javastuff\\Film.java: format does not provide text extraction',
     ].join('\n'))
 
-    expect(parsed.content).toBe('sortiere den inhalt abweschselnd in zwei ordner a und b um')
+    expect(parsed.content).toBe('sort the content alternately into two folders a and b')
     expect(parsed.attachments).toEqual([
       { path: 'C:\\workspace\\javastuff', kind: 'folder' },
     ])
@@ -52,7 +52,7 @@ describe('extractAttachmentsFromContent', () => {
 
 describe('isImageAttachmentPath', () => {
   it('detects common image file extensions case-insensitively', () => {
-    expect(isImageAttachmentPath('C:\\workspace\\Screenshot.PNG')).toBe(true)
+    expect(isImageAttachmentPath('C:\\workspace\\screenshot.PNG')).toBe(true)
     expect(isImageAttachmentPath('/tmp/photo.jpeg?version=2')).toBe(true)
   })
 

@@ -165,7 +165,7 @@ describe('CrewPanel', () => {
     })
 
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: /Provider & Modell/i }))
+      fireEvent.click(screen.getByRole('button', { name: /Provider & Model/i }))
     })
 
     await act(async () => {
@@ -180,7 +180,7 @@ describe('CrewPanel', () => {
     expect(crew.defaultModel).toBe('')
     expect(defaultAgent?.providerKind).toBe('openai-compatible')
     expect(customAgent?.providerKind).toBe('openai-compatible')
-    expect(screen.getByText('Der Crew-Provider gilt fuer alle Mitglieder. Pro Mitglied ist nur noch das Modell ueberschreibbar.')).toBeInTheDocument()
+    expect(screen.getByText('The crew provider applies to all members. Only the model can still be overridden per member.')).toBeInTheDocument()
   })
 
   it('can grant a tool to all crew members from the crew-level access panel', async () => {
@@ -189,7 +189,7 @@ describe('CrewPanel', () => {
     })
 
     await act(async () => {
-      fireEvent.click(screen.getByLabelText('Task delegieren'))
+      fireEvent.click(screen.getByLabelText('Delegate task'))
     })
 
     const crew = useCrewStore.getState().crews[0]
@@ -223,11 +223,11 @@ describe('CrewPanel', () => {
         {
           id: 'personality-product-owner',
           name: 'Product Owner',
-          description: 'Priorisiert Anforderungen und strukturiert den Arbeitsfokus.',
+          description: 'Prioritizes requirements and structures the work focus.',
           role: 'planner',
-          goal: 'Priorisiert Anforderungen und strukturiert den Arbeitsfokus.',
-          system_prompt: 'Arbeite wie ein Product Owner.',
-          skills_markdown: '# Product Owner\n- Priorisierung\n- Anforderungen',
+          goal: 'Prioritizes requirements and structures the work focus.',
+          system_prompt: 'Work like a Product Owner.',
+          skills_markdown: '# Product Owner\n- Prioritization\n- Requirements',
           temperature: null,
           model_override: 'qwen3:14b',
           icon: 'PO',
@@ -250,9 +250,9 @@ describe('CrewPanel', () => {
       id: 'agent-personality-personality-product-owner',
       name: 'Product Owner',
       role: 'planner',
-      goal: 'Priorisiert Anforderungen und strukturiert den Arbeitsfokus.',
-      backstory: 'Arbeite wie ein Product Owner.',
-      skillsMarkdown: '# Product Owner\n- Priorisierung\n- Anforderungen',
+      goal: 'Prioritizes requirements and structures the work focus.',
+      backstory: 'Work like a Product Owner.',
+      skillsMarkdown: '# Product Owner\n- Prioritization\n- Requirements',
       modelOverride: 'qwen3:14b',
     })
   })

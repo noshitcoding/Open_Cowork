@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "identifier": "io.noshitcoding.opencowork",
   "build": {
-    "beforeDevCommand": "npm run dev",
+    "beforeDevCommand": "npm run dev:tauri",
     "devUrl": "http://127.0.0.1:5173",
     "frontendDist": "../dist",
     "beforeBuildCommand": "npm run build"

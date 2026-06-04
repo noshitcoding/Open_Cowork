@@ -58,7 +58,7 @@ function buildCrewRunOutput(response: CrewExecutionResponse, fallbackTaskId: str
     return renderedResults.join('\n\n')
   }
 
-  return response.error || 'Crew-Ausfuehrung abgeschlossen.'
+  return response.error || 'Crew-Execution abclosed.'
 }
 
 export async function handleCrewTaskMessage(params: CrewTaskMessageParams): Promise<void> {
@@ -68,7 +68,7 @@ export async function handleCrewTaskMessage(params: CrewTaskMessageParams): Prom
 
   const task = workTasksStore.tasks.find((entry) => entry.threadId === threadId)
   if (!task) {
-    throw new Error('Task fuer diesen Chat nicht gefunden.')
+    throw new Error('Task for this chat was not found.')
   }
 
   workTasksStore.updateTask(task.id, {
@@ -114,12 +114,12 @@ export async function handleCrewTaskMessage(params: CrewTaskMessageParams): Prom
 
   try {
     if (!crewId) {
-      throw new Error('Bitte eine Crew auswaehlen.')
+      throw new Error('Please select a crew.')
     }
 
     const crew = crewStore.crews.find((entry) => entry.id === crewId)
     if (!crew) {
-      throw new Error('Crew nicht gefunden (evtl. geloescht).')
+      throw new Error('Crew not found (possibly deleted).')
     }
 
     const personalityState = usePersonalityStore.getState()
@@ -142,7 +142,7 @@ export async function handleCrewTaskMessage(params: CrewTaskMessageParams): Prom
     const resolvedAgents = resolveCrewAgentsWithProfiles(crew.agents, personalityProfiles)
     const enabledAgents = resolvedAgents.filter((agent) => agent.enabled)
     if (enabledAgents.length === 0) {
-      throw new Error('Keine aktiven Crew-Mitglieder vorhanden.')
+      throw new Error('No active Crew-members available.')
     }
 
     const configState = useConfigStore.getState()
@@ -178,7 +178,7 @@ export async function handleCrewTaskMessage(params: CrewTaskMessageParams): Prom
 
     crewLiveState = {
       streamId: crewStreamId,
-      title: `${task.title || task.id} - Crew-Ausfuehrung`,
+      title: `${task.title || task.id} - Crew-Execution`,
       status: 'running',
       entries: [],
       agentColors: {},
@@ -280,7 +280,7 @@ export async function handleCrewTaskMessage(params: CrewTaskMessageParams): Prom
 
     useChatStore.getState().addMessage(threadId, {
       role: 'assistant',
-      content: `Fehler: ${message}`,
+      content: `Error: ${message}`,
       timestamp: Date.now(),
     })
   } finally {

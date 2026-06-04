@@ -18,6 +18,7 @@ import McpView from './McpView'
 import RunPanel from './RunPanel'
 import RuntimeInstructionsPanel from './RuntimeInstructionsPanel'
 import LlmProfilesPanel from './LlmProfilesPanel'
+import { tr } from '../i18n'
 
 /* ── Tiny reusable primitives (App.css based) ── */
 
@@ -53,14 +54,14 @@ function Section({ title, icon, children }: { title: string; icon: string; child
 /* ── Category definitions ─────────────────────── */
 
 const CATEGORIES = [
-  { key: 'ai', label: 'KI & Modell', icon: '🤖' },
+  { key: 'ai', label: 'AI & model', icon: '🤖' },
   { key: 'agent', label: 'Agent & Skills', icon: '⚡' },
-  { key: 'memory', label: 'Gedaechtnis', icon: '🧠' },
+  { key: 'memory', label: 'Memory', icon: '🧠' },
   { key: 'sessions', label: 'Sessions & Insights', icon: '📂' },
-  { key: 'terminal', label: 'Terminal & Prozesse', icon: '💻' },
+  { key: 'terminal', label: 'Terminal & Processes', icon: '💻' },
   { key: 'mcp', label: 'MCP Server', icon: '🔌' },
-  { key: 'ui', label: 'Oberflaeche', icon: '🎨' },
-  { key: 'security', label: 'Sicherheit & Daten', icon: '🔒' },
+  { key: 'ui', label: 'Interface', icon: '🎨' },
+  { key: 'security', label: 'Security & data', icon: '🔒' },
   { key: 'system', label: 'System & Info', icon: '📁' },
 ] as const
 
@@ -88,7 +89,7 @@ export default function SettingsView() {
   return (
     <div className="settings-layout">
       {/* Sidebar navigation */}
-      <nav className="settings-sidebar" role="navigation" aria-label="Einstellungs-Kategorien">
+      <nav className="settings-sidebar" role="navigation" aria-label={tr("Einstellungs-Kategorien")}>
         {CATEGORIES.map((cat) => (
           <button
             key={cat.key}
@@ -97,23 +98,23 @@ export default function SettingsView() {
             onClick={() => setActiveCategory(cat.key)}
           >
             <span className="settings-nav-icon">{cat.icon}</span>
-            <span className="settings-nav-label">{cat.label}</span>
+            <span className="settings-nav-label">{tr(cat.label)}</span>
           </button>
         ))}
       </nav>
 
       {/* Content area */}
       <div className="settings-content">
-        {/* ── KI & Modell ───────────── */}
+        {/* ── KI & Model ───────────── */}
         {activeCategory === 'ai' && (
           <div className="settings-view">
-            <h1>KI & Modell</h1>
-            <p className="hint-text">Mehrere LLM-Profile, globale Provider-Defaults und Persoenlichkeiten konfigurieren</p>
+            <h1>{tr("AI & model")}</h1>
+            <p className="hint-text">{tr("Configure multiple LLM profiles, global provider defaults, and personalities")}</p>
 
             <LlmProfilesPanel />
 
-            <Section title="Streaming" icon="💾">
-              <Toggle label="Stream-Antworten automatisch speichern" hint="Ollama-Antworten werden waehrend des Streamings gesichert" {...pref('ollamaStreamAutosave')} />
+            <Section title={tr("Streaming")} icon="💾">
+              <Toggle label={tr("Automatically save stream answers")} hint={tr("Ollama answers are saved during streaming")} {...pref('ollamaStreamAutosave')} />
             </Section>
             <PersonalitySelector />
           </div>
@@ -122,80 +123,64 @@ export default function SettingsView() {
         {/* ── Agent & Skills ────────── */}
         {activeCategory === 'agent' && (
           <div className="settings-view settings-view-wide">
-            <h1>Agent & Skills</h1>
-            <p className="hint-text">Agent-Verhalten steuern, Skills verwalten und Pipelines konfigurieren</p>
+            <h1>{tr("Agent & Skills")}</h1>
+            <p className="hint-text">{tr("Control agent behavior, manage skills, and configure pipelines")}</p>
 
-            <Section title="Agent-Verhalten" icon="⚡">
-              <Toggle label="Sichere Tools automatisch genehmigen" hint="Leseoperationen ohne Bestätigung ausfuehren" {...pref('autoApproveSafeTools')} />
-              <Toggle label="Autopilot fuer alle Tools" hint="Alle Tool-Aufrufe automatisch genehmigen (Vorsicht!)" {...pref('autoPilotAllTools')} />
-              <Toggle label="Bei wiederholtem Fehler zum Menschen wechseln" hint="Agent stoppt nach mehreren Fehlversuchen" {...pref('fallbackToHumanOnRepeatedFailure')} />
-              <Toggle label="Batch Multi-Select fuer Tasks" hint="Mehrere Tasks gleichzeitig auswaehlen und bearbeiten" {...pref('taskBatchMultiSelectEnabled')} />
+            <Section title={tr("Agent behavior")} icon="⚡">
+              <Toggle label={tr("Automatically approve safe tools")} hint={tr("Execute read operations without confirmation")} {...pref('autoApproveSafeTools')} />
+              <Toggle label={tr("Autopilot for all tools")} hint={tr("Approve all tool calls automatically (caution!)")} {...pref('autoPilotAllTools')} />
+              <Toggle label={tr("Fallback to a human after repeated errors")} hint={tr("Agent stops after repeated failed attempts")} {...pref('fallbackToHumanOnRepeatedFailure')} />
+              <Toggle label={tr("Batch multi-select for tasks")} hint={tr("Select and edit multiple tasks at once")} {...pref('taskBatchMultiSelectEnabled')} />
               <div className="grid" style={{ marginTop: 12 }}>
-                <label>
-                  Max Tool-Aufrufe pro Schleife
-                  <input type="number" min={1} max={50} value={preferences.maxToolCallsPerLoop} onChange={(e) => setPreference('maxToolCallsPerLoop', Number(e.target.value))} />
+                <label>{tr("Max tool calls per loop")}<input type="number" min={1} max={50} value={preferences.maxToolCallsPerLoop} onChange={(e) => setPreference('maxToolCallsPerLoop', Number(e.target.value))} />
                 </label>
               </div>
             </Section>
 
-            <Section title="Engine-Konfiguration" icon="🔧">
+            <Section title={tr("Engine configuration")} icon="🔧">
               <div className="grid">
-                <label>
-                  Max Turns pro Anfrage
-                  <input type="number" min={1} max={100} value={engineConfig.maxTurns} onChange={(e) => setEngineConfig({ maxTurns: Number(e.target.value) })} />
+                <label>{tr("Max turns per request")}<input type="number" min={1} max={100} value={engineConfig.maxTurns} onChange={(e) => setEngineConfig({ maxTurns: Number(e.target.value) })} />
                 </label>
-                <label>
-                  Session Persistence
-                  <select value={engineConfig.sessionPersistence ? 'enabled' : 'disabled'} onChange={(e) => setEngineConfig({ sessionPersistence: e.target.value === 'enabled' })}>
-                    <option value="enabled">Aktiviert</option>
-                    <option value="disabled">Deaktiviert</option>
+                <label>{tr("Session Persistence")}<select value={engineConfig.sessionPersistence ? 'enabled' : 'disabled'} onChange={(e) => setEngineConfig({ sessionPersistence: e.target.value === 'enabled' })}>
+                    <option value="enabled">{tr("Enabled")}</option>
+                    <option value="disabled">{tr("Disabled")}</option>
                   </select>
                 </label>
-                <label>
-                  Berechtigungs-Modus
-                  <select value={engineConfig.permissionMode} onChange={(e) => setEngineConfig({ permissionMode: e.target.value as 'default' | 'plan' | 'bypass' | 'strict' })}>
-                    <option value="default">Standard</option>
-                    <option value="plan">Plan-Modus</option>
-                    <option value="bypass">Bypass (alles erlauben)</option>
-                    <option value="strict">Strikt (alles fragen)</option>
+                <label>{tr("Permission mode")}<select value={engineConfig.permissionMode} onChange={(e) => setEngineConfig({ permissionMode: e.target.value as 'default' | 'plan' | 'bypass' | 'strict' })}>
+                    <option value="default">{tr("Standard")}</option>
+                    <option value="plan">{tr("Plan-Mode")}</option>
+                    <option value="bypass">{tr("Bypass (allow everything)")}</option>
+                    <option value="strict">{tr("Strict (ask everything)")}</option>
                   </select>
                 </label>
               </div>
             </Section>
 
-            <Section title="Systemprompts" icon="SP">
-              <label style={{ marginTop: 12, display: 'block' }}>
-                Basis-Systemprompt
-                <textarea
+            <Section title={tr("Systemprompts")} icon="SP">
+              <label style={{ marginTop: 12, display: 'block' }}>{tr("Base system prompt")}<textarea
                   rows={10}
                   value={engineConfig.systemPrompt}
                   onChange={(e) => setEngineConfig({ systemPrompt: e.target.value })}
-                  placeholder="Basisverhalten fuer die agentische Engine..."
+                  placeholder={tr("Base behavior for die agentische Engine...")}
                   style={{ width: '100%', resize: 'vertical', fontFamily: 'monospace' }}
                 />
               </label>
               <div style={{ display: 'flex', gap: 8, marginTop: 8, marginBottom: 12 }}>
-                <button type="button" className="btn-sm" onClick={() => setEngineConfig({ systemPrompt: DEFAULT_SYSTEM_PROMPT })}>
-                  Auf Standard zuruecksetzen
-                </button>
+                <button type="button" className="btn-sm" onClick={() => setEngineConfig({ systemPrompt: DEFAULT_SYSTEM_PROMPT })}>{tr("Reset to default")}</button>
               </div>
-              <label style={{ display: 'block', marginBottom: 12 }}>
-                System-Prompt Erweiterung
-                <textarea
+              <label style={{ display: 'block', marginBottom: 12 }}>{tr("System prompt extension")}<textarea
                   rows={3}
                   value={engineConfig.appendSystemPrompt}
                   onChange={(e) => setEngineConfig({ appendSystemPrompt: e.target.value })}
-                  placeholder="Zusaetzliche Anweisungen fuer den Agenten..."
+                  placeholder={tr("Additional instructions for den Agenten...")}
                   style={{ width: '100%', resize: 'vertical' }}
                 />
               </label>
-              <label style={{ display: 'block' }}>
-                Globale Cowork-Instruktion
-                <textarea
+              <label style={{ display: 'block' }}>{tr("Global cowork instruction")}<textarea
                   rows={4}
                   value={globalInstruction}
                   onChange={(e) => setGlobalInstruction(e.target.value)}
-                  placeholder="Projektweite Instruktionen fuer Chat und Cowork..."
+                  placeholder={tr("Project-wide instructions for Chat und Cowork...")}
                   style={{ width: '100%', resize: 'vertical' }}
                 />
               </label>
@@ -207,11 +192,11 @@ export default function SettingsView() {
           </div>
         )}
 
-        {/* ── Gedaechtnis ───────────── */}
+        {/* ── Memory ───────────── */}
         {activeCategory === 'memory' && (
           <div className="settings-view">
-            <h1>Gedaechtnis</h1>
-            <p className="hint-text">Agent-Memory, Profil, Provider und Hinweise verwalten</p>
+            <h1>{tr("Memory")}</h1>
+            <p className="hint-text">{tr("Agent-Memory, Profil, Provider und Hinweise verwalten")}</p>
             <MemoryPanel />
           </div>
         )}
@@ -219,19 +204,19 @@ export default function SettingsView() {
         {/* ── Sessions & Insights ──── */}
         {activeCategory === 'sessions' && (
           <div className="settings-view">
-            <h1>Sessions & Insights</h1>
-            <p className="hint-text">Vergangene Sessions durchsuchen und Nutzungsstatistiken einsehen</p>
+            <h1>{tr("Sessions & Insights")}</h1>
+            <p className="hint-text">{tr("Search past sessions and review usage statistics")}</p>
             <SessionSearchPanel />
             <InsightsPanel />
             <RunPanel />
           </div>
         )}
 
-        {/* ── Terminal & Prozesse ──── */}
+        {/* ── Terminal & Processes ──── */}
         {activeCategory === 'terminal' && (
           <div className="settings-view">
-            <h1>Terminal & Prozesse</h1>
-            <p className="hint-text">Terminal-Backends und verwaltete Prozesse konfigurieren</p>
+            <h1>{tr("Terminal & Processes")}</h1>
+            <p className="hint-text">{tr("Configure terminal backends and managed processes")}</p>
             <TerminalPanel />
             <ProcessPanel />
           </div>
@@ -240,91 +225,79 @@ export default function SettingsView() {
         {/* ── MCP Server ────────────── */}
         {activeCategory === 'mcp' && (
           <div className="settings-view">
-            <h1>MCP Server</h1>
-            <p className="hint-text">Model Context Protocol Server verwalten und testen</p>
+            <h1>{tr("MCP Server")}</h1>
+            <p className="hint-text">{tr("Manage and test Model Context Protocol servers")}</p>
 
-            <Section title="MCP Einstellungen" icon="🔌">
-              <Toggle label="Auto-Reconnect" hint="MCP-Server bei Verbindungsverlust automatisch neu verbinden" {...pref('mcpAutoReconnect')} />
-              <Toggle label="Verbose Logging" hint="Detailliertes MCP-Protokoll-Logging" {...pref('mcpVerboseLogging')} />
-              <Toggle label="Env-Editor aktivieren" hint="Umgebungsvariablen manuell bearbeiten" {...pref('mcpEnvEditorEnabled')} />
-              <Toggle label="Manueller JSON-Import" hint="MCP-Server per JSON-Import hinzufuegen" {...pref('mcpAllowManualImport')} />
+            <Section title={tr("MCP Settings")} icon="🔌">
+              <Toggle label={tr("Auto-reconnect")} hint={tr("Reconnect MCP servers automatically after connection loss")} {...pref('mcpAutoReconnect')} />
+              <Toggle label={tr("Verbose logging")} hint={tr("Detailed MCP protocol logging")} {...pref('mcpVerboseLogging')} />
+              <Toggle label={tr("Enable environment editor")} hint={tr("Edit environment variables manually")} {...pref('mcpEnvEditorEnabled')} />
+              <Toggle label={tr("Manual JSON import")} hint={tr("Add MCP servers through JSON import")} {...pref('mcpAllowManualImport')} />
             </Section>
 
             <McpView />
           </div>
         )}
 
-        {/* ── Oberflaeche ────────────── */}
+        {/* ── Interface ────────────── */}
         {activeCategory === 'ui' && (
           <div className="settings-view">
-            <h1>Oberflaeche</h1>
-            <p className="hint-text">Darstellung, Benachrichtigungen und akustisches Feedback anpassen</p>
+            <h1>{tr("Interface")}</h1>
+            <p className="hint-text">{tr("Customize display, notifications, and audio feedback")}</p>
 
-            <Section title="Darstellung" icon="🎨">
-              <Toggle label="Fokusmodus" hint="Sidebar und Ablenkungen ausblenden" {...pref('focusMode')} />
-              <Toggle label="Kompaktmodus" hint="Weniger Abstaende fuer mehr Inhalt" {...pref('compactMode')} />
-              <Toggle label="Verbose-Modus" hint="Interne Prompts, Dateikontext und Tool-/MCP-Diagnose im Chat anzeigen" {...pref('verboseMode')} />
-              <Toggle label="Thinking-Fenster begrenzen" hint="Im Verbose-Modus nur die letzten 50 Thinking-Zeilen live anzeigen" {...pref('limitThinkingWindow')} />
-              <Toggle label="Super-Verbose Audit" hint="Speichert User-Prompts, Antworten, Tool-Calls und Tool-Outputs vollstaendig in audit/events.jsonl" {...pref('superVerboseAuditLogging')} />
-              <Toggle label="Zeitstempel anzeigen" hint="Uhrzeiten bei Chat-Nachrichten" {...pref('showTimestamps')} />
-              <Toggle label="Shortcut-Overlay aktivieren" hint="Tastenkuerzel-Hilfe ueber Ctrl+Shift+?" {...pref('shortcutOverlayEnabled')} />
-              <Toggle label="Theme mit System synchronisieren" hint="Light/Dark automatisch nach OS-Einstellung" {...pref('syncThemeWithSystem')} />
+            <Section title={tr("Appearance")} icon="🎨">
+              <Toggle label={tr("Focus mode")} hint={tr("Hide sidebars and distractions")} {...pref('focusMode')} />
+              <Toggle label={tr("Compact mode")} hint={tr("Less spacing for more content")} {...pref('compactMode')} />
+              <Toggle label={tr("Verbose mode")} hint={tr("Show internal prompts, file context, and tool/MCP diagnostics in chat")} {...pref('verboseMode')} />
+              <Toggle label={tr("Limit thinking window")} hint={tr("In verbose mode, show only the latest 50 thinking lines live")} {...pref('limitThinkingWindow')} />
+              <Toggle label={tr("Super-verbose audit")} hint={tr("Store user prompts, answers, tool calls, and tool outputs fully in audit/events.jsonl")} {...pref('superVerboseAuditLogging')} />
+              <Toggle label={tr("Show timestamps")} hint={tr("Times on chat messages")} {...pref('showTimestamps')} />
+              <Toggle label={tr("Enable shortcut overlay")} hint={tr("Keyboard shortcut help via Ctrl+Shift+?")} {...pref('shortcutOverlayEnabled')} />
+              <Toggle label={tr("Sync theme with system")} hint={tr("Switch light/dark mode automatically from the OS setting")} {...pref('syncThemeWithSystem')} />
               <div className="grid" style={{ marginTop: 12 }}>
-                <label>
-                  Schriftgroesse (%)
-                  <input type="number" min={85} max={120} step={5} value={preferences.fontScale} onChange={(e) => setPreference('fontScale', Number(e.target.value))} />
+                <label>{tr("Font size (%)")}<input type="number" min={85} max={120} step={5} value={preferences.fontScale} onChange={(e) => setPreference('fontScale', Number(e.target.value))} />
                 </label>
-                <label>
-                  Startansicht
-                  <select value={preferences.defaultStartView} onChange={(e) => setPreference('defaultStartView', e.target.value as StartView)}>
-                    <option value="last">Letzte Ansicht</option>
-                    <option value="work">Arbeitsbereich</option>
-                    <option value="settings">Einstellungen</option>
+                <label>{tr("Start view")}<select value={preferences.defaultStartView} onChange={(e) => setPreference('defaultStartView', e.target.value as StartView)}>
+                    <option value="last">{tr("Letzte Ansicht")}</option>
+                    <option value="work">{tr("Workspace")}</option>
+                    <option value="settings">{tr("Settings")}</option>
                   </select>
                 </label>
               </div>
             </Section>
 
-            <Section title="Benachrichtigungen & Sound" icon="🔔">
-              <Toggle label="Desktop-Benachrichtigungen" hint="Windows-Notifications bei wichtigen Ereignissen" {...pref('notificationsEnabled')} />
-              <Toggle label="Sounds aktivieren" hint="Akustisches Feedback bei Aktionen" {...pref('soundsEnabled')} />
-              <Toggle label="Bestaetigung beim Schliessen" hint="Fragt vor dem Beenden der Desktop-App nach" {...pref('confirmOnCloseWithRunningTasks')} />
+            <Section title={tr("Benachrichtigungen & Sound")} icon="🔔">
+              <Toggle label="Desktop notifications" hint="Windows notifications for important events" {...pref('notificationsEnabled')} />
+              <Toggle label="Enable sounds" hint="Audio feedback for actions" {...pref('soundsEnabled')} />
+              <Toggle label="Bestaetigung beim Close" hint="Fragt vor dem Beenden der Desktop-App nach" {...pref('confirmOnCloseWithRunningTasks')} />
             </Section>
           </div>
         )}
 
-        {/* ── Sicherheit & Daten ──── */}
+        {/* ── Security & data ──── */}
         {activeCategory === 'security' && (
           <div className="settings-view">
-            <h1>Sicherheit & Daten</h1>
-            <p className="hint-text">Dateizugriff, Befehlsfilter und Datenhaltung konfigurieren</p>
+            <h1>{tr("Security & data")}</h1>
+            <p className="hint-text">{tr("Filezugriff, Commandsfilter und Datenhaltung konfigurieren")}</p>
 
-            <Section title="Dateisicherheit" icon="🔒">
-              <Toggle label="Nur-Lesen-Modus" hint="Keine Dateien schreiben oder loeschen" {...pref('readOnlyFsMode')} />
+            <Section title={tr("Filesicherheit")} icon="🔒">
+              <Toggle label="Nur-Lesen-Mode" hint="No Files write oder delete" {...pref('readOnlyFsMode')} />
               <div className="grid" style={{ marginTop: 12 }}>
-                <label>
-                  Erlaubte Befehle (Whitelist)
-                  <textarea rows={3} value={preferences.commandWhitelist} onChange={(e) => setPreference('commandWhitelist', e.target.value)} placeholder="Ein Befehl pro Zeile" />
+                <label>{tr("Allowed commands (allowlist)")}<textarea rows={3} value={preferences.commandWhitelist} onChange={(e) => setPreference('commandWhitelist', e.target.value)} placeholder={tr("One command per line")} />
                 </label>
-                <label>
-                  Gesperrte Befehle (Blacklist)
-                  <textarea rows={3} value={preferences.commandBlacklist} onChange={(e) => setPreference('commandBlacklist', e.target.value)} placeholder="Ein Befehl pro Zeile" />
+                <label>{tr("Gesperrte commands (Blacklist)")}<textarea rows={3} value={preferences.commandBlacklist} onChange={(e) => setPreference('commandBlacklist', e.target.value)} placeholder={tr("One command per line")} />
                 </label>
               </div>
             </Section>
 
-            <Section title="Daten & Speicherung" icon="💾">
-              <Toggle label="Telemetrie aktivieren" hint="Anonyme Nutzungsstatistiken senden" {...pref('telemetryEnabled')} />
+            <Section title={tr("Data & storage")} icon="💾">
+              <Toggle label="Enable telemetry" hint={tr("Send anonymous usage statistics")} {...pref('telemetryEnabled')} />
               <Toggle label="Automatisches DB-Backup" hint="SQLite-Datenbank regelmaessig sichern" {...pref('autoBackupDb')} />
-              <Toggle label="DB-Cleanup beim Start" hint="Verwaiste Eintraege beim App-Start bereinigen" {...pref('dbCleanupOnStart')} />
+              <Toggle label={tr("DB cleanup on startup")} hint={tr("Clean up orphaned entries when the app starts")} {...pref('dbCleanupOnStart')} />
               <div className="grid" style={{ marginTop: 12 }}>
-                <label>
-                  Chat-Aufbewahrung (Tage)
-                  <input type="number" min={1} max={365} value={preferences.chatRetentionDays} onChange={(e) => setPreference('chatRetentionDays', Number(e.target.value))} />
+                <label>{tr("Chat-Aufbewahrung (Tage)")}<input type="number" min={1} max={365} value={preferences.chatRetentionDays} onChange={(e) => setPreference('chatRetentionDays', Number(e.target.value))} />
                 </label>
-                <label>
-                  Backup-Intervall (Stunden)
-                  <input type="number" min={1} max={168} value={preferences.dbBackupIntervalHours} onChange={(e) => setPreference('dbBackupIntervalHours', Number(e.target.value))} />
+                <label>{tr("Backup-Intervall (Stunden)")}<input type="number" min={1} max={168} value={preferences.dbBackupIntervalHours} onChange={(e) => setPreference('dbBackupIntervalHours', Number(e.target.value))} />
                 </label>
               </div>
             </Section>
@@ -336,27 +309,25 @@ export default function SettingsView() {
         {/* ── System & Info ────────── */}
         {activeCategory === 'system' && (
           <div className="settings-view">
-            <h1>System & Info</h1>
-            <p className="hint-text">Workspace-Pfade, Autostart und App-Informationen</p>
+            <h1>{tr("System & Info")}</h1>
+            <p className="hint-text">{tr("Workspace-Pfade, Autostart und App-Informationen")}</p>
 
-            <Section title="Workspace & System" icon="📁">
+            <Section title={tr("Workspace & System")} icon="📁">
               <Toggle label="Beim Systemstart starten" hint="App automatisch mit Windows starten" {...pref('launchAtStartup')} />
               <div className="grid" style={{ marginTop: 12 }}>
-                <label>
-                  Standard-Workspace-Pfad
-                  <input value={preferences.workspaceDefaultPath} onChange={(e) => setPreference('workspaceDefaultPath', e.target.value)} placeholder="C:\Projekte\mein-workspace" style={{ fontFamily: 'monospace' }} />
+                <label>{tr("Standard-Workspace-Pfad")}<input value={preferences.workspaceDefaultPath} onChange={(e) => setPreference('workspaceDefaultPath', e.target.value)} placeholder={tr("C:\\Projects\\mein-workspace")} style={{ fontFamily: 'monospace' }} />
                 </label>
               </div>
             </Section>
 
             <ConnectorPanel />
 
-            <Section title="Ueber Open_Cowork" icon="✦">
+            <Section title={tr("About Open_Cowork")} icon="✦">
               <div className="card">
-                <p><strong>Open_Cowork</strong> v0.2.0</p>
-                <p>Tauri + React + Rust Desktop-App fuer agentisches Arbeiten</p>
-                <p><strong>Endpoint:</strong> {ollama.baseUrl}</p>
-                <p><strong>Modell:</strong> {ollama.model}</p>
+                <p><strong>{tr("Open_Cowork")}</strong>{tr("v0.2.0")}</p>
+                <p>{tr("Tauri + React + Rust desktop app for agentic work")}</p>
+                <p><strong>{tr("Endpoint:")}</strong> {ollama.baseUrl}</p>
+                <p><strong>{tr("Model:")}</strong> {ollama.model}</p>
               </div>
             </Section>
           </div>

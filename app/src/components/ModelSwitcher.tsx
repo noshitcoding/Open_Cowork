@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { useConfigStore } from '../stores/configStore'
 import { usePersonalityStore } from '../stores/personalityStore'
+import { tr } from '../i18n'
 
 export default function ModelSwitcher() {
   const { ollama, availableModels, setOllama } = useConfigStore()
@@ -15,23 +16,21 @@ export default function ModelSwitcher() {
 
   return (
     <div className="panel">
-      <h2>🔄 Modell &amp; Ollama</h2>
+      <h2>{tr("🔄 Model &amp; Ollama")}</h2>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         {/* Active model display */}
         <div className="card" style={{ background: 'var(--bg-tertiary)' }}>
-          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>Aktives Modell</div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>{tr("Active model")}</div>
           <div style={{ fontSize: 15, fontWeight: 600 }}>{effectiveModel}</div>
           {activePersonality?.model_override && (
-            <div style={{ fontSize: 11, color: 'var(--info)', marginTop: 2 }}>
-              ueberschrieben durch Persoenlichkeit &quot;{activePersonality.name}&quot;
-            </div>
+            <div style={{ fontSize: 11, color: 'var(--info)', marginTop: 2 }}>{tr("overridden by personality &quot;")}{activePersonality.name}{tr("&quot;")}</div>
           )}
         </div>
 
         {/* Model selector */}
         <div>
-          <label style={{ fontSize: 12, fontWeight: 500, marginBottom: 4, display: 'block' }}>Standard-Modell</label>
+          <label style={{ fontSize: 12, fontWeight: 500, marginBottom: 4, display: 'block' }}>{tr("Default model")}</label>
           <select
             value={ollama.model}
             onChange={(e) => setOllama({ model: e.target.value })}
@@ -49,7 +48,7 @@ export default function ModelSwitcher() {
 
         {/* Base URL */}
         <div>
-          <label style={{ fontSize: 12, fontWeight: 500, marginBottom: 4, display: 'block' }}>Ollama-URL</label>
+          <label style={{ fontSize: 12, fontWeight: 500, marginBottom: 4, display: 'block' }}>{tr("Ollama-URL")}</label>
           <input
             type="text"
             value={ollama.baseUrl}
@@ -63,8 +62,7 @@ export default function ModelSwitcher() {
 
         {/* Temperature */}
         <div>
-          <label style={{ fontSize: 12, fontWeight: 500, marginBottom: 4, display: 'block' }}>
-            Temperature: {ollama.temperature.toFixed(2)}
+          <label style={{ fontSize: 12, fontWeight: 500, marginBottom: 4, display: 'block' }}>{tr("Temperature:")}{ollama.temperature.toFixed(2)}
           </label>
           <input
             type="range" min={0} max={2} step={0.05}
@@ -76,8 +74,7 @@ export default function ModelSwitcher() {
 
         {/* Context window */}
         <div>
-          <label style={{ fontSize: 12, fontWeight: 500, marginBottom: 4, display: 'block' }}>
-            Context-Window: {ollama.contextWindow.toLocaleString('de-DE')}
+          <label style={{ fontSize: 12, fontWeight: 500, marginBottom: 4, display: 'block' }}>{tr("Context-Window:")}{ollama.contextWindow.toLocaleString('en-US')}
           </label>
           <input
             type="range" min={2048} max={131072} step={1024}
@@ -90,25 +87,21 @@ export default function ModelSwitcher() {
         {/* Personality quick switch */}
         {personalities.length > 0 && (
           <div>
-            <label style={{ fontSize: 12, fontWeight: 500, marginBottom: 4, display: 'block' }}>Persoenlichkeit Schnellwechsel</label>
-            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6 }}>
-              Auswahl der aktiven Persoenlichkeit. Vollstaendige Verwaltung unten im Bereich &quot;Persoenlichkeiten&quot;.
-            </div>
+            <label style={{ fontSize: 12, fontWeight: 500, marginBottom: 4, display: 'block' }}>{tr("Quick personality switch")}</label>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6 }}>{tr("Select the active personality. Full management is available below in the &quot;Personalities&quot; section.")}</div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
               <button
                 type="button"
                 className={`btn-sm${activeId == null ? ' active' : ''}`}
                 onClick={() => setActive(null)}
-              >
-                Standard
-              </button>
+              >{tr("Standard")}</button>
               {personalities.map((p) => (
                 <button
                   key={p.id}
                   type="button"
                   className={`btn-sm${activeId === p.id ? ' active' : ''}`}
                   onClick={() => setActive(p.id)}
-                  title={p.model_override ? `Modell: ${p.model_override}` : undefined}
+                  title={p.model_override ? `Model: ${p.model_override}` : undefined}
                 >
                   {p.icon || '🤖'} {p.name}
                 </button>

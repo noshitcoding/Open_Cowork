@@ -1,4 +1,4 @@
-export type FollowUpPromptMessage = {
+﻿export type FollowUpPromptMessage = {
   role: 'user' | 'assistant' | 'system'
   content: string
 }
@@ -9,6 +9,10 @@ type ClarificationContext = {
 }
 
 const CLARIFYING_QUESTION_PATTERNS = [
+  /please specify/i,
+  /which criterion/i,
+  /what criterion/i,
+  /which .+ should/i,
   /bitte geben sie an/i,
   /nach welchem kriterium/i,
   /welches kriterium/i,
@@ -74,17 +78,17 @@ export function buildClarificationContinuationPrompt(
   answer: string,
 ): string {
   return [
-    'Setze die laufende Aufgabe mit der folgenden Rueckfrage fort.',
+    'Continue the running task with the following question.',
     '',
-    'Urspruengliche Aufgabe:',
+    'Original task:',
     originalTask.trim(),
     '',
-    'Rueckfrage des Assistenten:',
+    'Assistant question:',
     assistantQuestion.trim(),
     '',
-    'Antwort des Nutzers:',
+    'User answer:',
     answer.trim(),
     '',
-    'Fuehre die urspruengliche Aufgabe jetzt weiter aus. Nutze passende Tools direkt und antworte nicht nur mit einer Liste verfuegbarer Tools.',
+    'Continue the original task now. Use suitable tools directly and do not only answer with a list of available tools.',
   ].join('\n')
 }

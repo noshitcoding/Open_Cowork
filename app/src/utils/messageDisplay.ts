@@ -42,11 +42,11 @@ export function sanitizeAssistantContent(rawContent: string, verboseMode: boolea
     : extractThinkingFallback(rawContent)
 
   const withoutSystemContext = verboseMode ? effective : effective.replace(
-    /\[SYSTEM-KONTEXT\][\s\S]*?\[\/SYSTEM-KONTEXT\]\s*/gi,
+    /\[SYSTEM-CONTEXT\][\s\S]*?\[\/SYSTEM-CONTEXT\]\s*/gi,
     ''
   )
   const withoutAttachmentContext = verboseMode ? withoutSystemContext : withoutSystemContext.replace(
-    /(?:^|\n)Verbundene Pfade \(\d+\):\n(?:\d+\.\s+(?:Datei|Ordner):[^\n]*(?:\n|$))+/gi,
+    /(?:^|\n)Connectede Pfade \(\d+\):\n(?:\d+\.\s+(?:File|Folder):[^\n]*(?:\n|$))+/gi,
     '\n'
   )
 

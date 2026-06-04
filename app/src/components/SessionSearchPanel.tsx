@@ -3,6 +3,7 @@ import type { SessionSummary } from '../engine'
 import { useChatStore } from '../stores/chatStore'
 import { useEngineStore } from '../stores/engineStore'
 import { resolveSessionRecord, toChatThread } from '../utils/sessionThreads'
+import { tr } from '../i18n'
 
 type SessionLike = Partial<SessionSummary> & { id?: unknown }
 
@@ -23,7 +24,7 @@ const normalizeSessionSummary = (value: unknown): SessionSummary | null => {
 
   return {
     id,
-    title: typeof session.title === 'string' && session.title.trim() ? session.title : 'Unbenannte Session',
+    title: typeof session.title === 'string' && session.title.trim() ? session.title : 'Untitlede Session',
     cwd: typeof session.cwd === 'string' ? session.cwd : '',
     messageCount: typeof session.messageCount === 'number' && Number.isFinite(session.messageCount)
       ? session.messageCount
@@ -84,7 +85,7 @@ export default function SessionSearchPanel() {
     try {
       const session = await resolveSessionRecord(sessionId, loadSessionById)
       if (!session) {
-        setError('Session konnte nicht geladen werden.')
+        setError(tr("Session could not be loaded."))
         return
       }
       hydrateThread(toChatThread(session))
@@ -110,34 +111,31 @@ export default function SessionSearchPanel() {
 
   return (
     <div className="panel">
-      <h2>📂 Sessions</h2>
+      <h2>{tr("📂 Sessions")}</h2>
 
       {error && <p style={{ color: 'var(--danger)', fontSize: 12 }}>{error}</p>}
 
       <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
         <input
           type="text"
-          placeholder="Sessions nach Titel oder Pfad filtern..."
+          placeholder={tr("Filter sessions by title or path...")}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           style={{ flex: 1, padding: '6px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', fontSize: 13 }}
         />
-        <button type="button" className="btn-sm" onClick={() => void refreshSessions()}>
-          Aktualisieren
-        </button>
+        <button type="button" className="btn-sm" onClick={() => void refreshSessions()}>{tr("Refresh")}</button>
       </div>
 
       {query.trim() && (
         <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8 }}>
-          {filteredSessions.length} Session{filteredSessions.length !== 1 ? 's' : ''} passen zu &quot;{query}&quot;
-        </div>
+          {filteredSessions.length}{tr("Session")}{filteredSessions.length !== 1 ? 's' : ''}{tr("passen zu &quot;")}{query}{tr("&quot;")}</div>
       )}
 
 
       {loading ? (
-        <p className="panel-empty">Laden...</p>
+        <p className="panel-empty">{tr("Loading...")}</p>
       ) : filteredSessions.length === 0 ? (
-        <p className="panel-empty">{query.trim() ? 'Keine passenden Sessions' : 'Noch keine Sessions'}</p>
+        <p className="panel-empty">{query.trim() ? tr('No matching sessions') : tr('No sessions yet')}</p>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 400, overflowY: 'auto' }}>
           {filteredSessions.map((session) => (
@@ -146,11 +144,11 @@ export default function SessionSearchPanel() {
                 <div style={{ flex: 1 }}>
                   <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 2 }}>{session.title}</div>
                   <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 2 }}>
-                    {new Date(session.updatedAt).toLocaleString('de-DE')}
-                    <span style={{ marginLeft: 6 }}>• {session.messageCount} Nachrichten</span>
-                    {currentSessionId === session.id && <span style={{ color: 'var(--success)', marginLeft: 6 }}>aktiv geladen</span>}
+                    {new Date(session.updatedAt).toLocaleString('en-US')}
+                    <span style={{ marginLeft: 6 }}>• {session.messageCount}{tr("Messages")}</span>
+                    {currentSessionId === session.id && <span style={{ color: 'var(--success)', marginLeft: 6 }}>{tr("loaded as active")}</span>}
                   </div>
-                  <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{session.cwd || 'Kein Arbeitsverzeichnis gespeichert'}</div>
+                  <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{session.cwd || tr('No working directory saved')}</div>
                 </div>
                 <div style={{ display: 'flex', gap: 6, marginLeft: 12 }}>
                   <button
@@ -158,17 +156,13 @@ export default function SessionSearchPanel() {
                     className="btn-sm"
                     onClick={() => void handleLoadSession(session.id)}
                     disabled={busySessionId === session.id}
-                  >
-                    Laden
-                  </button>
+                  >{tr("Load")}</button>
                   <button
                     type="button"
                     className="btn-sm"
                     onClick={() => void handleDeleteSession(session.id)}
                     disabled={busySessionId === session.id}
-                  >
-                    Loeschen
-                  </button>
+                  >{tr("Delete")}</button>
                 </div>
               </div>
             </div>

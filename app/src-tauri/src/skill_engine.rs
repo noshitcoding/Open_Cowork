@@ -67,7 +67,7 @@ pub fn analyze_for_skill_generation(
         return SkillAutoGenResult {
             generated: false,
             skill_name: None,
-            reason: format!("Skill '{}' existiert bereits", candidate_name),
+            reason: format!("Skill '{}' already exists", candidate_name),
         };
     }
 
@@ -77,13 +77,13 @@ pub fn analyze_for_skill_generation(
         return SkillAutoGenResult {
             generated: false,
             skill_name: None,
-            reason: "Aufgabe zu einfach oder nicht erfolgreich".to_string(),
+            reason: "Task too simple or not successful".to_string(),
         };
     }
 
     // Generate prompt template from task
     let prompt_template = format!(
-        "Führe folgende Aufgabe aus basierend auf dem Muster von '{}': {{{{input}}}}\n\nBewährte Schritte:\n{}",
+        "Run the following task based on the pattern from '{}': {{{{input}}}}\n\nProven steps:\n{}",
         task_title, task_steps_summary
     );
 
@@ -93,7 +93,7 @@ pub fn analyze_for_skill_generation(
     match db.upsert_skill(
         &id,
         &candidate_name,
-        &format!("Auto-generiert aus Aufgabe: {}", task_title),
+        &format!("Auto-generated from task: {}", task_title),
         &prompt_template,
         Some(&trigger),
         "execute",
@@ -139,7 +139,7 @@ pub fn analyze_for_improvement(db: &Arc<Database>, skill_id: &str) -> Option<Str
         ))
     } else if skill.avg_quality < 0.5 && skill.usage_count >= 10 {
         Some(format!(
-            "Skill '{}' hat niedrige durchschnittliche Qualität ({:.2}). Prompt-Optimierung empfohlen.",
+            "Skill '{}' hat low average quality ({:.2}). prompt optimization recommended.",
             skill.name, skill.avg_quality
         ))
     } else {

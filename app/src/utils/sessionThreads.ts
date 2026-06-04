@@ -38,7 +38,7 @@ function summarizeContentBlocks(blocks: ContentBlock[]): string {
         break
       }
       case 'tool_result': {
-        const label = block.is_error ? 'Tool-Fehler' : 'Tool-Ergebnis'
+        const label = block.is_error ? 'Tool-Error' : 'Tool-Result'
         summaries.push(`${label}: ${clipText(block.content)}`)
         break
       }

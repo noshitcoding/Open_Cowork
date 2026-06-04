@@ -193,7 +193,7 @@ describe('crewStore', () => {
       name: 'Snapshot Agent',
       description: 'Snapshot',
       role: 'writer',
-      goal: 'Snapshot Ziel',
+      goal: 'Snapshot Target',
       systemPrompt: 'Snapshot Hintergrund',
       skillsMarkdown: '# Snapshot Skills',
       modelOverride: 'llama3',
@@ -204,7 +204,7 @@ describe('crewStore', () => {
     expect(agent).toMatchObject({
       name: 'Snapshot Agent',
       role: 'writer',
-      goal: 'Snapshot Ziel',
+      goal: 'Snapshot Target',
       backstory: 'Snapshot Hintergrund',
       skillsMarkdown: '# Snapshot Skills',
       tools: ['read_file'],

@@ -29,6 +29,7 @@ import {
   getChatProviderState,
   normalizeChatProvider,
 } from '../utils/chatProvider'
+import { tr } from '../i18n'
 
 type EnginePermissionMode = 'default' | 'plan' | 'bypass' | 'strict'
 
@@ -73,12 +74,12 @@ function getEffectiveWelcomeCwd(
 }
 
 const QUICK_ACTIONS = [
-  { icon: '📄', title: 'Datei erstellen', prompt: 'Erstelle eine neue Datei' },
-  { icon: '📊', title: 'Daten analysieren', prompt: 'Analysiere Daten' },
-  { icon: '🎨', title: 'Prototyp bauen', prompt: 'Baue einen Prototyp' },
-  { icon: '📂', title: 'Dateien organisieren', prompt: 'Organisiere meine Dateien' },
-  { icon: '📝', title: 'Meeting vorbereiten', prompt: 'Bereite ein Meeting vor' },
-  { icon: '✉️', title: 'Nachricht entwerfen', prompt: 'Entwirf eine Nachricht' },
+  { icon: '📄', title: 'Create file', prompt: 'Create a new file' },
+  { icon: '📊', title: 'Analyze data', prompt: 'Analyze data' },
+  { icon: '🎨', title: 'Build prototype', prompt: 'Build a prototype' },
+  { icon: '📂', title: 'Organize files', prompt: 'Organize my files' },
+  { icon: '📝', title: 'Prepare meeting', prompt: 'Prepare a meeting' },
+  { icon: '✉️', title: 'Draft message', prompt: 'Draft a message' },
 ]
 
 export default function WelcomeScreen() {
@@ -165,7 +166,7 @@ export default function WelcomeScreen() {
         setUseFolder(true)
       }
     } catch {
-      const label = kind === 'folder' ? 'Ordnerpfad' : 'Dateipfad'
+      const label = kind === 'folder' ? 'Folder path' : 'File path'
       const path = window.prompt(`${label} eingeben:`)
       if (path) {
         setWorkingPath(path, kind)
@@ -196,7 +197,7 @@ export default function WelcomeScreen() {
     setAttachments((prev) => {
       const merged = mergeAttachments(prev, newItems)
       if (merged.rejectedCount > 0) {
-        setAttachmentNotice('Maximal 25 verbundene Elemente pro Nachricht erreicht.')
+        setAttachmentNotice(tr("Maximal 25 verbundene Elemente pro Message erreicht."))
       } else {
         setAttachmentNotice(null)
       }
@@ -209,9 +210,9 @@ export default function WelcomeScreen() {
       directory: false,
       multiple: true,
       filters: [
-        { name: 'Dokumente', extensions: ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'odt', 'ods', 'odp', 'txt', 'rtf', 'csv'] },
-        { name: 'Bilder', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'] },
-        { name: 'Alle Dateien', extensions: ['*'] },
+        { name: 'Documents', extensions: ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'odt', 'ods', 'odp', 'txt', 'rtf', 'csv'] },
+        { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'] },
+        { name: 'All files', extensions: ['*'] },
       ],
     })
     const selectedPaths = normalizeDialogSelection(selected)
@@ -290,7 +291,7 @@ export default function WelcomeScreen() {
       addLog({
         level: 'info',
         area: 'llm',
-        message: 'LLM-Anfrage gestartet',
+        message: 'LLM request started',
         details: {
           provider: providerState.provider,
           endpoint: providerState.endpoint,
@@ -317,7 +318,7 @@ export default function WelcomeScreen() {
         addLog({
           level: 'warn',
           area: 'file_safety',
-          message: 'Anhang-Analyse teilweise fehlgeschlagen',
+          message: 'Attachment analysis partially failed',
           details: {
             failures: attachmentBuild.failedFiles,
           },
@@ -400,7 +401,7 @@ export default function WelcomeScreen() {
               addLog({
                 level: 'info',
                 area: 'llm',
-                message: `Freigabe automatisch erteilt: ${event.request.toolName}`,
+                message: `Approval granted automatically: ${event.request.toolName}`,
                 details: {
                   reason: 'autoPilotAllTools',
                   request: event.request,
@@ -429,7 +430,7 @@ export default function WelcomeScreen() {
             addLog({
               level: 'warn',
               area: 'llm',
-              message: `Freigabe erforderlich: ${event.request.toolName}`,
+              message: `Approval required: ${event.request.toolName}`,
               details: event.request,
             })
             break
@@ -439,7 +440,7 @@ export default function WelcomeScreen() {
             addLog({
               level: 'info',
               area: 'llm',
-              message: `Tool gestartet: ${event.toolName}`,
+              message: `Tool started: ${event.toolName}`,
               details: { toolName: event.toolName, input: event.input },
             })
             break
@@ -469,12 +470,12 @@ export default function WelcomeScreen() {
       }, createChatProviderSelection(providerState))
 
       const fallbackText = engineErrorMessage
-        ? `LLM-Anfrage fehlgeschlagen: ${engineErrorMessage}\n\n${getChatProviderFailureHint(providerState.provider)}`
+        ? `LLM request failed: ${engineErrorMessage}\n\n${getChatProviderFailureHint(providerState.provider)}`
         : approvalSummary
-          ? `Freigabe erforderlich: ${approvalSummary}`
+          ? `Approval required: ${approvalSummary}`
           : usedToolNames.size > 0
-            ? `Die Engine hat Tools verwendet (${Array.from(usedToolNames).join(', ')}), aber keinen sichtbaren Abschlusstext geliefert.`
-            : 'Das Modell hat keine sichtbare Antwort geliefert. Bitte erneut versuchen oder Modell/Prompt pruefen.'
+            ? `The engine used tools (${Array.from(usedToolNames).join(', ')}), but no visible final text provided.`
+            : 'The model did not provide a visible response. Please try again or check the model/prompt.'
       const presentation = resolveAssistantPresentation(rawAssistantMessage, {
         verboseMode,
         thinkingContent: rawThinkingMessage,
@@ -492,7 +493,7 @@ export default function WelcomeScreen() {
       addLog({
         level: 'info',
         area: 'llm',
-        message: 'LLM-Anfrage erfolgreich',
+        message: 'LLM request successful',
         details: {
           provider: providerState.provider,
           endpoint: providerState.endpoint,
@@ -526,7 +527,7 @@ export default function WelcomeScreen() {
       addLog({
         level: 'error',
         area: 'llm',
-        message: 'LLM-Anfrage fehlgeschlagen',
+        message: 'LLM request failed',
         details: {
           provider: providerState.provider,
           endpoint: providerState.endpoint,
@@ -548,7 +549,7 @@ export default function WelcomeScreen() {
           model: providerState.model,
         })
       }
-      const failureContent = `LLM-Anfrage fehlgeschlagen: ${message}\n\n${getChatProviderFailureHint(providerState.provider)}`
+      const failureContent = `LLM request failed: ${message}\n\n${getChatProviderFailureHint(providerState.provider)}`
       if (assistantMessageId) {
         updateMessage(threadId, assistantMessageId, { content: failureContent, streaming: false }, { persist: true })
       } else {
@@ -569,12 +570,8 @@ export default function WelcomeScreen() {
       <div className="welcome-content">
         <div className="welcome-hero">
           <div className="welcome-icon">✦</div>
-          <h1 className="welcome-heading">
-            Was sollen wir heute erledigen?
-          </h1>
-          <p className="welcome-subheading">
-            Open_Cowork kann Aufgaben planen, ausführen und Dateien verwalten — alles lokal auf deinem Rechner.
-          </p>
+          <h1 className="welcome-heading">{tr("What should we get done today?")}</h1>
+          <p className="welcome-subheading">{tr("Open_Cowork can plan tasks, execute work, and manage files — all locally on your computer.")}</p>
         </div>
 
         <div className="quick-actions-grid">
@@ -597,7 +594,7 @@ export default function WelcomeScreen() {
             <textarea
               ref={inputRef}
               rows={2}
-              placeholder="Wie kann ich dir heute helfen?"
+              placeholder={tr("Wie kann ich dir heute helfen?")}
               disabled={busy}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
@@ -619,7 +616,7 @@ export default function WelcomeScreen() {
                     if (!e.target.checked) setWorkingPath(null)
                   }}
                 />
-                <span>Lokalen Pfad nutzen</span>
+                <span>{tr("Use local path")}</span>
               </label>
               {useFolder && (
                 <div className="path-actions">
@@ -627,19 +624,15 @@ export default function WelcomeScreen() {
                     type="button"
                     className="btn-folder-select"
                     onClick={() => handlePathSelect('folder')}
-                  >
-                    Ordner wählen
-                  </button>
+                  >{tr("Choose folder")}</button>
                   <button
                     type="button"
                     className="btn-folder-select"
                     onClick={() => handlePathSelect('file')}
-                  >
-                    Datei wählen
-                  </button>
+                  >{tr("File choose")}</button>
                   {selectedPathName && (
                     <span className="selected-path" title={workingFolder ?? undefined}>
-                      {workingPathKind === 'file' ? 'Datei' : 'Ordner'}: {selectedPathName}
+                      {workingPathKind === 'file' ? 'File' : 'Folder'}: {selectedPathName}
                     </span>
                   )}
                 </div>
@@ -650,17 +643,13 @@ export default function WelcomeScreen() {
                   className="btn-attach"
                   onClick={handleAttachFiles}
                   disabled={busy}
-                >
-                  Dateien
-                </button>
+                >{tr("Files")}</button>
                 <button
                   type="button"
                   className="btn-attach"
                   onClick={handleAttachFolders}
                   disabled={busy}
-                >
-                  Ordner
-                </button>
+                >{tr("Folder")}</button>
               </div>
             </div>
 
@@ -688,7 +677,7 @@ export default function WelcomeScreen() {
                     </option>
                   ))
                 ) : (
-                  <option value={providerState.model}>{providerState.model || 'kein Modell gesetzt'}</option>
+                  <option value={providerState.model}>{providerState.model || tr('no model set')}</option>
                 )}
                 {selectableModels.length > 0 && providerState.model && !selectableModels.includes(providerState.model) && (
                   <option value={providerState.model}>{providerState.model}</option>
@@ -696,27 +685,25 @@ export default function WelcomeScreen() {
               </select>
 
               <button type="submit" className="btn-go" disabled={busy}>
-                {busy ? 'Läuft...' : "Los geht's →"}
+                {busy ? tr('Running...') : "Los geht's →"}
               </button>
             </div>
           </div>
 
           {attachments.length > 0 && (
-            <div className="attachment-list" aria-label="Verbundene Elemente">
+            <div className="attachment-list" aria-label={tr("Connected items")}>
               {attachments.map((item) => (
                 <span key={`${item.kind}-${item.path}`} className="attachment-chip" title={item.path}>
                   <span className="attachment-chip-label">
-                    {item.kind === 'folder' ? 'Ordner' : 'Datei'}: {getPathName(item.path)}
+                    {item.kind === 'folder' ? 'Folder' : 'File'}: {getPathName(item.path)}
                   </span>
                   <button
                     type="button"
                     className="attachment-remove"
                     onClick={() => handleRemoveAttachment(item)}
-                    aria-label={`Anhang entfernen: ${item.path}`}
+                    aria-label={`attachment entfernen: ${item.path}`}
                     disabled={busy}
-                  >
-                    ×
-                  </button>
+                  >{tr("×")}</button>
                 </span>
               ))}
             </div>
@@ -727,11 +714,11 @@ export default function WelcomeScreen() {
         {error && <p className="error welcome-error">{error}</p>}
 
         <div className="connectors-section">
-          <p className="connectors-title">Verbinde deine Tools mit Open_Cowork</p>
+          <p className="connectors-title">{tr("Connect your tools with Open_Cowork")}</p>
           <div className="connector-icons">
-            <span className="connector-badge" title="MCP Server">🔌 MCP</span>
-            <span className="connector-badge" title="Dateisystem">📂 Dateien</span>
-            <span className="connector-badge" title="Ollama">🤖 Ollama</span>
+            <span className="connector-badge" title={tr("MCP Server")}>{tr("🔌 MCP")}</span>
+            <span className="connector-badge" title={tr("Filesystem")}>{tr("📂 Files")}</span>
+            <span className="connector-badge" title={tr("Ollama")}>{tr("🤖 Ollama")}</span>
           </div>
         </div>
       </div>

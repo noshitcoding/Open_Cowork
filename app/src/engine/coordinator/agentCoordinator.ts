@@ -117,7 +117,7 @@ export class AgentCoordinator {
       })
       yield {
         type: 'error',
-        error: `Sandbox fuer Agent "${definition.name}" konnte nicht erstellt werden: ${message}`,
+        error: `Sandbox for agent "${definition.name}" could not be created: ${message}`,
         agentId,
       }
       return
@@ -276,7 +276,7 @@ export class AgentCoordinator {
       })
       yield {
         type: 'error',
-        error: `Agent "${definition.name}" fehlgeschlagen: ${instance.error}`,
+        error: `Agent "${definition.name}" failed: ${instance.error}`,
         agentId,
       }
     }
@@ -364,7 +364,7 @@ export const DEFAULT_AGENTS: AgentDefinition[] = [
   {
     id: 'coder',
     name: 'Coder',
-    description: 'Spezialisiert auf Code-Implementierung und Debugging.',
+    description: 'Specialized in code implementation and debugging.',
     type: 'coding',
     tools: ['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep'],
     maxTurns: 15,
@@ -372,7 +372,7 @@ export const DEFAULT_AGENTS: AgentDefinition[] = [
   {
     id: 'researcher',
     name: 'Researcher',
-    description: 'Spezialisiert auf Recherche und Analyse.',
+    description: 'Specialized in research and analysis.',
     type: 'research',
     tools: ['Read', 'Glob', 'Grep', 'WebFetch', 'WebSearch', 'MemoryRead'],
     maxTurns: 10,
@@ -380,7 +380,7 @@ export const DEFAULT_AGENTS: AgentDefinition[] = [
   {
     id: 'reviewer',
     name: 'Reviewer',
-    description: 'Spezialisiert auf Code-Review und Qualitaetssicherung.',
+    description: 'Specialized in code review and quality assurance.',
     type: 'review',
     tools: ['Read', 'Glob', 'Grep', 'Bash'],
     maxTurns: 8,
@@ -388,7 +388,7 @@ export const DEFAULT_AGENTS: AgentDefinition[] = [
   {
     id: 'planner',
     name: 'Planner',
-    description: 'Spezialisiert auf Projektplanung und Aufgabenzerlegung.',
+    description: 'Specialized in project planning and task decomposition.',
     type: 'planning',
     tools: ['Read', 'Glob', 'TaskCreate', 'TaskList', 'MemoryRead', 'MemoryWrite'],
     maxTurns: 5,
