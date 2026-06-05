@@ -3218,6 +3218,52 @@ button.compact-send-btn {
 .card p { margin-bottom: 4px; }
 .card strong { font-weight: 600; }
 
+.about-open-cowork-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.about-open-cowork-intro {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--text-secondary);
+}
+
+.about-open-cowork-intro strong {
+  color: var(--text-primary);
+  font-size: 15px;
+}
+
+.about-open-cowork-details {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+
+.about-open-cowork-details div {
+  min-width: 0;
+}
+
+.about-open-cowork-details dt {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.3;
+  margin-bottom: 3px;
+  text-transform: uppercase;
+}
+
+.about-open-cowork-details dd {
+  color: var(--text-primary);
+  font-family: var(--font-mono, "SFMono-Regular", Consolas, "Liberation Mono", monospace);
+  line-height: 1.35;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
