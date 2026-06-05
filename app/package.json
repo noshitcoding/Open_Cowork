@@ -4,8 +4,9 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite optimize && vite",
-    "dev:tauri": "npm run build && vite preview --host 127.0.0.1 --port 5173 --strictPort",
+    "dev": "vite --host 127.0.0.1 --port 5173 --strictPort",
+    "dev:tauri": "vite --host 127.0.0.1 --port 5173 --strictPort",
+    "preview:tauri": "npm run build && vite preview --host 127.0.0.1 --port 5173 --strictPort",
     "doctor": "node ./scripts/doctor.mjs",
     "doctor:ci": "node ./scripts/doctor.mjs --ci",
     "typecheck": "tsc -b",

@@ -139,6 +139,10 @@ type ChatState = {
   removeLastMessagePairs: (threadId: string, pairCount: number) => { pairsRemoved: number; messagesRemoved: number }
 }
 
+type DbMessage = { id: string; role: string; content: string; timestamp: number }
+
+const loadedThreadMessages = new Set<string>()
+
 function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
 }
@@ -201,7 +205,12 @@ function parsePermissionConfig(raw: string | null | undefined): PermissionConfig
   }
 }
 
-export const useChatStore = create<ChatState>()((set) => ({
+async function loadThreadMessagesFromDb(threadId: string): Promise<ChatMessage[]> {
+  const dbMsgs = await invoke<DbMessage[]>('db_list_messages', { threadId })
+  return (Array.isArray(dbMsgs) ? dbMsgs : []).map((message) => hydrateStoredMessage(message))
+}
+
+export const useChatStore = create<ChatState>()((set, get) => ({
   threads: [],
   activeThreadId: null,
   pendingApproval: [],
@@ -222,16 +231,28 @@ export const useChatStore = create<ChatState>()((set) => ({
         permission_config_json?: string | null
         permissionConfigJson?: string | null
       }
-      type DbMessage = { id: string; role: string; content: string; timestamp: number }
       const dbThreads = await invoke<DbThread[]>('db_list_threads')
+      const currentActiveThreadId = get().activeThreadId
+      const sortedDbThreads = [...dbThreads].sort((a, b) => {
+        const aTime = parseTimestamp(a.updated_at ?? a.updatedAt)
+        const bTime = parseTimestamp(b.updated_at ?? b.updatedAt)
+        return bTime - aTime
+      })
+      const initialActiveThreadId = currentActiveThreadId && dbThreads.some((thread) => thread.id === currentActiveThreadId)
+        ? currentActiveThreadId
+        : sortedDbThreads[0]?.id ?? null
       const threads: ChatThread[] = []
       for (const dt of dbThreads) {
-        const dbMsgs = await invoke<DbMessage[]>('db_list_messages', { threadId: dt.id })
-        const messages = Array.isArray(dbMsgs) ? dbMsgs : []
+        const messages = dt.id === initialActiveThreadId
+          ? await loadThreadMessagesFromDb(dt.id)
+          : []
+        if (dt.id === initialActiveThreadId) {
+          loadedThreadMessages.add(dt.id)
+        }
         threads.push({
           id: dt.id,
           title: dt.title,
-          messages: messages.map((m) => hydrateStoredMessage(m)),
+          messages,
           createdAt: parseTimestamp(dt.created_at ?? dt.createdAt),
           updatedAt: parseTimestamp(dt.updated_at ?? dt.updatedAt),
           providerSettings: parseThreadProviderSettings(dt.provider_settings_json ?? dt.providerSettingsJson),
@@ -245,18 +266,15 @@ export const useChatStore = create<ChatState>()((set) => ({
       const hydratedThreadIds = new Set(hydratedThreads.map((thread) => thread.id))
       
       // Find the newest thread (sorted by updatedAt)
-      const sortedThreads = [...hydratedThreads].sort((a, b) => b.updatedAt - a.updatedAt)
-      const mostRecentThread = sortedThreads[0] || null
-      
       set((state) => ({
         threads: [
           ...state.threads.filter((thread) => !hydratedThreadIds.has(thread.id)),
           ...hydratedThreads,
         ],
         // Setze activeThreadId auf den neuesten Thread, falls none aktiv ist
-        activeThreadId: state.activeThreadId && hydratedThreads.some(t => t.id === state.activeThreadId)
+        activeThreadId: state.activeThreadId && hydratedThreads.some((thread) => thread.id === state.activeThreadId)
           ? state.activeThreadId
-          : mostRecentThread?.id ?? state.activeThreadId,
+          : initialActiveThreadId ?? state.activeThreadId,
       }))
       
       // Remove empty threads after loading
@@ -317,6 +335,7 @@ export const useChatStore = create<ChatState>()((set) => ({
       runner,
       crewId,
     }
+    loadedThreadMessages.add(id)
     set((state) => ({
       threads: [thread, ...state.threads],
       activeThreadId: id,
@@ -381,6 +400,7 @@ export const useChatStore = create<ChatState>()((set) => ({
       runner: thread.runner === 'crew' || thread.runner === 'model' ? thread.runner : undefined,
       crewId: thread.crewId ?? undefined,
     }
+    loadedThreadMessages.add(normalized.id)
     set((state) => {
       const remaining = state.threads.filter((item) => item.id !== normalized.id)
       return {
@@ -390,7 +410,23 @@ export const useChatStore = create<ChatState>()((set) => ({
     })
   },
 
-  setActiveThread: (id) => set({ activeThreadId: id }),
+  setActiveThread: (id) => {
+    set({ activeThreadId: id })
+    if (!id || loadedThreadMessages.has(id) || !isTauriRuntime()) return
+
+    void loadThreadMessagesFromDb(id)
+      .then((messages) => {
+        loadedThreadMessages.add(id)
+        set((state) => ({
+          threads: state.threads.map((thread) => (
+            thread.id === id
+              ? { ...thread, messages }
+              : thread
+          )),
+        }))
+      })
+      .catch((error) => console.warn('[chatStore] db_list_messages failed', error))
+  },
 
   setThreadProviderSettings: (threadId, providerSettings) => {
     const normalized = normalizeChatProviderSelection(providerSettings)
@@ -483,6 +519,7 @@ export const useChatStore = create<ChatState>()((set) => ({
   setError: (error) => set({ error }),
 
   deleteThread: (id) => {
+    loadedThreadMessages.delete(id)
     set((state) => ({
       threads: state.threads.filter((t) => t.id !== id),
       activeThreadId: state.activeThreadId === id ? null : state.activeThreadId,

@@ -1346,6 +1346,19 @@ body {
   gap: 16px;
 }
 
+.message-window-notice {
+  align-self: center;
+  max-width: min(560px, 100%);
+  padding: 8px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+}
+
 .cowork-msg {
   display: flex;
   gap: 12px;
@@ -3290,6 +3303,18 @@ button.compact-send-btn {
   background: #111827;
   color: #d1d5db;
   position: relative;
+}
+
+.terminal-dock-loading {
+  flex: 0 0 180px;
+  display: grid;
+  place-items: center;
+  border-top: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--border-color);
+  background: #111827;
+  color: #cbd5e1;
+  font-size: 12px;
+  font-weight: 650;
 }
 
 .terminal-dock-resize {

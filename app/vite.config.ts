@@ -69,6 +69,7 @@ export default defineConfig({
           if (id.includes('react-router-dom')) return 'router'
           if (id.includes('@tanstack/react-query')) return 'query'
           if (id.includes('@tauri-apps')) return 'tauri'
+          if (id.includes('@xterm')) return 'terminal-vendor'
           if (id.includes('lucide-react')) return 'icons'
           if (id.includes('react') || id.includes('scheduler')) return 'react-vendor'
           return 'vendor'

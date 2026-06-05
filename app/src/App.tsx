@@ -1,4 +1,4 @@
-import { lazy, useEffect } from 'react'
+import { lazy, useEffect, type ReactNode } from 'react'
 import { MemoryRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { confirm as confirmDialog } from '@tauri-apps/plugin-dialog'
@@ -32,6 +32,23 @@ type BackendPolicyState = {
   flags: Record<string, boolean>
   denyRules: string[]
   enabledToolIds: string[]
+}
+
+function hideBootLoader(): void {
+  const loader = document.getElementById('boot-loader')
+  if (!loader) return
+
+  loader.classList.add('boot-loader-hidden')
+  window.setTimeout(() => loader.remove(), 220)
+}
+
+function RouteReady({ children }: { children: ReactNode }) {
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => hideBootLoader())
+    return () => window.cancelAnimationFrame(frame)
+  }, [])
+
+  return children
 }
 
 function hasRunningWork(): boolean {
@@ -82,19 +99,23 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/" element={<Layout />}>
-        <Route index element={<CoworkView />} />
+        <Route index element={<RouteReady><CoworkView /></RouteReady>} />
         <Route path="settings" element={
-          <div className="code-mode" style={{ overflow: 'auto', height: '100%' }}>
-            <SettingsView />
-          </div>
+          <RouteReady>
+            <div className="code-mode" style={{ overflow: 'auto', height: '100%' }}>
+              <SettingsView />
+            </div>
+          </RouteReady>
         } />
         <Route path="tasks" element={
-          <div className="code-mode" style={{ overflow: 'auto', height: '100%' }}>
-            <TasksView />
-          </div>
+          <RouteReady>
+            <div className="code-mode" style={{ overflow: 'auto', height: '100%' }}>
+              <TasksView />
+            </div>
+          </RouteReady>
         } />
-        <Route path="crew" element={<CrewView />} />
-        <Route path="projects" element={<ProjectView />} />
+        <Route path="crew" element={<RouteReady><CrewView /></RouteReady>} />
+        <Route path="projects" element={<RouteReady><ProjectView /></RouteReady>} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

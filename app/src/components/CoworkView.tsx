@@ -1,4 +1,4 @@
-import { useRef, useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useRef, useEffect, useMemo, useState } from 'react'
 import type { ClipboardEvent, DragEvent, FormEvent } from 'react'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { useChatStore, getActiveThread, type ChatMessage } from '../stores/chatStore'
@@ -49,7 +49,6 @@ import { appendWebSearchSources, mergeWebSearchSources, parseWebSearchSourcesFro
 import { MessageThinking, MessageVerbose } from './MessageThinking'
 import { HighlightedChatText } from './HighlightedChatText'
 import CrewLiveMonitor from './CrewLiveMonitor'
-import TerminalDock from './TerminalDock'
 import { writeAuditEvent } from '../utils/audit'
 import { persistInvoke } from '../stores/chatStore'
 import {
@@ -75,6 +74,8 @@ import {
   normalizeChatProvider,
 } from '../utils/chatProvider'
 import { tr } from '../i18n'
+
+const TerminalDock = lazy(() => import('./TerminalDock'))
 
 type WebFetchResponse = {
   url: string
@@ -178,6 +179,8 @@ const ENGINE_TO_CLAUDE_PERMISSION_MODE: Record<'default' | 'plan' | 'bypass' | '
   bypass: 'bypassPermissions',
   strict: 'acceptEdits',
 }
+
+const MAX_RENDERED_MESSAGES = 120
 
 function formatVerboseTimestamp(timestamp: number): string {
   return new Date(timestamp).toLocaleTimeString('en-US', {
@@ -815,7 +818,10 @@ export default function CoworkView() {
   const logRef = useRef<HTMLDivElement>(null)
   const notifiedAskUserQuestionRef = useRef<string | null>(null)
   const emptyThreadBootstrapRef = useRef<string | null>(null)
-  const activeMessages = Array.isArray(activeThread?.messages) ? activeThread.messages : []
+  const activeMessages = useMemo(
+    () => (Array.isArray(activeThread?.messages) ? activeThread.messages : []),
+    [activeThread?.messages],
+  )
   const workTasks = useWorkTasksStore((s) => s.tasks)
   const [collapsedMessageIds, setCollapsedMessageIds] = useState<Set<string>>(new Set())
   const isTaskChat = useMemo(() => {
@@ -897,7 +903,7 @@ export default function CoworkView() {
       emptyThreadBootstrapRef.current = threadId
       setActiveThread(threadId)
     } else {
-      // Ansonsten den neuesten Thread aktivieren
+      // Otherwise activate the newest thread
       const sortedThreads = [...current.threads].sort((a, b) => b.updatedAt - a.updatedAt)
       const mostRecentThread = sortedThreads[0]
       if (mostRecentThread) {
@@ -1106,6 +1112,13 @@ export default function CoworkView() {
     () => activeMessages.filter((message) => message.role !== 'system' || message.visibleInChat),
     [activeMessages],
   )
+  const renderedMessages = useMemo(
+    () => visibleMessages.length > MAX_RENDERED_MESSAGES
+      ? visibleMessages.slice(-MAX_RENDERED_MESSAGES)
+      : visibleMessages,
+    [visibleMessages],
+  )
+  const hiddenRenderedMessageCount = visibleMessages.length - renderedMessages.length
 
   useEffect(() => {
     const node = logRef.current
@@ -2274,7 +2287,7 @@ export default function CoworkView() {
       if (slash.command === 'mobile') {
         useConfigStore.getState().setPreference('compactMode', true)
         useConfigStore.getState().setPreference('fontScale', 110)
-        appendAssistantMessage(tr("Mobile-Ansicht enabled (kompakt + groessere Schrift)."))
+        appendAssistantMessage(tr("Mobile view enabled (compact layout and larger font)."))
         return
       }
 
@@ -2917,13 +2930,13 @@ export default function CoworkView() {
               break
             case 'context_warning':
               appendVerboseEntry(
-                `Contextwarnung: ${event.level}`,
+                `Context warning: ${event.level}`,
                 `Estimated tokens: ${event.estimatedTokens}`,
               )
               addLog({
                 level: event.level === 'critical' ? 'warn' : 'info',
                 area: 'llm',
-                message: `Contextwarnung: ${event.level}`,
+                message: `Context warning: ${event.level}`,
                 details: { estimatedTokens: event.estimatedTokens },
               })
               break
@@ -3259,7 +3272,12 @@ export default function CoworkView() {
         </div>
 
         <div className="cowork-messages" ref={logRef}>
-          {visibleMessages.map((msg, index) => {
+          {hiddenRenderedMessageCount > 0 && (
+            <div className="message-window-notice">
+              {hiddenRenderedMessageCount} older messages are hidden for a faster startup.
+            </div>
+          )}
+          {renderedMessages.map((msg, index) => {
               const content = typeof msg.content === 'string' ? msg.content : ''
               const { promptDebug, ollamaRequestPreview } = splitPromptDebugContent(msg.debugContent)
               const attachmentsForMessage = Array.isArray(msg.attachments) ? msg.attachments : []
@@ -3270,7 +3288,7 @@ export default function CoworkView() {
                 liveThinkingBelongsToThread ? liveThinkingText : undefined,
                 {
                   streaming: msg.streaming,
-                  preferLive: liveThinkingBelongsToThread && msg.streaming && index === visibleMessages.length - 1,
+                  preferLive: liveThinkingBelongsToThread && msg.streaming && msg.id === visibleMessages[visibleMessages.length - 1]?.id,
                 },
               )
               const displayedContent = resolveDisplayedAssistantContent(content, displayedThinkingContent)
@@ -3280,8 +3298,8 @@ export default function CoworkView() {
               const isCollapsed = msg.role === 'assistant' && (() => {
                 // Find the previous user message
                 for (let i = index - 1; i >= 0; i--) {
-                  if (visibleMessages[i].role === 'user') {
-                    return collapsedMessageIds.has(visibleMessages[i].id)
+                  if (renderedMessages[i].role === 'user') {
+                    return collapsedMessageIds.has(renderedMessages[i].id)
                   }
                 }
                 return false
@@ -3319,8 +3337,8 @@ export default function CoworkView() {
                       onClick={() => {
                         // Find the user message that controls this collapse
                         for (let i = index - 1; i >= 0; i--) {
-                          if (visibleMessages[i].role === 'user') {
-                            toggleCollapse(visibleMessages[i].id)
+                          if (renderedMessages[i].role === 'user') {
+                            toggleCollapse(renderedMessages[i].id)
                             break
                           }
                         }
@@ -3431,15 +3449,17 @@ export default function CoworkView() {
         )}
 
         {terminalDockOpen && (
-          <TerminalDock
-            threadId={terminalThreadId}
-            cwd={getEffectiveWorkspaceCwd(
-              attachments,
-              workingFolder,
-              workingPathKind,
-              workspaceDefaultPath,
-            )}
-          />
+          <Suspense fallback={<div className="terminal-dock-loading">Terminal is loading...</div>}>
+            <TerminalDock
+              threadId={terminalThreadId}
+              cwd={getEffectiveWorkspaceCwd(
+                attachments,
+                workingFolder,
+                workingPathKind,
+                workspaceDefaultPath,
+              )}
+            />
+          </Suspense>
         )}
 
         {approvalSteps.length > 0 && (
