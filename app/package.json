@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "description": "Local-first desktop workspace for agentic work with Ollama, MCP, tasks, and tools.",
   "type": "module",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/noshitcoding/Open_Cowork.git"

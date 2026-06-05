@@ -56,3 +56,9 @@ npm run smoke:desktop
 ## Security And Privacy
 
 Open Cowork can interact with local files, terminals, MCP servers, and model providers. Treat changes in those areas as security-sensitive. Use explicit approval flows for risky operations and avoid logging secrets, API keys, or full private file contents unless a feature explicitly requires it.
+
+## Contribution License
+
+Unless explicitly agreed otherwise, contributions are submitted under the Apache
+License, Version 2.0 and may be distributed as part of Open Cowork under that
+license.
