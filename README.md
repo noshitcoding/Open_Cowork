@@ -1,121 +1,172 @@
-# Open_Cowork
+# Open Cowork
 
-Open_Cowork ist eine Windows-Desktop-Anwendung (Tauri + React + Rust) fuer agentisches Arbeiten mit lokaler Modellanbindung.
+Local-first desktop workspace for AI-assisted work. Open Cowork combines chat, task planning, tool use, file context, MCP servers, and desktop automation controls in one Windows application.
 
-## Features
+![Open Cowork desktop UI](app/open-cowork-streaming-smoke.png)
 
-- **Chat-Interface** mit Thread-Management und persistenten Verlaeufen (SQLite)
-- **Ollama-Integration** fuer lokale LLM-Anbindung (Chat, Planung, Health-Check)
-- **Plan/Freigabe-Flow** fuer risikobehaftete Prompts mit Approval-UI
-- **Task-Management** mit Status-Lifecycle (created → planned → waiting_approval → running → completed/failed/cancelled)
-- **MCP-Server-Integration** mit Probing (tools/list) und Tool-Ausfuehrung (tools/call) via stdio JSON-RPC
-- **Plugin-/Skill-System** mit anpassbaren Slash-Commands und Prompt-Templates
-- **Persistente Datenhaltung** in SQLite (Threads, Messages, Tasks, Steps, Audit-Events)
-- **4-View-Layout** mit Sidebar-Navigation (Chat, Tasks, MCP, Einstellungen)
-- **CI-Pipeline** mit TypeScript-Check, Vitest, Cargo-Tests, Clippy, Security-Scans
+## Why This Exists
 
-## Projektstruktur
+Most AI work happens in separate browser tabs, terminals, file explorers, and local tools. Open Cowork brings those pieces into a desktop app that can keep context, ask for approval before risky actions, and work with local or self-hosted model providers.
 
-- `app`: Tauri-Anwendung (Frontend + Rust Backend)
-- `docs`: Architektur-, Betriebs- und Konfigurationsdokumente
-- `WINDOWS_DESKTOP_APP_ANFORDERUNGEN.md`: Anforderungsdokument
-- `TRACEABILITY_MATRIX.md`: Traceability-Matrix
+The project is early, but already usable as a Windows-first Tauri app.
 
-## Voraussetzungen
+## Highlights
 
-- Windows 11 oder Windows 10
+- Local desktop app built with Tauri, React, TypeScript, and Rust
+- Chat workspace with persistent sessions, message history, and streaming output
+- Local Ollama support with health checks, model selection, and configurable timeouts
+- OpenAI-compatible and OpenRouter profile support
+- MCP server management with probing and tool execution
+- File and folder context for chat tasks
+- Task lifecycle with approval states, progress, and audit events
+- Skills, prompt templates, runtime instructions, and reusable workflows
+- Terminal, process, memory, insight, and pipeline panels
+- Windows installer workflow for tagged releases
+
+## Current Scope
+
+Open Cowork is aimed at local and network-internal AI workflows. It is not a hosted SaaS and does not require a separate web server in normal desktop use.
+
+The current implementation is strongest on Windows. The Tauri stack can support more platforms later, but the installer and smoke tests are Windows-focused.
+
+## Quick Start
+
+### Prerequisites
+
+- Windows 10 or Windows 11
 - Node.js 22+
 - npm 10+
-- Rust (via rustup)
-- WebView2 Runtime
-- Ollama erreichbar, Standard-Endpunkt: `http://localhost:11434`
+- Rust via rustup
+- Microsoft WebView2 Runtime
+- Ollama, if you want local model execution
 
-## Schnellstart
-
-1. One-Click-Installer lokal bauen:
+### Run The App In Development
 
 ```powershell
 cd app
 npm install
+npm run tauri dev
+```
+
+### Build A Windows Installer
+
+```powershell
+cd app
 npm run installer
 ```
 
-2. Fertige Setup-Datei finden:
+The packaged installer is written to:
 
-`dist-installers/Open-Cowork-Setup.exe`
-
-Der originale Tauri/NSIS-Build liegt weiterhin unter:
-
-`app/src-tauri/target/release/bundle/nsis/`
-
-## Installer-Releases
-
-Der Workflow `.github/workflows/windows-installer.yml` baut den Windows-Installer automatisch bei jedem Push nach `main` und stellt ihn als GitHub-Actions-Artifact bereit.
-
-Fuer einen downloadbaren GitHub-Release wie bei typischen Windows-Apps:
-
-```powershell
-git tag v0.1.1
-git push origin v0.1.1
+```text
+dist-installers/Open-Cowork-Setup.exe
 ```
 
-Der Workflow erstellt dann ein GitHub Release und haengt die Setup-EXE direkt daran.
+The original Tauri NSIS output remains under:
 
-## Tests
+```text
+app/src-tauri/target/release/bundle/nsis/
+```
+
+## Ollama Setup
+
+Open Cowork defaults to a local Ollama endpoint:
+
+```text
+http://localhost:11434
+```
+
+Example local model setup:
 
 ```powershell
-# Frontend (14 Tests: App, chatStore, taskStore)
+ollama serve
+ollama pull llama3.1:8b
+```
+
+You can change endpoint, model, timeout, context window, and temperature from the app settings.
+
+## MCP Example
+
+The repository includes a local DuckDuckGo web-search MCP server:
+
+```text
+Name: duckduckgo-websearch
+Command: node
+Args: scripts/mcp/duckduckgo-websearch-server.mjs
+Tool: search_web
+```
+
+Common environment options:
+
+- `DDG_MAX_RESULTS`, default `5`
+- `DDG_REGION`, default `wt-wt`
+- `DDG_SAFESEARCH`, default `moderate`
+- `DDG_TIMEOUT_MS`, default `10000`
+
+## Project Layout
+
+```text
+app/          Tauri desktop app, React frontend, Rust backend
+docs/         Architecture, operations, Ollama, smoke-test, and control docs
+scripts/      Repository-level validation helpers
+tasks/        Product and implementation notes
+.github/      CI, installer workflow, and agent instructions
+```
+
+## Useful Commands
+
+```powershell
 cd app
-npx vitest run
-
-# Backend (8 Tests: db, ollama)
-cd app/src-tauri
-cargo test
+npm run doctor
+npm run lint
+npm run typecheck
+npm run test:ci
+npm run build
 ```
 
-## Standard MCP Server (DuckDuckGo Web Search)
+Rust checks:
 
-Open_Cowork ist standardmaessig mit einem lokalen MCP-Server fuer DuckDuckGo-Websuche vorkonfiguriert.
+```powershell
+cd app/src-tauri
+cargo check
+cargo test
+cargo clippy -- -D warnings
+```
 
-- Name: `duckduckgo-websearch`
-- Command: `node`
-- Args: `scripts/mcp/duckduckgo-websearch-server.mjs`
+Desktop smoke test:
 
-Anpassbare Parameter (Env im MCP-Dialog):
+```powershell
+cd app
+npm run smoke:desktop
+```
 
-- `DDG_MAX_RESULTS` (Standard `5`)
-- `DDG_REGION` (Standard `wt-wt`, z. B. `de-de`, `us-en`)
-- `DDG_SAFESEARCH` (`off`, `moderate`, `strict`; Standard `moderate`)
-- `DDG_TIMEOUT_MS` (Standard `10000`)
-- `DDG_HTML_ENDPOINT` (optional, Standard `https://html.duckduckgo.com/html/`)
+## Documentation
 
-Toolname im MCP-Server: `search_web`
+- [Architecture](docs/ARCHITECTURE.md)
+- [Development and operations](docs/DEVELOPMENT_AND_OPERATIONS.md)
+- [Ollama configuration](docs/OLLAMA_CONFIGURATION.md)
+- [Desktop smoke test](docs/DESKTOP_SMOKE_TEST.md)
+- [Desktop control and computer use](docs/DESKTOP_CONTROL_AND_COMPUTER_USE.md)
+- [UI requirements](docs/UI_ANFORDERUNGEN.md)
 
-## Dokumentation
+## Release Workflow
 
-- `docs/ARCHITECTURE.md`
-- `docs/OLLAMA_CONFIGURATION.md`
-- `docs/DEVELOPMENT_AND_OPERATIONS.md`
-- `docs/DESKTOP_SMOKE_TEST.md`
-- `docs/DESKTOP_CONTROL_AND_COMPUTER_USE.md`
+The GitHub Actions workflow in `.github/workflows/windows-installer.yml` builds the Windows installer and attaches it to a GitHub Release when a version tag is pushed.
 
-## Plugin-Skill Beispiele (in der App enthalten)
+```powershell
+git tag v0.1.0
+git push origin v0.1.0
+```
 
-In `Einstellungen -> Cowork Features -> Plugins & Skills` koennen mit einem Klick drei Beispiele installiert werden:
+Manual release builds are also available through the workflow dispatch input.
 
-- `Marketing Briefing Toolkit` mit `/briefing`
-- `Sales Follow-up Assistant` mit `/discovery-plan`
-- `Finance KPI Analyzer` mit `/kpi-summary`
+## Contributing
 
-Alle Skills sind anpassbar (Beschreibung, Slash-Befehl, Prompt-Template, Run-Mode `plan|execute`) und im Chat direkt nutzbar.
+Contributions are welcome while the project is still taking shape. Start with [CONTRIBUTING.md](CONTRIBUTING.md), run the local checks before opening a pull request, and keep changes focused.
 
-## Hinweis zum Scope
+## License And Disclaimer
 
-Dieses Repository ist auf iterative Umsetzung ausgelegt. Der aktuelle Stand deckt ab:
-- Desktop-Host nur als Tauri-EXE ohne separaten Web-Port
-- Chat + Planung mit Ollama-Integration
-- SQLite-Persistenz fuer Threads, Tasks, Steps
-- MCP-Server Probing und Tool-Ausfuehrung
-- Zustand-basiertes State-Management mit DB-Sync
-- 22 automatisierte Tests (14 Frontend + 8 Rust)
-- CI/CD mit Lint, Test, Security-Gates
+Open Cowork is licensed under the [Apache License, Version 2.0](LICENSE).
+
+Attribution notices are provided in [NOTICE](NOTICE). Warranty and liability
+limitations are included in Sections 7 and 8 of the Apache License, Version
+2.0, with an additional plain-language summary in [DISCLAIMER.md](DISCLAIMER.md).
