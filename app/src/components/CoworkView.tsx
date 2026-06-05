@@ -2138,7 +2138,7 @@ export default function CoworkView() {
 
       if (slash.command === 'btw') {
         if (!slash.args?.trim()) {
-          appendAssistantMessage(tr("Use: /btw <info> um Context-Informationen hinzuzufuegen."))
+          appendAssistantMessage(tr("Use: /btw <info> to add context information."))
           return
         }
         useMemoryStore.getState().upsertEntry({
@@ -2190,9 +2190,9 @@ export default function CoworkView() {
         const agents = useCrewStore.getState().agents
         if (agents.length > 0) {
           const lines = agents.map(a => `- ${a.name} (${a.role}): ${a.backstory.slice(0, 60)}`)
-          appendAssistantMessage(`Agenten (${agents.length}):\n${lines.join('\n')}`)
+          appendAssistantMessage(`Agents (${agents.length}):\n${lines.join('\n')}`)
         } else {
-          appendAssistantMessage(tr("No Agenten configured. Verwalte Agenten unter Features > Crew AI."))
+          appendAssistantMessage(tr("No agents configured. Manage agents under Features > Crew AI."))
         }
         return
       }
@@ -2204,7 +2204,7 @@ export default function CoworkView() {
         } else {
           const crews = useCrewStore.getState().crews
           appendAssistantMessage(crews.length > 0
-            ? `Crews (${crews.length}):\n${crews.map(c => `- ${c.name} (${c.agents.length} Agenten)`).join('\n')}`
+            ? `Crews (${crews.length}):\n${crews.map(c => `- ${c.name} (${c.agents.length} agents)`).join('\n')}`
             : 'No Crews available. Use /crew <name> zum Createn.')
         }
         return
@@ -2280,7 +2280,7 @@ export default function CoworkView() {
 
       if (slash.command === 'tui') {
         useConfigStore.getState().setPreference('compactMode', true)
-        appendAssistantMessage(tr("TUI-Mode enabled (kompakte Ansicht)."))
+        appendAssistantMessage(tr("TUI mode enabled (compact view)."))
         return
       }
 
@@ -2453,7 +2453,7 @@ export default function CoworkView() {
 
       if (slash.command === 'desktop') {
         useUiStore.getState().setActiveMode('settings')
-        appendAssistantMessage(tr("Desktop-Integration: Konfiguriere Tray-Icon, Autostart und window-Optionen in den Settings."))
+        appendAssistantMessage(tr("Desktop integration: configure tray icon, startup, and window options in Settings."))
         return
       }
 
@@ -3344,7 +3344,7 @@ export default function CoworkView() {
                         }
                       }}
                       style={{ cursor: 'pointer', color: 'var(--text-muted)', fontStyle: 'italic', padding: '8px 0' }}
-                    >{tr("Output ausgeblendet – klicken zum Anzeigen")}</div>
+                    >{tr("Output hidden - click to show")}</div>
                   ) : (
                     <div className="msg-content">
                       {displayedContent ? <HighlightedChatText content={displayedContent} /> : null}
@@ -3411,7 +3411,7 @@ export default function CoworkView() {
                           type="button"
                           className="btn-msg-action"
                           onClick={() => applyPromptToInput(content, attachmentsForMessage)}
-                        >{tr("Wiederverwenden")}</button>
+                        >{tr("Reuse")}</button>
                       ) : (
                         <>
                           <button type="button" className="btn-msg-action" onClick={() => applyPromptToInput(content)}>{tr("Als Prompt nutzen")}</button>
@@ -3475,7 +3475,7 @@ export default function CoworkView() {
             </ol>
             <div className="approval-actions">
               <button type="button" className="btn-approve" onClick={handleApprove} disabled={uiLocked}>{tr("✓ Approve")}</button>
-              <button type="button" className="btn-reject" onClick={handleReject} disabled={uiLocked}>{tr("✗ Ablehnen")}</button>
+              <button type="button" className="btn-reject" onClick={handleReject} disabled={uiLocked}>{tr("✗ Reject")}</button>
             </div>
           </div>
         )}
@@ -3530,7 +3530,7 @@ export default function CoworkView() {
                 className="btn-reject"
                 onClick={focusAnswerInput}
                 disabled={uiLocked}
-              >{tr("Im Hauptchat beantworten")}</button>
+              >{tr("Answer in main chat")}</button>
             </div>
           </div>
         )}
