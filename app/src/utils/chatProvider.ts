@@ -186,13 +186,22 @@ export function getChatProviderState(
     : undefined
   const profile = selectedProfile ?? resolveDefaultProfile(profiles, defaultProfileIds, provider)
   const profileModels = profile ? (profileModelMap[profile.id] ?? []) : []
+  const providerLoadedModels = uniqueModels(
+    profiles
+      .filter((item) => item.provider === provider)
+      .flatMap((item) => profileModelMap[item.id] ?? []),
+  )
   const selectableModels = collectProviderModels(
     context,
     provider,
     profileModels,
   )
   const profileModel = profile?.model?.trim() || ''
-  const model = resolveExternalModel(selectedModel, profileModel, profileModels)
+  const model = resolveExternalModel(
+    selectedModel,
+    profileModel,
+    providerLoadedModels.length > 0 ? selectableModels : [],
+  )
 
   return {
     provider,

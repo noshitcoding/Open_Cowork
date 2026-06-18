@@ -97,6 +97,21 @@ describe('getChatProviderState', () => {
     ])
   })
 
+  it('keeps a selected model from another profile when it is present in the dropdown list', () => {
+    const context = createContext()
+    context.llmProfiles = [openAiProfile, secondOpenAiProfile]
+    context.llmProfileModels[secondOpenAiProfile.id] = ['google/gemma-4-31B-it']
+
+    const state = getChatProviderState(context, 'openai-compatible', {
+      provider: 'openai-compatible',
+      profileId: openAiProfile.id,
+      model: 'google/gemma-4-31B-it',
+    })
+
+    expect(state.model).toBe('google/gemma-4-31B-it')
+    expect(state.selectableModels).toContain('google/gemma-4-31B-it')
+  })
+
   it('lists configured Ollama profile models alongside loaded Ollama models', () => {
     const context = createContext()
     context.availableModels = ['llama3.1:8b']
