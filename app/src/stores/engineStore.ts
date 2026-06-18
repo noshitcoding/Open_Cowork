@@ -41,6 +41,7 @@ import { useChatStore } from './chatStore'
 import { parsePersistedSessionMessage } from '../utils/sessionThreads'
 import { getChatProviderState, normalizeChatProvider, type ChatProviderKind, type ChatProviderSelection } from '../utils/chatProvider'
 import type { PermissionMode } from '../engine/types/tool'
+import { useCoworkStore } from './coworkStore'
 
 const DEFAULT_SYSTEM_PROMPT = `You are a helpful AI assistant in the Open Cowork desktop app. You have access to tools for reading, writing, and searching files, running shell commands, and more.
 
@@ -140,6 +141,33 @@ function extractSeedMessageText(message: ChatHistorySeedMessage): string {
       ? { model: 'seed', usage: { ...EMPTY_USAGE }, stopReason: 'end_turn' as const }
       : {}),
   } as Message).trim()
+}
+
+function stringifyRunPayload(value: unknown, maxLength = 4000): string {
+  try {
+    const text = typeof value === 'string' ? value : JSON.stringify(value)
+    return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text
+  } catch {
+    return String(value).slice(0, maxLength)
+  }
+}
+
+async function appendRunEvent(
+  runId: string,
+  eventType: string,
+  summary: string,
+  payload: unknown,
+  redactionLevel = 'metadata',
+): Promise<void> {
+  await invoke('engine_run_event_append', {
+    request: {
+      runId,
+      eventType,
+      summary,
+      payloadJson: stringifyRunPayload(payload),
+      redactionLevel,
+    },
+  })
 }
 
 export type EngineStoreState = {
@@ -318,6 +346,7 @@ function buildChatEngineConfig(
   const configState = useConfigStore.getState()
   const providerState = getChatProviderState(configState, provider, providerSelection)
   const ollamaConfig = configState.ollama
+  const toolsetPolicyId = useCoworkStore.getState().activeToolsetPolicyId
   const effectiveThinkingEnabled = true
   const effectiveOllamaTimeoutMs = Math.max(providerState.timeoutMs, MIN_THINKING_TIMEOUT_MS)
 
@@ -359,6 +388,7 @@ function buildChatEngineConfig(
     appendSystemPrompt: config.appendSystemPrompt,
     runId,
     sessionId,
+    toolsetPolicyId,
   }
 }
 
@@ -504,6 +534,7 @@ export const useEngineStore = create<EngineStoreState>()(
             const userInputText = extractUserInputText(userInput)
             const providerState = getChatProviderState(useConfigStore.getState(), latestStore.activeProvider, providerSelection)
             const provider = getResolvedProvider(providerState.provider)
+            const toolsetPolicyId = useCoworkStore.getState().activeToolsetPolicyId
             let engine = state._engine
             if (!engine) {
               engine = await state._initEngine(cwd, providerSelection, permissionConfig)
@@ -567,6 +598,7 @@ export const useEngineStore = create<EngineStoreState>()(
                 cwd,
                 model: providerState.model,
                 provider,
+                toolsetPolicyId,
                 metadataJson: JSON.stringify({
                   permissionMode: latestStore.config.permissionMode,
                   maxTurns: latestStore.config.maxTurns,
@@ -609,6 +641,16 @@ export const useEngineStore = create<EngineStoreState>()(
                         metadataJson: JSON.stringify({ activeTool: event.toolName, input: event.input }),
                       },
                     }).catch(() => {})
+                    void appendRunEvent(
+                      runId,
+                      'tool_start',
+                      `Tool started: ${event.toolName}`,
+                      {
+                        toolUseId: event.toolUseId,
+                        toolName: event.toolName,
+                        input: event.input,
+                      },
+                    ).catch(() => {})
                     set((s) => ({
                       status: 'tool_running',
                       activeTools: [...s.activeTools, {
@@ -622,6 +664,16 @@ export const useEngineStore = create<EngineStoreState>()(
                     break
 
                   case 'tool_use_complete':
+                    void appendRunEvent(
+                      runId,
+                      'tool_result',
+                      `Tool completed: ${event.toolName}`,
+                      {
+                        toolUseId: event.toolUseId,
+                        toolName: event.toolName,
+                        result: event.result,
+                      },
+                    ).catch(() => {})
                     set((s) => ({
                       activeTools: s.activeTools.map(t =>
                         t.id === event.toolUseId
@@ -632,6 +684,12 @@ export const useEngineStore = create<EngineStoreState>()(
                     break
 
                   case 'approval_required':
+                    void appendRunEvent(
+                      runId,
+                      'approval_requested',
+                      'Approval requested',
+                      { request: event.request },
+                    ).catch(() => {})
                     set({ status: 'waiting_approval' })
                     break
 
@@ -683,6 +741,12 @@ export const useEngineStore = create<EngineStoreState>()(
                         error: event.error,
                       },
                     }).catch(() => {})
+                    void appendRunEvent(
+                      runId,
+                      'error',
+                      event.error.slice(0, 240),
+                      { error: event.error },
+                    ).catch(() => {})
                     set({ error: event.error, status: 'error', currentRunId: null })
                     break
 
@@ -816,8 +880,16 @@ export const useEngineStore = create<EngineStoreState>()(
 
       // ── Approval ─────────────────────────────────────────────────────────
       resolveApproval: (result) => {
-        const engine = get()._engine
+        const { _engine: engine, currentRunId } = get()
         if (engine) {
+          if (currentRunId) {
+            void appendRunEvent(
+              currentRunId,
+              'approval_decided',
+              result.allowed ? 'Approval allowed' : 'Approval denied',
+              result,
+            ).catch(() => {})
+          }
           engine.resolveApproval(result)
           set({ status: 'streaming', currentToolUI: null })
         }

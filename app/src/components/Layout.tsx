@@ -1,8 +1,14 @@
-import { Suspense, useEffect } from 'react'
+import { Suspense, useEffect, useRef, useState } from 'react'
+import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from 'react'
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
 import { Command, Menu, Moon, Sun } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { useUiStore } from '../stores/uiStore'
+import {
+  LEFT_SIDEBAR_MAX_WIDTH,
+  LEFT_SIDEBAR_MIN_WIDTH,
+  clampLeftSidebarWidth,
+  useUiStore,
+} from '../stores/uiStore'
 import { useConfigStore } from '../stores/configStore'
 import LeftSidebar from './LeftSidebar'
 import CommandPalette from './CommandPalette'
@@ -28,8 +34,10 @@ export default function Layout() {
   
   const {
     leftSidebarOpen,
+    leftSidebarWidth,
     theme,
     toggleLeftSidebar,
+    setLeftSidebarWidth,
     toggleTheme,
     setCommandPaletteOpen,
     commandPaletteOpen,
@@ -39,6 +47,13 @@ export default function Layout() {
   
   const focusMode = useConfigStore((s) => s.preferences.focusMode)
   const shortcutOverlayEnabled = useConfigStore((s) => s.preferences.shortcutOverlayEnabled)
+  const leftSidebarFrameRef = useRef<HTMLDivElement | null>(null)
+  const leftSidebarResizeRef = useRef<{ pointerId: number; left: number } | null>(null)
+  const [leftSidebarResizing, setLeftSidebarResizing] = useState(false)
+  const resolvedLeftSidebarWidth = clampLeftSidebarWidth(leftSidebarWidth)
+  const leftSidebarFrameStyle = {
+    '--left-sidebar-width': `${resolvedLeftSidebarWidth}px`,
+  } as CSSProperties
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -92,6 +107,64 @@ export default function Layout() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [commandPaletteOpen, navigate, setCommandPaletteOpen, setShortcutsOverlayOpen, shortcutOverlayEnabled, toggleLeftSidebar, toggleTheme])
 
+  useEffect(() => {
+    if (!leftSidebarResizing) return undefined
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const resize = leftSidebarResizeRef.current
+      if (!resize || event.pointerId !== resize.pointerId) return
+
+      event.preventDefault()
+      setLeftSidebarWidth(event.clientX - resize.left)
+    }
+
+    const finishResize = (event: PointerEvent) => {
+      const resize = leftSidebarResizeRef.current
+      if (resize && event.pointerId !== resize.pointerId) return
+
+      leftSidebarResizeRef.current = null
+      setLeftSidebarResizing(false)
+    }
+
+    document.body.classList.add('sidebar-resize-active')
+    window.addEventListener('pointermove', handlePointerMove, { passive: false })
+    window.addEventListener('pointerup', finishResize)
+    window.addEventListener('pointercancel', finishResize)
+    return () => {
+      document.body.classList.remove('sidebar-resize-active')
+      window.removeEventListener('pointermove', handlePointerMove)
+      window.removeEventListener('pointerup', finishResize)
+      window.removeEventListener('pointercancel', finishResize)
+    }
+  }, [leftSidebarResizing, setLeftSidebarWidth])
+
+  const handleLeftSidebarResizePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return
+
+    const rect = leftSidebarFrameRef.current?.getBoundingClientRect()
+    if (!rect) return
+
+    event.preventDefault()
+    event.stopPropagation()
+    leftSidebarResizeRef.current = { pointerId: event.pointerId, left: rect.left }
+    setLeftSidebarResizing(true)
+    setLeftSidebarWidth(event.clientX - rect.left)
+  }
+
+  const handleLeftSidebarResizeKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    const step = event.shiftKey ? 32 : 16
+    let nextWidth: number | null = null
+
+    if (event.key === 'ArrowLeft') nextWidth = resolvedLeftSidebarWidth - step
+    if (event.key === 'ArrowRight') nextWidth = resolvedLeftSidebarWidth + step
+    if (event.key === 'Home') nextWidth = LEFT_SIDEBAR_MIN_WIDTH
+    if (event.key === 'End') nextWidth = LEFT_SIDEBAR_MAX_WIDTH
+
+    if (nextWidth === null) return
+    event.preventDefault()
+    setLeftSidebarWidth(nextWidth)
+  }
+
   const shortcuts = [
     { label: t('shortcuts.commandPalette'), keys: 'Ctrl+K' },
     { label: t('shortcuts.workspace'), keys: 'Ctrl+1' },
@@ -112,7 +185,7 @@ export default function Layout() {
           <span className="brand-name">{t('app.name')}</span>
         </div>
 
-        <div className="top-tabs">
+        <nav className="top-tabs" aria-label={t('layout.mainNavigation')}>
           <NavLink to="/" end className={({isActive}) => 'top-tab' + (isActive ? ' active' : '')}>
             {t('nav.cowork')}
           </NavLink>
@@ -125,10 +198,13 @@ export default function Layout() {
           <NavLink to="/projects" className={({isActive}) => 'top-tab' + (isActive ? ' active' : '')}>
             {t('nav.projects')}
           </NavLink>
+          <NavLink to="/features" className={({isActive}) => 'top-tab' + (isActive ? ' active' : '')}>
+            {t('nav.features')}
+          </NavLink>
           <NavLink to="/settings" className={({isActive}) => 'top-tab' + (isActive ? ' active' : '')}>
             {t('nav.settings')}
           </NavLink>
-        </div>
+        </nav>
 
         <div className="top-bar-actions">
           <LanguageSwitcher />
@@ -144,7 +220,25 @@ export default function Layout() {
 
       <div className="app-body">
         {leftSidebarOpen && !focusMode && (
-          <LeftSidebar />
+          <div
+            ref={leftSidebarFrameRef}
+            className={`left-sidebar-frame${leftSidebarResizing ? ' is-resizing' : ''}`}
+            style={leftSidebarFrameStyle}
+          >
+            <LeftSidebar />
+            <div
+              className="left-sidebar-resize-handle"
+              role="separator"
+              aria-label={t('layout.resizeSidebar')}
+              aria-orientation="vertical"
+              aria-valuemin={LEFT_SIDEBAR_MIN_WIDTH}
+              aria-valuemax={LEFT_SIDEBAR_MAX_WIDTH}
+              aria-valuenow={resolvedLeftSidebarWidth}
+              tabIndex={0}
+              onPointerDown={handleLeftSidebarResizePointerDown}
+              onKeyDown={handleLeftSidebarResizeKeyDown}
+            />
+          </div>
         )}
 
         <div className="main-content" key={i18n.resolvedLanguage ?? i18n.language}>
@@ -157,10 +251,21 @@ export default function Layout() {
       <CommandPalette />
 
       {shortcutsOverlayOpen && (
-        <div className="command-palette-overlay" onClick={() => setShortcutsOverlayOpen(false)}>
-          <div className="command-palette" onClick={(e) => e.stopPropagation()}>
+        <div className="command-palette-overlay">
+          <button
+            type="button"
+            className="command-palette-backdrop"
+            aria-label={tr("Close shortcuts")}
+            onClick={() => setShortcutsOverlayOpen(false)}
+          />
+          <div
+            className="command-palette"
+            role="dialog"
+            aria-modal="true"
+            aria-label={t('shortcuts.title')}
+          >
             <div className="command-palette-header">
-              <strong style={{ flex: 1, fontSize: 15 }}>{t('shortcuts.title')}</strong>
+              <strong className="shortcut-overlay-title">{t('shortcuts.title')}</strong>
               <button type="button" onClick={() => setShortcutsOverlayOpen(false)}>{tr("Esc")}</button>
             </div>
             <ul className="command-palette-list">

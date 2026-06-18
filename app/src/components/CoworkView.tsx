@@ -3,7 +3,7 @@ import type { ClipboardEvent, DragEvent, FormEvent } from 'react'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { useChatStore, getActiveThread, type ChatMessage } from '../stores/chatStore'
 import type { LiveToolCall, LiveToolCallStatus } from '../stores/chatStore'
-import { CheckCircle2, Clock3, Loader2, ShieldAlert, Wrench, XCircle } from 'lucide-react'
+import { CheckCircle2, ChevronDown, Clock3, Loader2, ShieldAlert, Wrench, XCircle } from 'lucide-react'
 import { useConfigStore } from '../stores/configStore'
 import { useTaskStore } from '../stores/taskStore'
 import { useWorkTasksStore } from '../stores/workTasksStore'
@@ -510,10 +510,10 @@ function resolveAskUserPromptModel(question: string | null, input: Record<string
     allowMultiple,
     freeTextLabel: typeof input?.free_text_label === 'string' && input.free_text_label.trim()
       ? input.free_text_label.trim()
-      : 'Freitext',
+      : tr("Free text"),
     freeTextPlaceholder: typeof input?.free_text_placeholder === 'string' && input.free_text_placeholder.trim()
       ? input.free_text_placeholder.trim()
-      : 'Add optional details...',
+      : tr("Add optional details..."),
   }
 }
 
@@ -1780,7 +1780,7 @@ export default function CoworkView() {
         return
       }
 
-      // ── AI Prompt Commands: flow through to Ollama ──
+      // AI prompt commands: flow through to Ollama.
       const aiPrompts: Record<string, string> = {
         'review': 'Perform a thorough code review. Check for bugs, code quality, best practices, readability, and maintainability. Provide concrete improvement suggestions with code examples.',
         'ultrareview': 'Run a comprehensive ultra review:\n1. architecture analysis\n2. security check (OWASP Top 10)\n3. performance analysis\n4. code quality and clean code\n5. test coverage\n6. documentation\n7. dependency check\n8. best practices\nGive a detailed assessment with concrete recommendations for each area.',
@@ -1801,7 +1801,7 @@ export default function CoworkView() {
         // Don't return → flows to Ollama streaming below
       }
 
-      // ── Model & Config Commands ──
+      // Model and config commands.
       if (slash.command === 'model') {
         if (!slash.args?.trim()) {
           appendAssistantMessage(`Current provider: ${providerState.label}\nCurrent model: ${providerState.model || '(not set)'}\nAvailable: ${selectableModels.join(', ') || '(none loaded)'}\nUse: /model <name>`)
@@ -1905,7 +1905,7 @@ export default function CoworkView() {
         return
       }
 
-      // ── Data & Session Commands ──
+      // Data and session commands.
       if (slash.command === 'context') {
         const msgCount = activeMessages.length
         const charCount = activeMessages.reduce((a, m) => a + m.content.length, 0)
@@ -2233,7 +2233,7 @@ export default function CoworkView() {
         // flows to Ollama
       }
 
-      // ── Navigation & Display Commands ──
+      // Navigation and display commands.
       if (slash.command === 'config' || slash.command === 'settings') {
         useUiStore.getState().setActiveMode('settings')
         appendAssistantMessage(tr("Settings opened."))
@@ -2291,7 +2291,7 @@ export default function CoworkView() {
         return
       }
 
-      // ── Misc Commands ──
+      // Misc commands.
       if (slash.command === 'plugin') {
         if (slash.args === 'examples' || slash.args === 'install') {
           useCoworkStore.getState().installPluginExamples()
@@ -2478,7 +2478,7 @@ export default function CoworkView() {
         return
       }
 
-      // ── Plugin skill matching ──
+      // Plugin skill matching.
       const normalizedSlashCommand = normalizeSlashCommand(slash.command)
       const matchedSkill = enabledPluginSkills.find(
         (skill) => normalizeSlashCommand(skill.command) === normalizedSlashCommand
@@ -2694,7 +2694,7 @@ export default function CoworkView() {
       }
 
       {
-        // ── Engine Provider (Ollama backend) ──
+        // Engine provider (Ollama backend).
         const cwd = getEffectiveWorkspaceCwd(
           mergedForSend.next,
           workingFolder,
@@ -3248,13 +3248,13 @@ export default function CoworkView() {
       <div className="cowork-pane">
         <div className="card" style={{ marginBottom: 12, fontSize: 12 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-            <span><strong>{tr("Session:")}</strong> {currentSessionId ?? 'not saved yet'}</span>
+            <span><strong>{tr("Session:")}</strong> {currentSessionId ?? tr("not saved yet")}</span>
             <span><strong>{tr("Compactions:")}</strong> {compactionCount}</span>
             <span>
               <strong>{tr("Context:")}</strong>{' '}
               {contextWarning.level === 'none'
-                ? 'stable'
-                : `${contextWarning.level} (${contextWarning.estimatedTokens} Tokens)`}
+                ? tr("stable")
+                : `${tr(contextWarning.level)} (${contextWarning.estimatedTokens} ${tr("tokens")})`}
             </span>
             <button
               type="button"
@@ -3274,7 +3274,7 @@ export default function CoworkView() {
         <div className="cowork-messages" ref={logRef}>
           {hiddenRenderedMessageCount > 0 && (
             <div className="message-window-notice">
-              {hiddenRenderedMessageCount} older messages are hidden for a faster startup.
+              {tr("{{count}} older messages are hidden for a faster startup.", { count: hiddenRenderedMessageCount })}
             </div>
           )}
           {renderedMessages.map((msg, index) => {
@@ -3311,28 +3311,29 @@ export default function CoworkView() {
               return (
                 <div key={msg.id} className={`cowork-msg ${msg.role}${msg.crewLive ? ' crew-live-message' : ''}`}>
                 <div className="msg-avatar">
-                  {msg.role === 'user' ? '👤' : '✦'}
+                  {msg.role === 'user' ? tr("You") : 'AI'}
                 </div>
                 <div className="msg-body">
                   <div className="msg-role">
-                    {msg.role === 'user' ? 'Du' : 'Open_Cowork'}
+                    {msg.role === 'user' ? tr("You") : 'Open_Cowork'}
                     {showTimestamps && <span className="msg-time">{formatTime(msg.timestamp)}</span>}
                     {showCollapseButton && (
                       <button
                         type="button"
                         className="btn-collapse-toggle"
                         onClick={() => toggleCollapse(msg.id)}
-                        title={collapsedMessageIds.has(msg.id) ? 'Show output' : 'Hide output'}
+                        title={collapsedMessageIds.has(msg.id) ? tr('Show output') : tr('Hide output')}
                         style={{ marginLeft: 8, cursor: 'pointer', background: 'none', border: 'none', fontSize: 12 }}
                       >
-                        {collapsedMessageIds.has(msg.id) ? '▶' : '▼'}
+                        {collapsedMessageIds.has(msg.id) ? tr('Show') : tr('Hide')}
                       </button>
                     )}
                   </div>
                   {msg.crewLive ? (
                     <CrewLiveMonitor live={msg.crewLive} />
                   ) : isCollapsed ? (
-                    <div
+                    <button
+                      type="button"
                       className="msg-content-collapsed"
                       onClick={() => {
                         // Find the user message that controls this collapse
@@ -3343,8 +3344,8 @@ export default function CoworkView() {
                           }
                         }
                       }}
-                      style={{ cursor: 'pointer', color: 'var(--text-muted)', fontStyle: 'italic', padding: '8px 0' }}
-                    >{tr("Output hidden - click to show")}</div>
+                      style={{ cursor: 'pointer', color: 'var(--text-muted)', fontStyle: 'italic', padding: '8px 0', border: 'none', background: 'transparent', textAlign: 'left' }}
+                    >{tr("Output hidden. Show output")}</button>
                   ) : (
                     <div className="msg-content">
                       {displayedContent ? <HighlightedChatText content={displayedContent} /> : null}
@@ -3385,7 +3386,7 @@ export default function CoworkView() {
                       <div className="message-attachments">
                         {attachmentsForMessage.map((item) => (
                           <span key={`${item.kind}-${item.path}`} className="message-attachment-chip" title={item.label ?? item.path}>
-                            {item.kind === 'folder' ? '📁' : isImageAttachment(item) ? '🖼️' : '📄'} {getAttachmentDisplayName(item)}
+                            {item.kind === 'folder' ? tr('Folder') : isImageAttachment(item) ? tr('Image') : tr('File')}: {getAttachmentDisplayName(item)}
                           </span>
                         ))}
                       </div>
@@ -3431,7 +3432,7 @@ export default function CoworkView() {
             })}
           {busy && !activeMessages.some((msg) => msg.streaming) && (
             <div className="cowork-msg assistant">
-              <div className="msg-avatar">✦</div>
+              <div className="msg-avatar">AI</div>
               <div className="msg-body">
                 <div className="msg-role">{tr("Open_Cowork")}</div>
                 <div className="msg-content typing">
@@ -3445,7 +3446,9 @@ export default function CoworkView() {
         </div>
 
         {showScrollToBottom && (
-          <button type="button" className="btn-scroll-bottom" onClick={scrollMessagesToBottom}>{tr("New messages ▾")}</button>
+          <button type="button" className="btn-scroll-bottom" onClick={scrollMessagesToBottom}>
+            {tr("New messages")}<ChevronDown size={14} aria-hidden="true" />
+          </button>
         )}
 
         {terminalDockOpen && (
@@ -3465,7 +3468,7 @@ export default function CoworkView() {
         {approvalSteps.length > 0 && (
           <div className="approval-banner">
             <div className="approval-header">
-              <span className="approval-icon">⚠️</span>
+              <span className="approval-icon" aria-hidden="true">!</span>
               <span>{tr("These steps require your approval:")}</span>
             </div>
             <ol className="approval-steps">
@@ -3474,8 +3477,8 @@ export default function CoworkView() {
               ))}
             </ol>
             <div className="approval-actions">
-              <button type="button" className="btn-approve" onClick={handleApprove} disabled={uiLocked}>{tr("✓ Approve")}</button>
-              <button type="button" className="btn-reject" onClick={handleReject} disabled={uiLocked}>{tr("✗ Reject")}</button>
+              <button type="button" className="btn-approve" onClick={handleApprove} disabled={uiLocked}>{tr("Approve")}</button>
+              <button type="button" className="btn-reject" onClick={handleReject} disabled={uiLocked}>{tr("Reject")}</button>
             </div>
           </div>
         )}
@@ -3507,7 +3510,7 @@ export default function CoworkView() {
               </div>
             )}
             <label className="ask-user-free-text-label" htmlFor="ask-user-free-text">
-              {askUserPromptModel?.freeTextLabel ?? 'Freitext'}
+              {askUserPromptModel?.freeTextLabel ?? tr("Free text")}
             </label>
             <textarea
               id="ask-user-free-text"
@@ -3515,7 +3518,7 @@ export default function CoworkView() {
               rows={4}
               value={askUserFreeText}
               onChange={(event) => setAskUserFreeText(event.currentTarget.value)}
-              placeholder={askUserPromptModel?.freeTextPlaceholder ?? 'Add optional details...'}
+              placeholder={askUserPromptModel?.freeTextPlaceholder ?? tr("Add optional details...")}
               autoFocus
             />
             <div className="ask-user-modal-actions">
@@ -3571,7 +3574,7 @@ export default function CoworkView() {
                           disabled={uiLocked}
                         />
                         <span>
-                          {resource.kind === 'folder' ? 'Folder' : resource.kind === 'link' ? 'Link' : 'File'}: {resource.label ?? getPathName(resource.path)}
+                          {resource.kind === 'folder' ? tr('Folder') : resource.kind === 'link' ? tr('Link') : tr('File')}: {resource.label ?? getPathName(resource.path)}
                         </span>
                       </label>
                     ))}
@@ -3595,15 +3598,15 @@ export default function CoworkView() {
                 {attachments.map((item) => (
                   <span key={`${item.kind}-${item.path}`} className="attachment-chip" title={item.label ?? item.path}>
                     <span className="attachment-chip-label">
-                      {item.kind === 'folder' ? 'Folder' : isImageAttachment(item) ? 'Image' : 'File'}: {getAttachmentDisplayName(item)}
+                      {item.kind === 'folder' ? tr('Folder') : isImageAttachment(item) ? tr('Image') : tr('File')}: {getAttachmentDisplayName(item)}
                     </span>
                     <button
                       type="button"
                       className="attachment-remove"
                       onClick={() => handleRemoveAttachment(item)}
-                      aria-label={`attachment entfernen: ${getAttachmentDisplayName(item)}`}
+                      aria-label={`${tr("Remove attachment")}: ${getAttachmentDisplayName(item)}`}
                       disabled={uiLocked}
-                    >{tr("×")}</button>
+                    ><span aria-hidden="true">x</span></button>
                   </span>
                 ))}
               </div>
@@ -3612,7 +3615,8 @@ export default function CoworkView() {
             <textarea
               ref={inputRef}
               rows={2}
-              placeholder={askUserQuestion ? 'Answer the question here...' : 'Next instruction...'}
+              aria-label={tr("Message input")}
+              placeholder={askUserQuestion ? tr('Answer the question here...') : tr('Next instruction...')}
               disabled={uiLocked}
               value={inputValue}
               className={dragOverInput ? 'input-drop-active' : ''}
@@ -3682,7 +3686,7 @@ export default function CoworkView() {
               }}
             />
             {showSlashSuggestions && (
-              <div className="slash-command-menu" role="listbox" aria-label={tr("slash commands")}>
+              <div className="slash-command-menu" role="list" aria-label={tr("slash commands")}>
                 {filteredSlashSuggestions.map((suggestion, index) => (
                   <button
                     key={`${suggestion.source}-${suggestion.command}`}
@@ -3692,8 +3696,7 @@ export default function CoworkView() {
                       event.preventDefault()
                       applySlashSuggestion(suggestion)
                     }}
-                    role="option"
-                    aria-selected={index === activeSlashSuggestionIndex}
+                    aria-current={index === activeSlashSuggestionIndex ? 'true' : undefined}
                   >
                     <span className="slash-command-usage">
                       {suggestion.command}
@@ -3712,6 +3715,7 @@ export default function CoworkView() {
                 value={providerState.provider}
                 onChange={(e) => handleProviderChange(e.target.value)}
                 disabled={uiLocked}
+                aria-label={tr("Provider")}
                 title={tr("Provider")}
               >
                 {CHAT_PROVIDER_OPTIONS.map((provider) => (
@@ -3725,6 +3729,7 @@ export default function CoworkView() {
                 value={providerState.model}
                 onChange={(e) => handleModelChange(e.target.value)}
                 disabled={uiLocked}
+                aria-label={tr("Model")}
                 title={tr("Model")}
               >
                 {selectableModels.length > 0 ? (
@@ -3734,7 +3739,7 @@ export default function CoworkView() {
                     </option>
                   ))
                 ) : (
-                  <option value={providerState.model}>{providerState.model || 'no model set'}</option>
+                  <option value={providerState.model}>{providerState.model || tr('no model set')}</option>
                 )}
                 {selectableModels.length > 0 && providerState.model && !selectableModels.includes(providerState.model) && (
                   <option value={providerState.model}>{providerState.model}</option>
@@ -3749,6 +3754,7 @@ export default function CoworkView() {
                   setClaudePermissionMode(ENGINE_TO_CLAUDE_PERMISSION_MODE[mode])
                 }}
                 disabled={uiLocked}
+                aria-label={tr("Permission mode")}
                 title={tr("Permission mode")}
               >
                 <option value="default">{tr("Standard")}</option>
@@ -3762,10 +3768,10 @@ export default function CoworkView() {
               </div>
             </div>
             {busy ? (
-              <button type="button" onClick={handleStop} className="btn-stop compact-send-btn">{tr("⏹ Stopp")}</button>
+              <button type="button" onClick={handleStop} className="btn-stop compact-send-btn">{tr("Stop")}</button>
             ) : (
               <button type="submit" disabled={uiLocked} className="btn-send compact-send-btn">
-                {askUserQuestion ? 'Send answer ->' : 'Send ->'}
+                {askUserQuestion ? tr("Send answer") : tr("Send")}
               </button>
             )}
           </div>

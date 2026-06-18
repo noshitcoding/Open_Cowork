@@ -1,5 +1,4 @@
-import { tr } from '../i18n'
-﻿import {
+import {
   Boxes,
   Brain,
   CheckCircle2,
@@ -11,6 +10,7 @@ import { tr } from '../i18n'
   Search,
   ShieldCheck,
 } from 'lucide-react'
+import { tr } from '../i18n'
 
 type FeatureStatus = 'ready' | 'partial' | 'planned'
 
@@ -130,7 +130,6 @@ export default function FeaturesView() {
     </div>
   )
 }
-
 
 
 

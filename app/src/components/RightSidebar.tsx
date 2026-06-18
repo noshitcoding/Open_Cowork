@@ -26,9 +26,7 @@ export function ProgressPanel({ task }: { task: Task | undefined }) {
     <div className="right-panel">
       <h3 className="right-panel-title">{tr("Progress")}</h3>
       <div className="progress-bar-wrapper">
-        <div className="progress-bar">
-          <div className="progress-fill" style={{ width: `${progress}%` }} />
-        </div>
+        <progress className="progress-native" max={100} value={progress} aria-label={tr("Progress")} />
         <span className="progress-label">{progress}%</span>
       </div>
       <ul className="step-checklist">
@@ -61,7 +59,7 @@ export function WorkingFolderPanel() {
       {workingFolder ? (
         <div className="folder-display">
           <span className="folder-kind">
-            {workingPathKind === 'file' ? 'File' : 'Folder'}
+            {workingPathKind === 'file' ? tr('File') : tr('Folder')}
           </span>
           <span className="folder-path">{workingFolder}</span>
         </div>
@@ -123,15 +121,15 @@ export function ContextPanel() {
         </div>
         <div className="context-item">
           <span className="context-label">{tr("Connectors")}</span>
-          <span className="context-value">{enabledConnectors}{tr("active")}</span>
+          <span className="context-value">{enabledConnectors} {tr("active")}</span>
         </div>
         <div className="context-item">
           <span className="context-label">{tr("Plugins")}</span>
-          <span className="context-value">{enabledPlugins}{tr("active")}</span>
+          <span className="context-value">{enabledPlugins} {tr("active")}</span>
         </div>
         <div className="context-item">
           <span className="context-label">{tr("Scheduled tasks")}</span>
-          <span className="context-value">{activeSchedules}{tr("active")}</span>
+          <span className="context-value">{activeSchedules} {tr("active")}</span>
         </div>
       </div>
     </div>
@@ -195,6 +193,8 @@ export function DocumentWorkspacePanel() {
               <button
                 type="button"
                 key={document.path}
+                role="tab"
+                aria-selected={document.path === activeDocument?.path}
                 className={`document-tab${document.path === activeDocument?.path ? ' active' : ''}`}
                 onClick={() => setActiveDocument(document.path)}
                 title={document.path}
@@ -215,7 +215,7 @@ export function DocumentWorkspacePanel() {
                 <button type="button" onClick={runOpen} disabled={locked} title={tr("Open in Office")} aria-label={tr("Open document in Office")}>
                   <ExternalLink size={14} aria-hidden="true" />
                 </button>
-                <button type="button" onClick={runPreview} disabled={locked} title={tr("Preview aktualisieren")} aria-label={tr("Dokument-Preview aktualisieren")}>
+                <button type="button" onClick={runPreview} disabled={locked} title={tr("Refresh preview")} aria-label={tr("Refresh document preview")}>
                   <RefreshCw size={14} aria-hidden="true" />
                 </button>
                 <button type="button" onClick={runSaveVersion} disabled={locked} title={tr("Save version")} aria-label={tr("Save document version")}>

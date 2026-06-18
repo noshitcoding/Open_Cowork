@@ -10,7 +10,8 @@ import { resolveCrewAgentsWithProfiles, useCrewStore, type Crew, type CrewPerson
 import { usePersonalityStore } from '../stores/personalityStore'
 import { useTaskTemplatesStore } from '../stores/taskTemplatesStore'
 import { useUiStore } from '../stores/uiStore'
-import { useWorkTasksStore, type WorkTask, type WorkTaskRunner } from '../stores/workTasksStore'
+import { useWorkTasksStore, type WorkTask, type WorkTaskRunner, type WorkTaskStatus } from '../stores/workTasksStore'
+import { tr } from '../i18n'
 import { safeInvoke, safeInvokeVoid } from '../utils/safeInvoke'
 import { streamChatTurn } from '../utils/ollamaStreaming'
 
@@ -81,9 +82,9 @@ const CREW_AGENT_COLORS = [
   '#be123c',
   '#4f46e5',
 ]
-const CREW_BOX_CHARS = /[\s│┃║╭╮╰╯┌┐└┘├┤┬┴┼─━═╔╗╚╝╠╣╦╩╬]+/u
-const CREW_BOX_EDGE_START = /^[\s│┃║╭╮╰╯┌┐└┘├┤┬┴┼─━═╔╗╚╝╠╣╦╩╬]+/u
-const CREW_BOX_EDGE_END = /[\s│┃║╭╮╰╯┌┐└┘├┤┬┴┼─━═╔╗╚╝╠╣╦╩╬]+$/u
+const CREW_BOX_CHARS = /[\s\u2500-\u257F]+/u
+const CREW_BOX_EDGE_START = /^[\s\u2500-\u257F]+/u
+const CREW_BOX_EDGE_END = /[\s\u2500-\u257F]+$/u
 
 function resolveDefaultAgentId(crew: Crew): string | null {
   if (crew.process === 'hierarchical' && crew.managerAgentId) {
@@ -244,11 +245,28 @@ function buildCrewRunOutput(response: CrewExecutionResponse, fallbackTaskId: str
 }
 
 function formatTimestamp(ts: number | null | undefined): string {
-  if (!ts) return '—'
+  if (!ts) return '-'
   try {
-    return new Date(ts).toLocaleString('en-US')
+    return new Date(ts).toLocaleString('de-DE')
   } catch {
     return String(ts)
+  }
+}
+
+function formatWorkTaskStatus(status: WorkTaskStatus): string {
+  switch (status) {
+    case 'idle':
+      return tr('Idle')
+    case 'waiting_approval':
+      return tr('Waiting for approval')
+    case 'running':
+      return tr('Running')
+    case 'completed':
+      return tr('Completed')
+    case 'failed':
+      return tr('Failed')
+    case 'canceled':
+      return tr('Canceled')
   }
 }
 
@@ -258,7 +276,7 @@ function deriveTaskName(task: WorkTask): string {
   const prompt = task.prompt.trim()
   if (!prompt) return task.id
   const singleLine = prompt.replace(/\s+/g, ' ').trim()
-  return singleLine.length > 48 ? `${singleLine.slice(0, 48)}…` : singleLine
+  return singleLine.length > 48 ? `${singleLine.slice(0, 48)}...` : singleLine
 }
 
 function findScheduledTask(scheduledTasks: ScheduledTask[], taskId: string): ScheduledTask | null {
@@ -280,10 +298,10 @@ function createCrewStreamId(): string {
 
 function buildTaskThreadSummary(task: WorkTask): string {
   const lines = [
-    `Task created: ${deriveTaskName(task)}`,
-    `Runner: ${task.runner === 'crew' ? 'Crew' : 'Model'}`,
-    task.expectedOutput.trim() ? `Expected Output: ${task.expectedOutput.trim()}` : '',
-    task.workDir.trim() ? `Working folder: ${task.workDir.trim()}` : '',
+    `${tr('Task created')}: ${deriveTaskName(task)}`,
+    `${tr('Runner')}: ${task.runner === 'crew' ? tr('Crew') : tr('Model')}`,
+    task.expectedOutput.trim() ? `${tr('Expected output')}: ${task.expectedOutput.trim()}` : '',
+    task.workDir.trim() ? `${tr('Working folder')}: ${task.workDir.trim()}` : '',
   ].filter(Boolean)
 
   return lines.join('\n')
@@ -293,11 +311,11 @@ function buildTaskPromptMessage(task: WorkTask): string {
   const parts = [task.prompt.trim()]
 
   if (task.expectedOutput.trim()) {
-    parts.push(`Expected output:\n${task.expectedOutput.trim()}`)
+    parts.push(`${tr('Expected output')}:\n${task.expectedOutput.trim()}`)
   }
 
   if (task.workDir.trim()) {
-    parts.push(`Working folder:\n${task.workDir.trim()}`)
+    parts.push(`${tr('Working folder')}:\n${task.workDir.trim()}`)
   }
 
   return parts.filter(Boolean).join('\n\n')
@@ -944,7 +962,7 @@ export default function TasksView() {
   const handleRunTask = async (task: WorkTask) => {
     const normalizedWorkDir = task.workDir.trim()
     if (normalizedWorkDir && !isAbsolutePath(normalizedWorkDir)) {
-      const message = 'Working folder must be absolute.'
+      const message = tr('Working folder must be absolute.')
       updateTask(task.id, {
         status: 'failed',
         error: message,
@@ -971,9 +989,9 @@ export default function TasksView() {
     addChatMessage(threadId, {
       role: 'system',
       content: [
-        'Task-Run started',
-        `Runner: ${task.runner === 'crew' ? 'Crew' : 'Model'}`,
-        normalizedWorkDir ? `Working folder: ${normalizedWorkDir}` : '',
+        tr('Task run started'),
+        `${tr('Runner')}: ${task.runner === 'crew' ? tr('Crew') : tr('Model')}`,
+        normalizedWorkDir ? `${tr('Working folder')}: ${normalizedWorkDir}` : '',
       ].filter(Boolean).join('\n'),
       visibleInChat: true,
       timestamp: startedAt,
@@ -1015,7 +1033,7 @@ export default function TasksView() {
         )
 
         if (abortController.signal.aborted || canceledTaskIdsRef.current.has(task.id)) {
-          const message = 'Task abgebrochen.'
+          const message = tr('Task canceled.')
           updateTask(task.id, {
             status: 'canceled',
             error: null,
@@ -1048,11 +1066,11 @@ export default function TasksView() {
         updateTask(task.id, {
           status: aborted ? 'canceled' : 'failed',
           error: aborted ? null : message,
-          output: aborted ? 'Task abgebrochen.' : message,
+          output: aborted ? tr('Task canceled.') : message,
           lastRunAt: Date.now(),
         })
         updateChatMessage(threadId, assistantMessageId, {
-          content: aborted ? 'Task abgebrochen.' : message,
+          content: aborted ? tr('Task canceled.') : message,
           streaming: false,
         }, {
           persist: true,
@@ -1218,13 +1236,13 @@ export default function TasksView() {
         finishCrewLive('canceled')
         updateTask(task.id, {
           status: 'canceled',
-          output: 'Task abgebrochen.',
+          output: tr('Task canceled.'),
           error: null,
           lastRunAt: Date.now(),
         })
         addChatMessage(threadId, {
           role: 'assistant',
-          content: 'Task abgebrochen.',
+          content: tr('Task canceled.'),
           timestamp: Date.now(),
         })
         return
@@ -1255,13 +1273,13 @@ export default function TasksView() {
       finishCrewLive(aborted ? 'canceled' : 'failed')
       addChatMessage(threadId, {
         role: 'assistant',
-        content: aborted ? 'Task abgebrochen.' : message,
+        content: aborted ? tr('Task canceled.') : message,
         timestamp: Date.now(),
       })
       updateTask(task.id, {
         status: aborted ? 'canceled' : waitingForApproval ? 'waiting_approval' : 'failed',
         error: aborted ? null : message,
-        output: aborted ? 'Task abgebrochen.' : message,
+        output: aborted ? tr('Task canceled.') : message,
         lastRunAt: Date.now(),
       })
     } finally {
@@ -1282,7 +1300,7 @@ export default function TasksView() {
     updateTask(task.id, {
       status: 'canceled',
       error: null,
-      output: task.output?.trim() ? `${task.output}\n\nTask abgebrochen.` : 'Task abgebrochen.',
+      output: task.output?.trim() ? `${task.output}\n\n${tr('Task canceled.')}` : tr('Task canceled.'),
       lastRunAt: Date.now(),
     })
   }
@@ -1459,30 +1477,30 @@ export default function TasksView() {
   }
 
   return (
-    <div className="settings-view">
-      <h1>Tasks</h1>
-      <p className="hint-text">Create tasks, assign a crew or model, start them, and schedule each task.</p>
+    <div className="task-view">
+      <h1>{tr("Tasks")}</h1>
+      <p className="hint-text">{tr("Create tasks, assign a crew or model, start them, and schedule each task.")}</p>
 
       <div className="panel">
-        <h2>➕ New Task</h2>
+        <h2>{tr("New task")}</h2>
         <div className="grid">
           <label>
-            Title (optional)
-            <input value={newTitle} onChange={(e) => setNewTitle(e.target.value)} placeholder="e.g. Weekly Report" />
+            {tr("Title (optional)")}
+            <input value={newTitle} onChange={(e) => setNewTitle(e.target.value)} placeholder={tr("e.g. Weekly Report")} />
           </label>
           <label>
-            Execution
+            {tr("Execution")}
             <select value={newRunner} onChange={(e) => setNewRunner(e.target.value as WorkTaskRunner)}>
-              <option value="crew">Crew</option>
-              <option value="model">Model</option>
+              <option value="crew">{tr("Crew")}</option>
+              <option value="model">{tr("Model")}</option>
             </select>
           </label>
           {newRunner === 'crew' ? (
             <label>
-              Crew
+              {tr("Crew")}
               <select value={newCrewId} onChange={(e) => setNewCrewId(e.target.value)}>
                 {crews.length === 0 && (
-                  <option value="">No crews available</option>
+                  <option value="">{tr("No crews available")}</option>
                 )}
                 {crews.map((crew) => (
                   <option key={crew.id} value={crew.id}>{crew.name}</option>
@@ -1491,51 +1509,51 @@ export default function TasksView() {
             </label>
           ) : (
             <label>
-              Model (optional)
-              <input value={newModel} onChange={(e) => setNewModel(e.target.value)} placeholder={`Default: ${ollamaConfig.model || '—'}`} />
+              {tr("Model (optional)")}
+              <input value={newModel} onChange={(e) => setNewModel(e.target.value)} placeholder={`${tr("Default")}: ${ollamaConfig.model || '-'}`} />
             </label>
           )}
           <label>
-            Expected Output (optional)
-            <input value={newExpectedOutput} onChange={(e) => setNewExpectedOutput(e.target.value)} placeholder="e.g. Bullet report" />
+            {tr("Expected output (optional)")}
+            <input value={newExpectedOutput} onChange={(e) => setNewExpectedOutput(e.target.value)} placeholder={tr("e.g. Bullet report")} />
           </label>
-          <label style={{ gridColumn: '1 / -1' }}>
-            Working folder (optional, absolute)
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <label className="task-field-full">
+            {tr("Working folder (optional, absolute)")}
+            <div className="task-inline-field">
               <input value={newWorkDir} onChange={(e) => setNewWorkDir(e.target.value)} placeholder="C:\\Projects\\my-task" />
               <button type="button" className="btn-secondary" onClick={() => void handlePickNewWorkDir()}>
-                Choose folder
+                {tr("Choose folder")}
               </button>
             </div>
             {normalizedNewWorkDir && !isAbsolutePath(normalizedNewWorkDir) ? (
-              <div className="hint-text">Der Working folder must be absolute.</div>
+              <div className="hint-text">{tr("Working folder must be absolute.")}</div>
             ) : null}
           </label>
-          <label style={{ gridColumn: '1 / -1' }}>
-            Task
-            <textarea value={newPrompt} onChange={(e) => setNewPrompt(e.target.value)} rows={4} placeholder="Was soll der Task tun?" />
+          <label className="task-field-full">
+            {tr("Task")}
+            <textarea value={newPrompt} onChange={(e) => setNewPrompt(e.target.value)} rows={4} placeholder={tr("What should the task do?")} />
           </label>
         </div>
         <div className="actions">
           <button type="button" onClick={handleCreateTask} disabled={!canCreateTask}>
-            Task erstellen
+            {tr("Create task")}
           </button>
         </div>
         {newRunner === 'crew' && crews.length === 0 && (
-          <p className="hint-text">Create a crew in settings first to run crew tasks.</p>
+          <p className="hint-text">{tr("Create a crew in settings first to run crew tasks.")}</p>
         )}
       </div>
 
       <div className="panel">
         <div className="panel-heading-row">
-          <h2>🧩 Deine Tasks</h2>
-          <span className="hint-text">{tasks.length} Task(s)</span>
+          <h2>{tr("Your tasks")}</h2>
+          <span className="hint-text">{tasks.length} {tr("task(s)")}</span>
         </div>
 
         {tasks.length === 0 ? (
-          <p className="hint-text">No tasks yet. Create your first task above.</p>
+          <p className="hint-text">{tr("No tasks yet. Create your first task above.")}</p>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div className="task-list">
             {tasks.map((task) => {
               const scheduled = findScheduledTask(scheduledTasks, task.id)
               const crewName = task.crewId ? crewsById.get(task.crewId)?.name : null
@@ -1544,143 +1562,143 @@ export default function TasksView() {
                 : null
 
               return (
-                <div key={task.id} className="card">
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <div key={task.id} className="work-task-card">
+                  <div className="work-task-card-header">
+                    <div className="work-task-title-row">
                       <strong>{deriveTaskName(task)}</strong>
-                      <span style={{ fontSize: 11, padding: '1px 6px', borderRadius: 8, background: 'var(--accent)', color: '#fff' }}>
-                        {task.runner === 'crew' ? 'Crew' : 'Model'}
+                      <span className="task-pill task-pill-runner">
+                        {task.runner === 'crew' ? tr('Crew') : tr('Model')}
                       </span>
-                      <span style={{ fontSize: 11, padding: '1px 6px', borderRadius: 8, background: task.status === 'completed' ? 'var(--success)' : task.status === 'failed' ? 'var(--danger)' : task.status === 'running' ? 'var(--accent)' : task.status === 'waiting_approval' ? 'var(--warning)' : task.status === 'canceled' ? 'var(--text-muted)' : 'var(--border-color)', color: task.status === 'idle' ? 'var(--text-secondary)' : '#fff' }}>
-                        {task.status}
+                      <span className={`task-pill task-status task-status-${task.status}`}>
+                        {formatWorkTaskStatus(task.status)}
                       </span>
                     </div>
-                    <div className="actions" style={{ marginTop: 0 }}>
+                    <div className="actions work-task-card-actions">
                       <button type="button" onClick={() => void handleOpenTaskChat(task)}>
-                        Chat
+                        {tr("Chat")}
                       </button>
                       <button type="button" onClick={() => void handleRunTask(task)} disabled={(task.status === 'running' || task.status === 'waiting_approval') || !task.prompt.trim() || (task.runner === 'crew' && !task.crewId) || Boolean(task.workDir.trim() && !isAbsolutePath(task.workDir))}>
-                        Start
+                        {tr("Start")}
                       </button>
                       {task.status === 'running' && (
                         <button type="button" className="btn-stop" onClick={() => void handleCancelTask(task)}>
-                          Stopp
+                          {tr("Stop")}
                         </button>
                       )}
                       <button type="button" className="btn-secondary" onClick={() => removeTask(task.id)} disabled={task.status === 'running'}>
-                        Delete
+                        {tr("Delete")}
                       </button>
                     </div>
                   </div>
 
-                  <div className="grid" style={{ marginTop: 10 }}>
+                  <div className="grid task-edit-grid">
                     <label>
-                      Title
+                      {tr("Title")}
                       <input value={task.title} onChange={(e) => updateTask(task.id, { title: e.target.value })} />
                     </label>
                     <label>
-                      Execution
+                      {tr("Execution")}
                       <select value={task.runner} onChange={(e) => updateTask(task.id, { runner: e.target.value as WorkTaskRunner })}>
-                        <option value="crew">Crew</option>
-                        <option value="model">Model</option>
+                        <option value="crew">{tr("Crew")}</option>
+                        <option value="model">{tr("Model")}</option>
                       </select>
                     </label>
                     {task.runner === 'crew' ? (
                       <label>
-                        Crew
+                        {tr("Crew")}
                         <select value={task.crewId ?? ''} onChange={(e) => updateTask(task.id, { crewId: e.target.value || null })}>
-                          <option value="">Select crew</option>
+                          <option value="">{tr("Select crew")}</option>
                           {crews.map((crew) => (
                             <option key={crew.id} value={crew.id}>{crew.name}</option>
                           ))}
                         </select>
                         {task.crewId && !crewName ? (
-                          <div className="hint-text">Assigned crew no longer exists.</div>
+                          <div className="hint-text">{tr("Assigned crew no longer exists.")}</div>
                         ) : null}
                       </label>
                     ) : (
                       <label>
-                        Model (optional)
+                        {tr("Model (optional)")}
                         <input
                           value={task.model}
                           onChange={(e) => updateTask(task.id, { model: e.target.value })}
-                          placeholder={`Default: ${ollamaConfig.model || '—'}`}
+                          placeholder={`${tr("Default")}: ${ollamaConfig.model || '-'}`}
                         />
                       </label>
                     )}
                     <label>
-                      Expected Output
+                      {tr("Expected output")}
                       <input value={task.expectedOutput} onChange={(e) => updateTask(task.id, { expectedOutput: e.target.value })} />
                     </label>
-                    <label style={{ gridColumn: '1 / -1' }}>
-                      Working folder (absolute)
-                      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <label className="task-field-full">
+                      {tr("Working folder (absolute)")}
+                      <div className="task-inline-field">
                         <input value={task.workDir} onChange={(e) => updateTask(task.id, { workDir: e.target.value })} placeholder="C:\\Projects\\my-task" />
                         <button type="button" className="btn-secondary" onClick={() => void handlePickTaskWorkDir(task)}>
-                          Choose folder
+                          {tr("Choose folder")}
                         </button>
                       </div>
                       {task.workDir.trim() && !isAbsolutePath(task.workDir) ? (
-                        <div className="hint-text">Der Working folder must be absolute.</div>
+                        <div className="hint-text">{tr("Working folder must be absolute.")}</div>
                       ) : null}
                     </label>
-                    <label style={{ gridColumn: '1 / -1' }}>
-                      Task
+                    <label className="task-field-full">
+                      {tr("Task")}
                       <textarea value={task.prompt} onChange={(e) => updateTask(task.id, { prompt: e.target.value })} rows={3} />
                     </label>
                   </div>
 
-                  <div className="card" style={{ marginTop: 10 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-                      <strong>⏰ Scheduler</strong>
-                      <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                        Last run: {formatTimestamp(scheduled?.lastRunAt ?? null)} · Next run: {formatTimestamp(scheduled?.nextRunAt ?? null)}
+                  <div className="task-scheduler-panel">
+                    <div className="task-scheduler-header">
+                      <strong>{tr("Scheduler")}</strong>
+                      <div className="task-scheduler-meta">
+                        {tr("Last run")}: {formatTimestamp(scheduled?.lastRunAt ?? null)} / {tr("Next run")}: {formatTimestamp(scheduled?.nextRunAt ?? null)}
                       </div>
                     </div>
 
-                    <div className="grid" style={{ marginTop: 8 }}>
+                    <div className="grid task-scheduler-grid">
                       <label>
-                        Expression
+                        {tr("Expression")}
                         <input
                           value={task.scheduleExpr}
                           onChange={(e) => updateTask(task.id, { scheduleExpr: e.target.value })}
-                          placeholder="e.g. daily 09:00"
+                          placeholder={tr("e.g. daily 09:00")}
                         />
                       </label>
-                      <label style={{ display: 'flex', flexDirection: 'column' }}>
-                        Active
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
+                      <label>
+                        {tr("Active")}
+                        <div className="task-checkbox-row">
                           <input
                             type="checkbox"
                             checked={task.scheduleEnabled}
                             onChange={(e) => void handleToggleSchedule(task, e.target.checked)}
                           />
-                          <span className="hint-text">Job {task.scheduleEnabled ? 'active' : 'paused'}</span>
+                          <span className="hint-text">{task.scheduleEnabled ? tr('Job active') : tr('Job paused')}</span>
                         </div>
                       </label>
                     </div>
-                    <div className="actions" style={{ marginTop: 10 }}>
+                    <div className="actions task-scheduler-actions">
                       <button type="button" className="btn-sm" onClick={() => void handleUpsertSchedule(task)} disabled={!task.scheduleExpr.trim()}>
-                        Save
+                        {tr("Save")}
                       </button>
                       <button type="button" className="btn-sm" onClick={() => void handleRemoveSchedule(task)} disabled={!scheduled && !task.scheduleExpr.trim()}>
-                        Remove
+                        {tr("Remove")}
                       </button>
                       {task.runner === 'crew' && !task.crewId ? (
-                        <span className="hint-text">(Crew required for crew schedule)</span>
+                        <span className="hint-text">{tr("Crew required for crew schedule")}</span>
                       ) : null}
                     </div>
                     {task.runner === 'crew' && crewScheduleMetadata ? (
-                      <div className="hint-text" style={{ marginTop: 8 }}>
+                      <div className="hint-text task-scheduler-source">
                         {crewScheduleMetadata.snapshotSource === 'saved-version'
-                          ? `Source: saved crew version v${crewScheduleMetadata.definitionVersionNumber ?? '—'}${crewScheduleMetadata.definitionSavedAt ? ` from ${new Date(crewScheduleMetadata.definitionSavedAt).toLocaleString('en-US')}` : ''}${crewScheduleMetadata.definitionChangeSummary ? ` · ${crewScheduleMetadata.definitionChangeSummary}` : ''}`
-                          : 'Source: current crew editor state'}
+                          ? `${tr("Source")}: ${tr("saved crew version")} v${crewScheduleMetadata.definitionVersionNumber ?? '-'}${crewScheduleMetadata.definitionSavedAt ? ` ${tr("from")} ${new Date(crewScheduleMetadata.definitionSavedAt).toLocaleString('de-DE')}` : ''}${crewScheduleMetadata.definitionChangeSummary ? ` / ${crewScheduleMetadata.definitionChangeSummary}` : ''}`
+                          : `${tr("Source")}: ${tr("current crew editor state")}`}
                       </div>
                     ) : null}
                   </div>
 
                   {(task.output || task.error) && (
-                    <pre style={{ whiteSpace: 'pre-wrap', marginTop: 10, fontSize: 12 }}>
+                    <pre className="task-output-preview">
                       {(task.error ?? task.output ?? '').slice(0, 6000)}
                     </pre>
                   )}
@@ -1694,19 +1712,19 @@ export default function TasksView() {
       {templates.length > 0 && (
         <div className="panel">
           <div className="panel-heading-row">
-            <h2>📦 Legacy: Templates</h2>
-            <span className="hint-text">{templates.length} template(s) in legacy storage</span>
+            <h2>{tr("Legacy: Templates")}</h2>
+            <span className="hint-text">{templates.length} {tr("template(s) in legacy storage")}</span>
           </div>
-          <p className="hint-text">These templates are no longer used actively. You can clean them up here if needed.</p>
+          <p className="hint-text">{tr("These templates are no longer used actively. You can clean them up here if needed.")}</p>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div className="task-list">
             {templates.map((template) => (
-              <div key={template.id} className="card">
+              <div key={template.id} className="work-task-card">
                 <strong>{template.title?.trim() ? template.title : template.id}</strong>
-                <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>{template.description}</div>
-                <div className="actions" style={{ marginTop: 10 }}>
+                <div className="task-template-description">{template.description}</div>
+                <div className="actions work-task-card-actions">
                   <button type="button" className="btn-secondary" onClick={() => handleRemoveLegacyTemplate(template.id)}>
-                    Delete
+                    {tr("Delete")}
                   </button>
                 </div>
               </div>

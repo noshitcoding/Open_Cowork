@@ -2,26 +2,18 @@ import { useEffect, useState } from 'react'
 import { useTaskStore } from '../stores/taskStore'
 import { useConfigStore } from '../stores/configStore'
 import type { Task, TaskStatus } from '../stores/taskStore'
-import { tr } from '../i18n'
+import i18n, { tr } from '../i18n'
 
-const STATUS_LABELS: Record<TaskStatus, string> = {
-  created: 'Created',
-  planned: 'Geplant',
-  waiting_approval: 'Waiting for approval',
-  running: 'Running',
-  completed: 'Abclosed',
-  failed: 'Fehlgeschlagen',
-  cancelled: 'Abgebrochen',
-}
-
-const STATUS_COLORS: Record<TaskStatus, string> = {
-  created: '#6b7280',
-  planned: '#3b82f6',
-  waiting_approval: '#f59e0b',
-  running: '#8b5cf6',
-  completed: '#10b981',
-  failed: '#ef4444',
-  cancelled: '#9ca3af',
+function formatTaskStatus(status: TaskStatus): string {
+  switch (status) {
+    case 'created': return tr('Created')
+    case 'planned': return tr('Planned')
+    case 'waiting_approval': return tr('Waiting for approval')
+    case 'running': return tr('Running')
+    case 'completed': return tr('Completed')
+    case 'failed': return tr('Failed')
+    case 'cancelled': return tr('Canceled')
+  }
 }
 
 function TaskCard({ task }: { task: Task }) {
@@ -32,10 +24,9 @@ function TaskCard({ task }: { task: Task }) {
       <div className="task-header">
         <h3>{task.title}</h3>
         <span
-          className="task-status-badge"
-          style={{ background: STATUS_COLORS[task.status] }}
+          className={`task-status-badge status-${task.status}`}
         >
-          {STATUS_LABELS[task.status]}
+          {formatTaskStatus(task.status)}
         </span>
       </div>
       <p className="task-prompt">{task.prompt}</p>
@@ -84,7 +75,7 @@ function TaskCard({ task }: { task: Task }) {
         )}
       </div>
 
-      <div className="task-meta">{tr("Created:")}{new Date(task.createdAt).toLocaleString('en-US')}
+      <div className="task-meta">{tr("Created:")}{new Date(task.createdAt).toLocaleString(i18n.resolvedLanguage ?? i18n.language ?? 'en')}
       </div>
     </div>
   )
@@ -114,7 +105,7 @@ export default function TaskView() {
     <div className="task-view">
       <h1>{tr("Tasks")}</h1>
       {multiSelectEnabled && tasks.length > 0 && (
-        <div className="actions" style={{ marginBottom: '12px' }}>
+        <div className="actions task-batch-actions">
           <button type="button" className="btn-secondary" onClick={() => setSelectedIds(tasks.map((task) => task.id))}>{tr("Select all")}</button>
           <button type="button" className="btn-secondary" onClick={() => setSelectedIds([])}>{tr("Clear selection")}</button>
           <button type="button" onClick={() => applyBatchStatus('completed')} disabled={selectedIds.length === 0}>{tr("Finish selection")}</button>

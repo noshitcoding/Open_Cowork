@@ -1,4 +1,4 @@
-use rusqlite::{Connection, OptionalExtension, Result as SqlResult, params, params_from_iter};
+use rusqlite::{params, params_from_iter, Connection, OptionalExtension, Result as SqlResult};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -242,11 +242,18 @@ pub struct EngineRunRow {
     pub session_id: Option<String>,
     pub title: String,
     pub input_summary: Option<String>,
+    pub source: String,
     pub status: String,
     pub phase: String,
     pub cwd: Option<String>,
+    pub workspace_path: Option<String>,
     pub model: Option<String>,
     pub provider: Option<String>,
+    pub provider_profile_id: Option<String>,
+    pub runtime_mode: String,
+    pub toolset_policy_id: Option<String>,
+    pub channel_kind: Option<String>,
+    pub channel_ref: Option<String>,
     pub retry_count: i32,
     pub resumed_from_run_id: Option<String>,
     pub checkpoint_json: Option<String>,
@@ -258,6 +265,29 @@ pub struct EngineRunRow {
     pub started_at: Option<String>,
     pub ended_at: Option<String>,
     pub canceled_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EngineRunEventRow {
+    pub id: String,
+    pub run_id: String,
+    pub sequence: i64,
+    pub event_type: String,
+    pub summary: String,
+    pub payload_json: Option<String>,
+    pub redaction_level: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EngineRunArtifactRow {
+    pub id: String,
+    pub run_id: String,
+    pub kind: String,
+    pub path: String,
+    pub title: Option<String>,
+    pub summary: Option<String>,
+    pub created_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -366,6 +396,65 @@ pub struct CrewRunEventRow {
     pub event_type: String,
     pub payload_json: Option<String>,
     pub created_at: String,
+}
+
+fn map_engine_run_row(row: &rusqlite::Row) -> SqlResult<EngineRunRow> {
+    Ok(EngineRunRow {
+        id: row.get(0)?,
+        parent_run_id: row.get(1)?,
+        thread_id: row.get(2)?,
+        session_id: row.get(3)?,
+        title: row.get(4)?,
+        input_summary: row.get(5)?,
+        status: row.get(6)?,
+        phase: row.get(7)?,
+        cwd: row.get(8)?,
+        model: row.get(9)?,
+        provider: row.get(10)?,
+        retry_count: row.get(11)?,
+        resumed_from_run_id: row.get(12)?,
+        checkpoint_json: row.get(13)?,
+        result_summary: row.get(14)?,
+        error: row.get(15)?,
+        metadata_json: row.get(16)?,
+        created_at: row.get(17)?,
+        updated_at: row.get(18)?,
+        started_at: row.get(19)?,
+        ended_at: row.get(20)?,
+        canceled_at: row.get(21)?,
+        source: row.get(22)?,
+        workspace_path: row.get(23)?,
+        provider_profile_id: row.get(24)?,
+        runtime_mode: row.get(25)?,
+        toolset_policy_id: row.get(26)?,
+        channel_kind: row.get(27)?,
+        channel_ref: row.get(28)?,
+    })
+}
+
+fn map_engine_run_event_row(row: &rusqlite::Row) -> SqlResult<EngineRunEventRow> {
+    Ok(EngineRunEventRow {
+        id: row.get(0)?,
+        run_id: row.get(1)?,
+        sequence: row.get(2)?,
+        event_type: row.get(3)?,
+        summary: row.get(4)?,
+        payload_json: row.get(5)?,
+        redaction_level: row.get(6)?,
+        created_at: row.get(7)?,
+    })
+}
+
+fn map_engine_run_artifact_row(row: &rusqlite::Row) -> SqlResult<EngineRunArtifactRow> {
+    Ok(EngineRunArtifactRow {
+        id: row.get(0)?,
+        run_id: row.get(1)?,
+        kind: row.get(2)?,
+        path: row.get(3)?,
+        title: row.get(4)?,
+        summary: row.get(5)?,
+        created_at: row.get(6)?,
+    })
 }
 
 fn map_insights_row(row: &rusqlite::Row) -> SqlResult<InsightsEventRow> {
@@ -1207,6 +1296,90 @@ impl Database {
                 "metadata_json TEXT",
             )?;
             conn.execute("UPDATE schema_version SET version = 20", [])?;
+        }
+
+        if version < 21 {
+            add_column_if_missing(
+                &conn,
+                "engine_runs",
+                "source",
+                "source TEXT NOT NULL DEFAULT 'desktop'",
+            )?;
+            add_column_if_missing(
+                &conn,
+                "engine_runs",
+                "workspace_path",
+                "workspace_path TEXT",
+            )?;
+            add_column_if_missing(
+                &conn,
+                "engine_runs",
+                "provider_profile_id",
+                "provider_profile_id TEXT",
+            )?;
+            add_column_if_missing(
+                &conn,
+                "engine_runs",
+                "runtime_mode",
+                "runtime_mode TEXT NOT NULL DEFAULT 'host'",
+            )?;
+            add_column_if_missing(
+                &conn,
+                "engine_runs",
+                "toolset_policy_id",
+                "toolset_policy_id TEXT",
+            )?;
+            add_column_if_missing(&conn, "engine_runs", "channel_kind", "channel_kind TEXT")?;
+            add_column_if_missing(&conn, "engine_runs", "channel_ref", "channel_ref TEXT")?;
+            add_column_if_missing(&conn, "engine_run_events", "sequence", "sequence INTEGER")?;
+            add_column_if_missing(
+                &conn,
+                "engine_run_events",
+                "summary",
+                "summary TEXT NOT NULL DEFAULT ''",
+            )?;
+            add_column_if_missing(
+                &conn,
+                "engine_run_events",
+                "redaction_level",
+                "redaction_level TEXT NOT NULL DEFAULT 'none'",
+            )?;
+            conn.execute(
+                "UPDATE engine_run_events SET sequence = rowid WHERE sequence IS NULL",
+                [],
+            )?;
+            conn.execute_batch(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_engine_run_events_run_sequence
+                    ON engine_run_events(run_id, sequence);
+
+                CREATE TABLE IF NOT EXISTS engine_run_artifacts (
+                    id TEXT PRIMARY KEY,
+                    run_id TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    path TEXT NOT NULL,
+                    title TEXT,
+                    summary TEXT,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(run_id) REFERENCES engine_runs(id) ON DELETE CASCADE
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_engine_run_artifacts_run
+                    ON engine_run_artifacts(run_id, created_at DESC);
+
+                UPDATE schema_version SET version = 21;",
+            )?;
+        }
+
+        if version < 22 {
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS policy_settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL,
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+                );
+
+                UPDATE schema_version SET version = 22;",
+            )?;
         }
 
         Ok(())
@@ -2516,6 +2689,41 @@ impl Database {
         rows.collect()
     }
 
+    pub fn set_policy_setting(&self, key: &str, value: &str) -> SqlResult<()> {
+        let normalized_key = key.trim();
+        if normalized_key.is_empty() {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| rusqlite::Error::InvalidQuery)?;
+        conn.execute(
+            "INSERT INTO policy_settings (key, value, updated_at)
+             VALUES (?1, ?2, datetime('now'))
+             ON CONFLICT(key) DO UPDATE SET
+                value = excluded.value,
+                updated_at = excluded.updated_at",
+            params![normalized_key, value.trim()],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_policy_setting(&self, key: &str) -> SqlResult<Option<String>> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let mut stmt = conn.prepare("SELECT value FROM policy_settings WHERE key = ?1 LIMIT 1")?;
+        let mut rows = stmt.query(params![key.trim()])?;
+        if let Some(row) = rows.next()? {
+            Ok(Some(row.get(0)?))
+        } else {
+            Ok(None)
+        }
+    }
+
     // -- Artifact Versions --
 
     pub fn insert_artifact_version(
@@ -2846,7 +3054,7 @@ impl Database {
             .lock()
             .map_err(|_| rusqlite::Error::InvalidQuery)?;
         let mut stmt = conn.prepare(
-            "SELECT id, name, prompt, schedule_expr, next_run_at, task_kind, crew_id, crew_snapshot_json, model_config_json, priority, depends_on_task_ids_json, last_run_at
+            "SELECT id, name, prompt, schedule_expr, task_kind, crew_id, crew_snapshot_json, model_config_json, priority, depends_on_task_ids_json, active, last_run_at, next_run_at, created_at, updated_at
              FROM scheduled_tasks
              ORDER BY priority DESC, created_at DESC"
         )?;
@@ -3657,6 +3865,58 @@ impl Database {
         checkpoint_json: Option<&str>,
         metadata_json: Option<&str>,
     ) -> SqlResult<()> {
+        self.insert_engine_run_with_gateway_metadata(
+            id,
+            parent_run_id,
+            thread_id,
+            session_id,
+            title,
+            input_summary,
+            status,
+            phase,
+            cwd,
+            model,
+            provider,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            retry_count,
+            resumed_from_run_id,
+            checkpoint_json,
+            metadata_json,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn insert_engine_run_with_gateway_metadata(
+        &self,
+        id: &str,
+        parent_run_id: Option<&str>,
+        thread_id: Option<&str>,
+        session_id: Option<&str>,
+        title: &str,
+        input_summary: Option<&str>,
+        status: &str,
+        phase: &str,
+        cwd: Option<&str>,
+        model: Option<&str>,
+        provider: Option<&str>,
+        source: Option<&str>,
+        workspace_path: Option<&str>,
+        provider_profile_id: Option<&str>,
+        runtime_mode: Option<&str>,
+        toolset_policy_id: Option<&str>,
+        channel_kind: Option<&str>,
+        channel_ref: Option<&str>,
+        retry_count: i32,
+        resumed_from_run_id: Option<&str>,
+        checkpoint_json: Option<&str>,
+        metadata_json: Option<&str>,
+    ) -> SqlResult<()> {
         let conn = self
             .conn
             .lock()
@@ -3664,12 +3924,14 @@ impl Database {
         conn.execute(
             "INSERT INTO engine_runs (
                 id, parent_run_id, thread_id, session_id, title, input_summary, status, phase,
-                cwd, model, provider, retry_count, resumed_from_run_id, checkpoint_json,
+                cwd, model, provider, source, workspace_path, provider_profile_id, runtime_mode,
+                toolset_policy_id, channel_kind, channel_ref, retry_count, resumed_from_run_id, checkpoint_json,
                 metadata_json, created_at, updated_at, started_at
              ) VALUES (
                 ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8,
-                ?9, ?10, ?11, ?12, ?13, ?14,
-                ?15, datetime('now'), datetime('now'),
+                ?9, ?10, ?11, ?12, ?13, ?14, ?15,
+                ?16, ?17, ?18, ?19, ?20, ?21,
+                ?22, datetime('now'), datetime('now'),
                 CASE WHEN ?7 = 'running' THEN datetime('now') ELSE NULL END
              )",
             params![
@@ -3684,6 +3946,13 @@ impl Database {
                 cwd,
                 model,
                 provider,
+                source.unwrap_or("desktop"),
+                workspace_path,
+                provider_profile_id,
+                runtime_mode.unwrap_or("host"),
+                toolset_policy_id,
+                channel_kind,
+                channel_ref,
                 retry_count,
                 resumed_from_run_id,
                 checkpoint_json,
@@ -3701,35 +3970,14 @@ impl Database {
         let mut stmt = conn.prepare(
             "SELECT id, parent_run_id, thread_id, session_id, title, input_summary, status, phase,
                     cwd, model, provider, retry_count, resumed_from_run_id, checkpoint_json,
-                    result_summary, error, metadata_json, created_at, updated_at, started_at, ended_at, canceled_at
+                    result_summary, error, metadata_json, created_at, updated_at, started_at, ended_at, canceled_at,
+                    source, workspace_path, provider_profile_id, runtime_mode, toolset_policy_id,
+                    channel_kind, channel_ref
              FROM engine_runs WHERE id = ?1 LIMIT 1"
         )?;
         let mut rows = stmt.query(params![id])?;
         if let Some(row) = rows.next()? {
-            Ok(Some(EngineRunRow {
-                id: row.get(0)?,
-                parent_run_id: row.get(1)?,
-                thread_id: row.get(2)?,
-                session_id: row.get(3)?,
-                title: row.get(4)?,
-                input_summary: row.get(5)?,
-                status: row.get(6)?,
-                phase: row.get(7)?,
-                cwd: row.get(8)?,
-                model: row.get(9)?,
-                provider: row.get(10)?,
-                retry_count: row.get(11)?,
-                resumed_from_run_id: row.get(12)?,
-                checkpoint_json: row.get(13)?,
-                result_summary: row.get(14)?,
-                error: row.get(15)?,
-                metadata_json: row.get(16)?,
-                created_at: row.get(17)?,
-                updated_at: row.get(18)?,
-                started_at: row.get(19)?,
-                ended_at: row.get(20)?,
-                canceled_at: row.get(21)?,
-            }))
+            Ok(Some(map_engine_run_row(row)?))
         } else {
             Ok(None)
         }
@@ -3748,74 +3996,29 @@ impl Database {
             let mut stmt = conn.prepare(
                 "SELECT id, parent_run_id, thread_id, session_id, title, input_summary, status, phase,
                         cwd, model, provider, retry_count, resumed_from_run_id, checkpoint_json,
-                        result_summary, error, metadata_json, created_at, updated_at, started_at, ended_at, canceled_at
+                        result_summary, error, metadata_json, created_at, updated_at, started_at, ended_at, canceled_at,
+                        source, workspace_path, provider_profile_id, runtime_mode, toolset_policy_id,
+                        channel_kind, channel_ref
                  FROM engine_runs
                  WHERE status = ?1
                  ORDER BY updated_at DESC
                  LIMIT ?2"
             )?;
-            let mapped = stmt.query_map(params![status_filter, limit], |row| {
-                Ok(EngineRunRow {
-                    id: row.get(0)?,
-                    parent_run_id: row.get(1)?,
-                    thread_id: row.get(2)?,
-                    session_id: row.get(3)?,
-                    title: row.get(4)?,
-                    input_summary: row.get(5)?,
-                    status: row.get(6)?,
-                    phase: row.get(7)?,
-                    cwd: row.get(8)?,
-                    model: row.get(9)?,
-                    provider: row.get(10)?,
-                    retry_count: row.get(11)?,
-                    resumed_from_run_id: row.get(12)?,
-                    checkpoint_json: row.get(13)?,
-                    result_summary: row.get(14)?,
-                    error: row.get(15)?,
-                    metadata_json: row.get(16)?,
-                    created_at: row.get(17)?,
-                    updated_at: row.get(18)?,
-                    started_at: row.get(19)?,
-                    ended_at: row.get(20)?,
-                    canceled_at: row.get(21)?,
-                })
-            })?;
+            let mapped =
+                stmt.query_map(params![status_filter, limit], |row| map_engine_run_row(row))?;
             mapped.collect::<SqlResult<Vec<_>>>()?
         } else {
             let mut stmt = conn.prepare(
                 "SELECT id, parent_run_id, thread_id, session_id, title, input_summary, status, phase,
                         cwd, model, provider, retry_count, resumed_from_run_id, checkpoint_json,
-                        result_summary, error, metadata_json, created_at, updated_at, started_at, ended_at, canceled_at
+                        result_summary, error, metadata_json, created_at, updated_at, started_at, ended_at, canceled_at,
+                        source, workspace_path, provider_profile_id, runtime_mode, toolset_policy_id,
+                        channel_kind, channel_ref
                  FROM engine_runs
                  ORDER BY updated_at DESC
                  LIMIT ?1"
             )?;
-            let mapped = stmt.query_map(params![limit], |row| {
-                Ok(EngineRunRow {
-                    id: row.get(0)?,
-                    parent_run_id: row.get(1)?,
-                    thread_id: row.get(2)?,
-                    session_id: row.get(3)?,
-                    title: row.get(4)?,
-                    input_summary: row.get(5)?,
-                    status: row.get(6)?,
-                    phase: row.get(7)?,
-                    cwd: row.get(8)?,
-                    model: row.get(9)?,
-                    provider: row.get(10)?,
-                    retry_count: row.get(11)?,
-                    resumed_from_run_id: row.get(12)?,
-                    checkpoint_json: row.get(13)?,
-                    result_summary: row.get(14)?,
-                    error: row.get(15)?,
-                    metadata_json: row.get(16)?,
-                    created_at: row.get(17)?,
-                    updated_at: row.get(18)?,
-                    started_at: row.get(19)?,
-                    ended_at: row.get(20)?,
-                    canceled_at: row.get(21)?,
-                })
-            })?;
+            let mapped = stmt.query_map(params![limit], |row| map_engine_run_row(row))?;
             mapped.collect::<SqlResult<Vec<_>>>()?
         };
         Ok(rows)
@@ -3900,16 +4103,114 @@ impl Database {
         event_type: &str,
         payload_json: Option<&str>,
     ) -> SqlResult<()> {
+        self.insert_engine_run_event_with_details(id, run_id, event_type, None, payload_json, None)
+    }
+
+    pub fn insert_engine_run_event_with_details(
+        &self,
+        id: &str,
+        run_id: &str,
+        event_type: &str,
+        summary: Option<&str>,
+        payload_json: Option<&str>,
+        redaction_level: Option<&str>,
+    ) -> SqlResult<()> {
         let conn = self
             .conn
             .lock()
             .map_err(|_| rusqlite::Error::InvalidQuery)?;
         conn.execute(
-            "INSERT INTO engine_run_events (id, run_id, event_type, payload_json, created_at)
-             VALUES (?1, ?2, ?3, ?4, datetime('now'))",
-            params![id, run_id, event_type, payload_json],
+            "INSERT INTO engine_run_events (
+                id, run_id, sequence, event_type, summary, payload_json, redaction_level, created_at
+             ) VALUES (
+                ?1,
+                ?2,
+                (SELECT COALESCE(MAX(sequence), 0) + 1 FROM engine_run_events WHERE run_id = ?2),
+                ?3,
+                ?4,
+                ?5,
+                ?6,
+                datetime('now')
+             )",
+            params![
+                id,
+                run_id,
+                event_type,
+                summary.unwrap_or(event_type),
+                payload_json,
+                redaction_level.unwrap_or("none")
+            ],
+        )?;
+        conn.execute(
+            "UPDATE engine_runs SET updated_at = datetime('now') WHERE id = ?1",
+            params![run_id],
         )?;
         Ok(())
+    }
+
+    pub fn list_engine_run_events(
+        &self,
+        run_id: &str,
+        limit: i64,
+    ) -> SqlResult<Vec<EngineRunEventRow>> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let mut stmt = conn.prepare(
+            "SELECT id, run_id, sequence, event_type, summary, payload_json, redaction_level, created_at
+             FROM engine_run_events
+             WHERE run_id = ?1
+             ORDER BY sequence ASC
+             LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![run_id, limit], map_engine_run_event_row)?;
+        rows.collect()
+    }
+
+    pub fn insert_engine_run_artifact(
+        &self,
+        id: &str,
+        run_id: &str,
+        kind: &str,
+        path: &str,
+        title: Option<&str>,
+        summary: Option<&str>,
+    ) -> SqlResult<()> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| rusqlite::Error::InvalidQuery)?;
+        conn.execute(
+            "INSERT INTO engine_run_artifacts (id, run_id, kind, path, title, summary, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, datetime('now'))",
+            params![id, run_id, kind, path, title, summary],
+        )?;
+        conn.execute(
+            "UPDATE engine_runs SET updated_at = datetime('now') WHERE id = ?1",
+            params![run_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_engine_run_artifacts(
+        &self,
+        run_id: &str,
+        limit: i64,
+    ) -> SqlResult<Vec<EngineRunArtifactRow>> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let mut stmt = conn.prepare(
+            "SELECT id, run_id, kind, path, title, summary, created_at
+             FROM engine_run_artifacts
+             WHERE run_id = ?1
+             ORDER BY created_at DESC
+             LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![run_id, limit], map_engine_run_artifact_row)?;
+        rows.collect()
     }
 
     pub fn insert_engine_run_checkpoint(
@@ -4891,6 +5192,27 @@ impl Database {
 mod tests {
     use super::*;
 
+    fn insert_test_engine_run(db: &Database, id: &str) {
+        db.insert_engine_run(
+            id,
+            None,
+            None,
+            None,
+            "Test Run",
+            Some("test input"),
+            "pending",
+            "queued",
+            Some("C:/workspace"),
+            Some("gpt-test"),
+            Some("openai"),
+            0,
+            None,
+            None,
+            Some("{}"),
+        )
+        .unwrap();
+    }
+
     #[test]
     fn migration_creates_tables() {
         let db = Database::open_in_memory().unwrap();
@@ -5015,11 +5337,9 @@ mod tests {
 
         let resources = db.list_project_resources().unwrap();
         assert_eq!(resources.len(), 2);
-        assert!(
-            resources
-                .iter()
-                .any(|resource| resource.kind == "link" && !resource.enabled)
-        );
+        assert!(resources
+            .iter()
+            .any(|resource| resource.kind == "link" && !resource.enabled));
 
         let threads = db.list_project_threads().unwrap();
         assert_eq!(threads, vec![("p1".to_string(), "t1".to_string())]);
@@ -5129,5 +5449,156 @@ mod tests {
         assert_eq!(rows[0].0, "e1");
         assert_eq!(rows[0].1, "v1");
         assert_eq!(rows[0].2, "json");
+    }
+
+    #[test]
+    fn policy_settings_round_trip() {
+        let db = Database::open_in_memory().unwrap();
+
+        assert_eq!(
+            db.get_policy_setting("activeToolsetPolicyId").unwrap(),
+            None
+        );
+
+        db.set_policy_setting("activeToolsetPolicyId", "safe_research")
+            .unwrap();
+        assert_eq!(
+            db.get_policy_setting("activeToolsetPolicyId")
+                .unwrap()
+                .as_deref(),
+            Some("safe_research")
+        );
+
+        db.set_policy_setting("activeToolsetPolicyId", "code_edit")
+            .unwrap();
+        assert_eq!(
+            db.get_policy_setting("activeToolsetPolicyId")
+                .unwrap()
+                .as_deref(),
+            Some("code_edit")
+        );
+    }
+
+    #[test]
+    fn engine_runs_capture_gateway_metadata() {
+        let db = Database::open_in_memory().unwrap();
+        insert_test_engine_run(&db, "run-defaults");
+
+        let defaults = db.get_engine_run("run-defaults").unwrap().unwrap();
+        assert_eq!(defaults.source, "desktop");
+        assert_eq!(defaults.runtime_mode, "host");
+        assert_eq!(defaults.workspace_path, None);
+        assert_eq!(defaults.provider_profile_id, None);
+        assert_eq!(defaults.toolset_policy_id, None);
+
+        db.insert_engine_run_with_gateway_metadata(
+            "run-gateway",
+            None,
+            Some("thread-1"),
+            None,
+            "Gateway Run",
+            None,
+            "running",
+            "planning",
+            Some("C:/workspace"),
+            Some("claude-sonnet"),
+            Some("anthropic"),
+            Some("cli"),
+            Some("C:/workspace"),
+            Some("anthropic-default"),
+            Some("subprocess"),
+            Some("policy-strict"),
+            Some("desktop-thread"),
+            Some("thread-1"),
+            1,
+            None,
+            Some("{\"step\":1}"),
+            Some("{\"gateway\":true}"),
+        )
+        .unwrap();
+
+        let run = db.get_engine_run("run-gateway").unwrap().unwrap();
+        assert_eq!(run.source, "cli");
+        assert_eq!(run.workspace_path.as_deref(), Some("C:/workspace"));
+        assert_eq!(
+            run.provider_profile_id.as_deref(),
+            Some("anthropic-default")
+        );
+        assert_eq!(run.runtime_mode, "subprocess");
+        assert_eq!(run.toolset_policy_id.as_deref(), Some("policy-strict"));
+        assert_eq!(run.channel_kind.as_deref(), Some("desktop-thread"));
+        assert_eq!(run.channel_ref.as_deref(), Some("thread-1"));
+        assert!(run.started_at.is_some());
+    }
+
+    #[test]
+    fn engine_run_events_are_ordered_and_summarized() {
+        let db = Database::open_in_memory().unwrap();
+        insert_test_engine_run(&db, "run-events");
+
+        db.insert_engine_run_event("event-1", "run-events", "started", None)
+            .unwrap();
+        db.insert_engine_run_event_with_details(
+            "event-2",
+            "run-events",
+            "tool_call",
+            Some("Shell command completed"),
+            Some("{\"exitCode\":0}"),
+            Some("metadata"),
+        )
+        .unwrap();
+
+        let events = db.list_engine_run_events("run-events", 10).unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].sequence, 1);
+        assert_eq!(events[0].event_type, "started");
+        assert_eq!(events[0].summary, "started");
+        assert_eq!(events[0].redaction_level, "none");
+        assert_eq!(events[1].sequence, 2);
+        assert_eq!(events[1].summary, "Shell command completed");
+        assert_eq!(events[1].payload_json.as_deref(), Some("{\"exitCode\":0}"));
+        assert_eq!(events[1].redaction_level, "metadata");
+    }
+
+    #[test]
+    fn engine_run_artifacts_round_trip_and_cascade() {
+        let db = Database::open_in_memory().unwrap();
+        insert_test_engine_run(&db, "run-artifacts");
+
+        db.insert_engine_run_artifact(
+            "artifact-1",
+            "run-artifacts",
+            "patch",
+            "C:/workspace/changes.diff",
+            Some("Proposed patch"),
+            Some("Patch generated by the agent"),
+        )
+        .unwrap();
+        db.insert_engine_run_event("event-1", "run-artifacts", "artifact_created", None)
+            .unwrap();
+
+        let artifacts = db.list_engine_run_artifacts("run-artifacts", 10).unwrap();
+        assert_eq!(artifacts.len(), 1);
+        assert_eq!(artifacts[0].kind, "patch");
+        assert_eq!(artifacts[0].path, "C:/workspace/changes.diff");
+        assert_eq!(artifacts[0].title.as_deref(), Some("Proposed patch"));
+
+        {
+            let conn = db.conn.lock().unwrap();
+            conn.execute(
+                "DELETE FROM engine_runs WHERE id = ?1",
+                rusqlite::params!["run-artifacts"],
+            )
+            .unwrap();
+        }
+
+        assert!(db
+            .list_engine_run_artifacts("run-artifacts", 10)
+            .unwrap()
+            .is_empty());
+        assert!(db
+            .list_engine_run_events("run-artifacts", 10)
+            .unwrap()
+            .is_empty());
     }
 }

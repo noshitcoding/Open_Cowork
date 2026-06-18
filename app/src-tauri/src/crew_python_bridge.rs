@@ -216,23 +216,13 @@ impl CrewPythonBridge {
             command
         }
         .status()
-        .map_err(|error| {
-            format!(
-                "Crew runtime process could not be stopped: {}",
-                error
-            )
-        })?;
+        .map_err(|error| format!("Crew runtime process could not be stopped: {}", error))?;
 
         #[cfg(not(target_os = "windows"))]
         let status = Command::new("kill")
             .args(["-TERM", &pid.to_string()])
             .status()
-            .map_err(|error| {
-                format!(
-                    "Crew runtime process could not be stopped: {}",
-                    error
-                )
-            })?;
+            .map_err(|error| format!("Crew runtime process could not be stopped: {}", error))?;
 
         Ok(status.success())
     }
@@ -242,12 +232,7 @@ fn resolve_runtime_root<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, Strin
     app.path()
         .app_data_dir()
         .map(|path| path.join("crew-runtime"))
-        .map_err(|error| {
-            format!(
-                "Crew runtime root could not be resolved: {}",
-                error
-            )
-        })
+        .map_err(|error| format!("Crew runtime root could not be resolved: {}", error))
 }
 
 fn dev_script_dir() -> PathBuf {
@@ -316,12 +301,8 @@ fn ensure_compatible_base_python<R: Runtime>(app: &AppHandle<R>) -> Result<Strin
     if let Ok(path) = std::env::var(ENV_CREW_PYTHON) {
         let command = path.trim();
         if !command.is_empty() && command_available(command) {
-            let version = read_python_version(command).ok_or_else(|| {
-                format!(
-                    "Python version for {} could not be determined",
-                    command
-                )
-            })?;
+            let version = read_python_version(command)
+                .ok_or_else(|| format!("Python version for {} could not be determined", command))?;
             if python_version_supported(&version) {
                 return Ok(command.to_string());
             }
@@ -353,7 +334,10 @@ fn ensure_compatible_base_python<R: Runtime>(app: &AppHandle<R>) -> Result<Strin
 
     #[cfg(not(target_os = "windows"))]
     {
-        Err("No compatible Python interpreter available. Python 3.10 through 3.13 is supported.".to_string())
+        Err(
+            "No compatible Python interpreter available. Python 3.10 through 3.13 is supported."
+                .to_string(),
+        )
     }
 }
 
@@ -376,21 +360,13 @@ fn ensure_managed_uv<R: Runtime>(app: &AppHandle<R>) -> Result<String, String> {
     fs::create_dir_all(uv_dir)
         .map_err(|error| format!("uv target folder could not be created: {}", error))?;
     let downloads_dir = runtime_root.join("downloads");
-    fs::create_dir_all(&downloads_dir).map_err(|error| {
-        format!(
-            "download folder for uv could not be created: {}",
-            error
-        )
-    })?;
+    fs::create_dir_all(&downloads_dir)
+        .map_err(|error| format!("download folder for uv could not be created: {}", error))?;
     let archive_path = downloads_dir.join(format!("uv-{}-x86_64-pc-windows-msvc.zip", UV_VERSION));
 
     if !archive_path.exists() {
-        let response = reqwest::blocking::get(UV_WINDOWS_DOWNLOAD_URL).map_err(|error| {
-            format!(
-                "uv {} could not be downloaded: {}",
-                UV_VERSION, error
-            )
-        })?;
+        let response = reqwest::blocking::get(UV_WINDOWS_DOWNLOAD_URL)
+            .map_err(|error| format!("uv {} could not be downloaded: {}", UV_VERSION, error))?;
         if !response.status().is_success() {
             return Err(format!(
                 "uv {} Download fehlgeschlagen: HTTP {}",
@@ -416,12 +392,8 @@ fn ensure_managed_uv<R: Runtime>(app: &AppHandle<R>) -> Result<String, String> {
 #[cfg(target_os = "windows")]
 fn install_managed_python(uv: &str, runtime_root: &Path) -> Result<(), String> {
     let python_install_dir = runtime_root.join("python").join("managed");
-    fs::create_dir_all(&python_install_dir).map_err(|error| {
-        format!(
-            "Python installation folder could not be created: {}",
-            error
-        )
-    })?;
+    fs::create_dir_all(&python_install_dir)
+        .map_err(|error| format!("Python installation folder could not be created: {}", error))?;
 
     let mut command = Command::new(uv);
     command
@@ -773,12 +745,9 @@ where
         .stderr(Stdio::piped());
     suppress_command_window(&mut command);
 
-    let mut child = command.spawn().map_err(|error| {
-        format!(
-            "Crew runtime process could not be started: {}",
-            error
-        )
-    })?;
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("Crew runtime process could not be started: {}", error))?;
     let active_key = active_run.map(|(bridge, run_id)| {
         bridge.set_active_run(run_id.to_string(), child.id());
         (bridge, run_id.to_string())
@@ -968,9 +937,8 @@ fn crew_runtime_status_internal<R: Runtime>(
     ensure_bundled_runtime_assets(app)?;
     let runtime_root = resolve_runtime_root(&app)?;
     if !runtime_root.exists() {
-        fs::create_dir_all(&runtime_root).map_err(|error| {
-            format!("Crew runtime root could not be created: {}", error)
-        })?;
+        fs::create_dir_all(&runtime_root)
+            .map_err(|error| format!("Crew runtime root could not be created: {}", error))?;
     }
 
     let scripts_path = resolve_runtime_scripts_path(&app);
@@ -1091,12 +1059,8 @@ pub fn crew_runtime_bootstrap(
         true
     };
     if venv_root.exists() && (force_reinstall || !venv_python_supported) {
-        fs::remove_dir_all(&venv_root).map_err(|error| {
-            format!(
-                "Existing crew runtime could not be removed: {}",
-                error
-            )
-        })?;
+        fs::remove_dir_all(&venv_root)
+            .map_err(|error| format!("Existing crew runtime could not be removed: {}", error))?;
     }
 
     if !venv_python.exists() {
@@ -1118,9 +1082,9 @@ pub fn crew_runtime_bootstrap(
             command.args(["-m", "venv", venv_root.to_string_lossy().as_ref()]);
         }
         suppress_command_window(&mut command);
-        let status = command.status().map_err(|error| {
-            format!("Crew runtime venv could not be created: {}", error)
-        })?;
+        let status = command
+            .status()
+            .map_err(|error| format!("Crew runtime venv could not be created: {}", error))?;
         if !status.success() {
             return Err("Crew runtime venv-Erstellung fehlgeschlagen".to_string());
         }
@@ -1204,19 +1168,13 @@ where
 {
     let status = crew_runtime_status_internal(app, bridge)?;
     if !status.ready {
-        return Err(
-            "Crew runtime is not prepared. Run runtime initialization first."
-                .to_string(),
-        );
+        return Err("Crew runtime is not prepared. Run runtime initialization first.".to_string());
     }
 
     let runtime_root = resolve_runtime_root(app)?;
     let venv_python = resolve_venv_python_path(&runtime_root);
     if !venv_python.exists() {
-        return Err(
-            "Crew runtime is not prepared. Run runtime initialization first."
-                .to_string(),
-        );
+        return Err("Crew runtime is not prepared. Run runtime initialization first.".to_string());
     }
 
     let scripts_path = resolve_runtime_scripts_path(app);
@@ -1255,10 +1213,7 @@ pub fn crew_runtime_validate_definition(
     let runtime_root = resolve_runtime_root(&app)?;
     let venv_python = resolve_venv_python_path(&runtime_root);
     if !venv_python.exists() {
-        return Err(
-            "Crew runtime is not prepared. Run runtime initialization first."
-                .to_string(),
-        );
+        return Err("Crew runtime is not prepared. Run runtime initialization first.".to_string());
     }
 
     let scripts_path = resolve_runtime_scripts_path(&app);

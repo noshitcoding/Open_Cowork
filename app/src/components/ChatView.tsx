@@ -1,6 +1,7 @@
 import { useRef, useEffect, useMemo, useState, useCallback } from 'react'
 import type { ClipboardEvent, FormEvent } from 'react'
 import { open } from '@tauri-apps/plugin-dialog'
+import { LockKeyhole } from 'lucide-react'
 import { useChatStore, getActiveThread } from '../stores/chatStore'
 import type { LiveToolCall, LiveToolCallStatus, PermissionMode, PermissionConfig } from '../stores/chatStore'
 
@@ -191,8 +192,8 @@ function AskUserForm({ call, onRespond }: { call: LiveToolCall; onRespond: (answ
   const options = call.options ?? []
   const allowMultiple = call.allowMultiple ?? false
   const allowFreeform = call.allowFreeformInput ?? true
-  const freeTextLabel = call.freeTextLabel || 'Freitext'
-  const freeTextPlaceholder = call.freeTextPlaceholder || 'Add optional details...'
+  const freeTextLabel = call.freeTextLabel || tr("Free text")
+  const freeTextPlaceholder = call.freeTextPlaceholder || tr("Add optional details...")
 
   const handleToggleOption = (value: string) => {
     if (allowMultiple) {
@@ -260,23 +261,6 @@ function AskUserForm({ call, onRespond }: { call: LiveToolCall; onRespond: (answ
   )
 }
 
-function getStatusDotColor(status: LiveToolCallStatus): string {
-  switch (status) {
-    case 'requested':
-      return 'var(--info)'
-    case 'running':
-      return 'var(--accent)'
-    case 'approval':
-      return 'var(--warning)'
-    case 'waiting_input':
-      return 'var(--info)'
-    case 'completed':
-      return 'var(--success)'
-    case 'failed':
-      return 'var(--danger)'
-  }
-}
-
 function LiveToolCalls({ calls, onAskUserRespond }: {
   calls?: LiveToolCall[]
   onAskUserRespond?: (callId: string, answer: string) => void
@@ -299,9 +283,8 @@ function LiveToolCalls({ calls, onAskUserRespond }: {
           >
             <summary className="live-tool-call-header">
               <span
-                className="live-tool-call-dot"
+                className={`live-tool-call-dot ${call.status}`}
                 aria-hidden="true"
-                style={{ backgroundColor: getStatusDotColor(call.status) }}
               />
               <span className="live-tool-call-name">
                 {call.toolName}
@@ -321,7 +304,7 @@ function LiveToolCalls({ calls, onAskUserRespond }: {
                   )}
                   {resultPreview && (
                     <div className="live-tool-call-section">
-                      <div className="live-tool-call-section-label">{call.error ? 'Error' : 'Result'}</div>
+                      <div className="live-tool-call-section-label">{call.error ? tr("Error") : tr("Result")}</div>
                       <pre>{resultPreview}</pre>
                     </div>
                   )}
@@ -705,7 +688,7 @@ export default function ChatView() {
         })
         addMessage(activeThreadId, {
           role: 'assistant',
-          content: `⚡ Command ${cmdName} executed: ${matchedCmd.label}`,
+          content: `${tr('Command')} ${cmdName} ${tr('executed')}: ${matchedCmd.label}`,
           timestamp: Date.now(),
         })
         executeSlashCommand(matchedCmd.id, cmdArgs || undefined)
@@ -1325,7 +1308,11 @@ export default function ChatView() {
               {allowedDirectories.map(dir => (
                 <span key={dir} className="directory-chip">
                   {dir}
-                  <button type="button" onClick={() => handleRemoveDirectory(dir)}>{tr("×")}</button>
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveDirectory(dir)}
+                    aria-label={`${tr("Remove")}: ${dir}`}
+                  ><span aria-hidden="true">x</span></button>
                 </span>
               ))}
             </div>
@@ -1350,7 +1337,10 @@ export default function ChatView() {
         type="button"
         className="permission-config-toggle"
         onClick={() => setShowPermissionConfig(!showPermissionConfig)}
-      >{tr("🔒 Permissions")}</button>
+      >
+        <LockKeyhole size={16} aria-hidden="true" />
+        {tr("Permissions")}
+      </button>
 
       <div className="chat-log" ref={logRef}>
         {visibleMessages.map((msg, index) => {
@@ -1371,11 +1361,11 @@ export default function ChatView() {
           return (
           <div key={msg.id} className={`cowork-msg ${msg.role}${msg.crewLive ? ' crew-live-message' : ''}`}>
             <div className="msg-avatar">
-              {msg.role === 'user' ? '👤' : msg.role === 'assistant' ? '✦' : '⚙️'}
+              {msg.role === 'user' ? tr("You") : msg.role === 'assistant' ? 'AI' : tr("System")}
             </div>
             <div className="msg-body">
               <div className="msg-role">
-                {msg.role === 'user' ? 'Du' : msg.role === 'assistant' ? 'Open_Cowork' : 'System'}
+                {msg.role === 'user' ? tr("You") : msg.role === 'assistant' ? 'Open_Cowork' : tr("System")}
               </div>
               {msg.crewLive ? (
                 <CrewLiveMonitor live={msg.crewLive} />
@@ -1418,7 +1408,7 @@ export default function ChatView() {
                   <div className="message-attachments">
                     {attachmentsForMessage.map((item) => (
                       <span key={`${item.kind}-${item.path}`} className="message-attachment-chip" title={item.label ?? item.path}>
-                        {item.kind === 'folder' ? '📁' : isImageAttachment(item) ? '🖼️' : '📄'} {getAttachmentDisplayName(item)}
+                        {item.kind === 'folder' ? tr('Folder') : isImageAttachment(item) ? tr('Image') : tr('File')}: {getAttachmentDisplayName(item)}
                       </span>
                     ))}
                   </div>
@@ -1442,7 +1432,7 @@ export default function ChatView() {
         })}
         {busy && !activeMessages.some((msg) => msg.streaming) && (
           <div className="cowork-msg assistant">
-            <div className="msg-avatar">✦</div>
+            <div className="msg-avatar">AI</div>
             <div className="msg-body">
               <div className="msg-role">{tr("Open_Cowork")}</div>
               <div className="msg-content typing">
@@ -1458,7 +1448,7 @@ export default function ChatView() {
       {approvalSteps.length > 0 && (
         <div className="approval-banner">
           <div className="approval-header">
-            <span className="approval-icon">⚠️</span>
+            <span className="approval-icon" aria-hidden="true">!</span>
             <span>{tr("These steps require your approval:")}</span>
           </div>
           <ol className="approval-steps">
@@ -1467,8 +1457,8 @@ export default function ChatView() {
             ))}
           </ol>
           <div className="approval-actions">
-            <button type="button" className="btn-approve" onClick={handleApprove} disabled={busy}>{tr("✓ Approve")}</button>
-            <button type="button" className="btn-reject" onClick={handleReject} disabled={busy}>{tr("✗ Reject")}</button>
+            <button type="button" className="btn-approve" onClick={handleApprove} disabled={busy}>{tr("Approve")}</button>
+            <button type="button" className="btn-reject" onClick={handleReject} disabled={busy}>{tr("Reject")}</button>
           </div>
         </div>
       )}
@@ -1503,24 +1493,19 @@ export default function ChatView() {
                   </option>
                 ))
               ) : (
-                <option value={providerState.model}>{providerState.model || 'no model set'}</option>
+                <option value={providerState.model}>{providerState.model || tr('no model set')}</option>
               )}
               {selectableModels.length > 0 && providerState.model && !selectableModels.includes(providerState.model) && (
                 <option value={providerState.model}>{providerState.model}</option>
               )}
             </select>
             <p
-              className="hint-text"
-              style={{
-                marginTop: 6,
-                maxWidth: 460,
-                color: (modelNotice || !selectedModelAvailable) ? 'var(--danger)' : 'var(--text-muted)',
-              }}
+              className={`hint-text chat-model-hint${(modelNotice || !selectedModelAvailable) ? ' is-error' : ''}`}
             >
               {modelNotice
                 ?? (providerState.provider === 'ollama' && modelCapabilities
-                  ? `Endpoint: ${providerState.endpoint} | Modelfamilie: ${modelCapabilities.family} | ${modelCapabilities.supportsTools ? 'Tool-Calls enabled' : 'Tool-Calls disabled'}`
-                  : `Endpoint: ${providerState.endpoint || 'not set'} | Provider: ${providerState.label}`)}
+                  ? `${tr("Endpoint:")} ${providerState.endpoint} | ${tr("Model family:")} ${modelCapabilities.family} | ${modelCapabilities.supportsTools ? tr("Tool calls enabled") : tr("Tool calls disabled")}`
+                  : `${tr("Endpoint:")} ${providerState.endpoint || tr("not set")} | ${tr("Provider:")} ${providerState.label}`)}
             </p>
           </label>
           <div className="attachment-actions">
@@ -1534,15 +1519,15 @@ export default function ChatView() {
               {attachments.map((item) => (
                   <span key={`${item.kind}-${item.path}`} className="attachment-chip" title={item.label ?? item.path}>
                   <span className="attachment-chip-label">
-                      {item.kind === 'folder' ? 'Folder' : isImageAttachment(item) ? 'Image' : 'File'}: {getAttachmentDisplayName(item)}
+                      {item.kind === 'folder' ? tr('Folder') : isImageAttachment(item) ? tr('Image') : tr('File')}: {getAttachmentDisplayName(item)}
                   </span>
                   <button
                     type="button"
                     className="attachment-remove"
                     onClick={() => handleRemoveAttachment(item)}
-                      aria-label={`attachment entfernen: ${getAttachmentDisplayName(item)}`}
+                      aria-label={`${tr("Remove attachment")}: ${getAttachmentDisplayName(item)}`}
                     disabled={busy}
-                  >{tr("×")}</button>
+                  ><span aria-hidden="true">x</span></button>
                 </span>
               ))}
             </div>
@@ -1551,27 +1536,21 @@ export default function ChatView() {
           {attachmentNotice && <p className="attachment-notice">{attachmentNotice}</p>}
 
           {slashSuggestions.length > 0 && (
-            <div style={{
-              position: 'absolute', bottom: '100%', left: 0, right: 0,
-              background: 'var(--bg-secondary)', border: '1px solid var(--border-color)',
-              borderRadius: 'var(--radius-sm)', marginBottom: 4, maxHeight: 200, overflow: 'auto',
-              zIndex: 10,
-            }}>
+            <div className="slash-command-menu chat-slash-command-menu">
               {slashSuggestions.map(cmd => {
                 const full = registryCommands.find(c => c.command === cmd)
                 return (
-                  <button key={cmd} type="button" style={{
-                    display: 'block', width: '100%', textAlign: 'left', padding: '6px 10px',
-                    background: 'transparent', border: 'none', cursor: 'pointer',
-                    color: 'var(--text-primary)', fontSize: 13,
-                  }}
+                  <button
+                    key={cmd}
+                    type="button"
+                    className="slash-command-option"
                   onClick={() => {
                     if (inputRef.current) inputRef.current.value = cmd + ' '
                     setSlashSuggestions([])
                     inputRef.current?.focus()
                   }}>
-                    <span style={{ color: 'var(--accent)', fontFamily: 'monospace', marginRight: 8 }}>{cmd}</span>
-                    <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{full?.label}</span>
+                    <span className="slash-command-usage">{cmd}</span>
+                    <span className="slash-command-description">{full?.label}</span>
                   </button>
                 )
               })}
@@ -1581,6 +1560,7 @@ export default function ChatView() {
           <textarea
             ref={inputRef}
             rows={2}
+            aria-label={tr("Message input")}
             placeholder={tr("Send message or /command...")}
             disabled={busy}
             onChange={(e) => handleInputChange(e.target.value)}
@@ -1595,10 +1575,9 @@ export default function ChatView() {
         </div>
 
         {busy ? (
-          <button type="button" onClick={handleStop} className="btn-stop">{tr("⏹ Stopp")}</button>
+          <button type="button" onClick={handleStop} className="btn-stop">{tr("Stop")}</button>
         ) : (
-          <button type="submit" disabled={busy} className="btn-send">{tr("Send")}{'->'}
-          </button>
+          <button type="submit" disabled={busy} className="btn-send">{tr("Send")}</button>
         )}
       </form>
     </div>

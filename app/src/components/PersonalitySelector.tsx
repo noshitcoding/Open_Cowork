@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Trash2 } from 'lucide-react'
 import { usePersonalityStore, type Personality } from '../stores/personalityStore'
 import { useConfigStore } from '../stores/configStore'
 import type { AgentRole } from '../stores/crewStore'
@@ -203,56 +204,59 @@ export default function PersonalitySelector() {
       ) : personalities.length === 0 ? (
         <p className="panel-empty">{tr("No personalities configured. Create one to adjust the agent style.")}</p>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div className="personality-list">
           {personalities.map((personality) => (
             <div
               key={personality.id}
-              className="card"
-              style={{
-                border: activeId === personality.id ? '2px solid var(--accent)' : '1px solid transparent',
-                cursor: 'pointer',
-              }}
-              onClick={() => setActive(personality.id)}
+              className={`card personality-card${activeId === personality.id ? ' active' : ''}`}
             >
               {editId === personality.id ? (
-                <div onClick={(event) => event.stopPropagation()}>
-                  <PersonalityEditor
-                    form={editForm}
-                    availableModels={availableModels}
-                    onChange={setEditForm}
-                    onSave={handleEdit}
-                    onCancel={() => {
-                      setEditId(null)
-                      setEditForm(EMPTY_FORM)
-                    }}
-                    showDefaultToggle
-                  />
-                </div>
+                <PersonalityEditor
+                  form={editForm}
+                  availableModels={availableModels}
+                  onChange={setEditForm}
+                  onSave={handleEdit}
+                  onCancel={() => {
+                    setEditId(null)
+                    setEditForm(EMPTY_FORM)
+                  }}
+                  showDefaultToggle
+                />
               ) : (
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
-                  <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
-                    <span style={{ fontSize: 18, minWidth: 28 }}>{personality.icon || 'AI'}</span>
-                    <div>
-                      <div style={{ fontWeight: 600, fontSize: 14 }}>
+                <div className="personality-card-row">
+                  <button
+                    type="button"
+                    className="personality-card-main"
+                    aria-pressed={activeId === personality.id}
+                    aria-label={`${tr("Select personality")} ${personality.name}`}
+                    onClick={() => setActive(personality.id)}
+                  >
+                    <span className="personality-card-icon">{personality.icon || 'AI'}</span>
+                    <div className="personality-card-body">
+                      <div className="personality-card-title">
                         {personality.name}
-                        {activeId === personality.id && <span style={{ fontSize: 10, color: 'var(--accent)', marginLeft: 6 }}>{tr("active")}</span>}
-                        {personality.is_default && <span style={{ fontSize: 10, color: 'var(--info)', marginLeft: 6 }}>{tr("Standard")}</span>}
+                        {activeId === personality.id && <span className="personality-card-badge active">{tr("active")}</span>}
+                        {personality.is_default && <span className="personality-card-badge default">{tr("Standard")}</span>}
                       </div>
-                      <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>{personality.goal || personality.description}</div>
-                      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4, display: 'flex', gap: 10 }}>
-                        <span>{tr("Rolle:")}{personality.role}</span>
-                        {personality.model_override && <span>{tr("Model:")}{personality.model_override}</span>}
-                        {personality.temperature != null && <span>{tr("Temp:")}{personality.temperature}</span>}
+                      <div className="personality-card-description">{personality.goal || personality.description}</div>
+                      <div className="personality-card-meta">
+                        <span>{tr("Rolle:")} {personality.role}</span>
+                        {personality.model_override && <span>{tr("Model:")} {personality.model_override}</span>}
+                        {personality.temperature != null && <span>{tr("Temp:")} {personality.temperature}</span>}
                       </div>
                     </div>
-                  </div>
-                  <div style={{ display: 'flex', gap: 6 }}>
-                    <button type="button" className="btn-sm" onClick={(event) => { event.stopPropagation(); startEdit(personality) }}>{tr("Edit")}</button>
+                  </button>
+                  <div className="personality-card-actions">
+                    <button type="button" className="btn-sm" onClick={() => startEdit(personality)}>{tr("Edit")}</button>
                     <button
                       type="button"
-                      onClick={(event) => { event.stopPropagation(); void deletePersonality(personality.id).then(loadPersonalities) }}
-                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger)', fontSize: 14 }}
-                    >{tr("x")}</button>
+                      className="btn-sm personality-delete-button"
+                      onClick={() => { void deletePersonality(personality.id).then(loadPersonalities) }}
+                      aria-label={`${tr("Delete personality")} ${personality.name}`}
+                      title={tr("Delete personality")}
+                    >
+                      <Trash2 size={14} aria-hidden="true" />
+                    </button>
                   </div>
                 </div>
               )}

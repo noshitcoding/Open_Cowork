@@ -74,12 +74,12 @@ function getEffectiveWelcomeCwd(
 }
 
 const QUICK_ACTIONS = [
-  { icon: '📄', title: 'Create file', prompt: 'Create a new file' },
-  { icon: '📊', title: 'Analyze data', prompt: 'Analyze data' },
-  { icon: '🎨', title: 'Build prototype', prompt: 'Build a prototype' },
-  { icon: '📂', title: 'Organize files', prompt: 'Organize my files' },
-  { icon: '📝', title: 'Prepare meeting', prompt: 'Prepare a meeting' },
-  { icon: '✉️', title: 'Draft message', prompt: 'Draft a message' },
+  { icon: 'FI', title: 'Create file', prompt: 'Create a new file' },
+  { icon: 'DA', title: 'Analyze data', prompt: 'Analyze data' },
+  { icon: 'PR', title: 'Build prototype', prompt: 'Build a prototype' },
+  { icon: 'FO', title: 'Organize files', prompt: 'Organize my files' },
+  { icon: 'MT', title: 'Prepare meeting', prompt: 'Prepare a meeting' },
+  { icon: 'MS', title: 'Draft message', prompt: 'Draft a message' },
 ]
 
 export default function WelcomeScreen() {
@@ -166,8 +166,7 @@ export default function WelcomeScreen() {
         setUseFolder(true)
       }
     } catch {
-      const label = kind === 'folder' ? 'Folder path' : 'File path'
-      const path = window.prompt(`${label} eingeben:`)
+      const path = window.prompt(kind === 'folder' ? tr('Enter folder path:') : tr('Enter file path:'))
       if (path) {
         setWorkingPath(path, kind)
         setUseFolder(true)
@@ -569,9 +568,9 @@ export default function WelcomeScreen() {
     <div className="welcome-screen">
       <div className="welcome-content">
         <div className="welcome-hero">
-          <div className="welcome-icon">✦</div>
+          <div className="welcome-icon">AI</div>
           <h1 className="welcome-heading">{tr("What should we get done today?")}</h1>
-          <p className="welcome-subheading">{tr("Open_Cowork can plan tasks, execute work, and manage files — all locally on your computer.")}</p>
+          <p className="welcome-subheading">{tr("Open_Cowork can plan tasks, execute work, and manage files - all locally on your computer.")}</p>
         </div>
 
         <div className="quick-actions-grid">
@@ -580,11 +579,11 @@ export default function WelcomeScreen() {
               key={action.title}
               type="button"
               className="quick-action-card"
-              onClick={(e) => handleSubmit(e, action.prompt)}
+              onClick={(e) => handleSubmit(e, tr(action.prompt))}
               disabled={busy}
             >
               <span className="quick-action-icon">{action.icon}</span>
-              <span className="quick-action-title">{action.title}</span>
+              <span className="quick-action-title">{tr(action.title)}</span>
             </button>
           ))}
         </div>
@@ -632,7 +631,7 @@ export default function WelcomeScreen() {
                   >{tr("File choose")}</button>
                   {selectedPathName && (
                     <span className="selected-path" title={workingFolder ?? undefined}>
-                      {workingPathKind === 'file' ? 'File' : 'Folder'}: {selectedPathName}
+                      {workingPathKind === 'file' ? tr('File') : tr('Folder')}: {selectedPathName}
                     </span>
                   )}
                 </div>
@@ -685,7 +684,7 @@ export default function WelcomeScreen() {
               </select>
 
               <button type="submit" className="btn-go" disabled={busy}>
-                {busy ? tr('Running...') : "Los geht's →"}
+                {busy ? tr('Running...') : tr("Let's go")}
               </button>
             </div>
           </div>
@@ -695,15 +694,15 @@ export default function WelcomeScreen() {
               {attachments.map((item) => (
                 <span key={`${item.kind}-${item.path}`} className="attachment-chip" title={item.path}>
                   <span className="attachment-chip-label">
-                    {item.kind === 'folder' ? 'Folder' : 'File'}: {getPathName(item.path)}
+                    {item.kind === 'folder' ? tr('Folder') : tr('File')}: {getPathName(item.path)}
                   </span>
                   <button
                     type="button"
                     className="attachment-remove"
                     onClick={() => handleRemoveAttachment(item)}
-                    aria-label={`attachment entfernen: ${item.path}`}
+                    aria-label={`${tr("Remove attachment")}: ${item.path}`}
                     disabled={busy}
-                  >{tr("×")}</button>
+                  ><span aria-hidden="true">x</span></button>
                 </span>
               ))}
             </div>
@@ -716,9 +715,9 @@ export default function WelcomeScreen() {
         <div className="connectors-section">
           <p className="connectors-title">{tr("Connect your tools with Open_Cowork")}</p>
           <div className="connector-icons">
-            <span className="connector-badge" title={tr("MCP Server")}>{tr("🔌 MCP")}</span>
-            <span className="connector-badge" title={tr("Filesystem")}>{tr("📂 Files")}</span>
-            <span className="connector-badge" title={tr("Ollama")}>{tr("🤖 Ollama")}</span>
+            <span className="connector-badge" title={tr("MCP Server")}>{tr("MCP")}</span>
+            <span className="connector-badge" title={tr("Filesystem")}>{tr("Files")}</span>
+            <span className="connector-badge" title={tr("Ollama")}>{tr("Ollama")}</span>
           </div>
         </div>
       </div>

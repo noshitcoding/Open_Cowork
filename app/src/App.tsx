@@ -1,5 +1,5 @@
 import { lazy, useEffect, type ReactNode } from 'react'
-import { MemoryRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { confirm as confirmDialog } from '@tauri-apps/plugin-dialog'
 import Layout from './components/Layout'
@@ -27,11 +27,20 @@ const SettingsView = lazy(() => import('./components/SettingsView'))
 const TasksView = lazy(() => import('./components/TasksView'))
 const CrewView = lazy(() => import('./components/CrewView'))
 const ProjectView = lazy(() => import('./components/ProjectView'))
+const FeaturesView = lazy(() => import('./components/FeaturesView'))
 
 type BackendPolicyState = {
   flags: Record<string, boolean>
   denyRules: string[]
   enabledToolIds: string[]
+  activeToolsetPolicyId?: string
+  toolsetPolicies?: Array<{
+    id: string
+    label: string
+    description: string
+    riskLevel: string
+    toolIds: string[]
+  }>
 }
 
 function hideBootLoader(): void {
@@ -116,6 +125,13 @@ function AppRoutes() {
         } />
         <Route path="crew" element={<RouteReady><CrewView /></RouteReady>} />
         <Route path="projects" element={<RouteReady><ProjectView /></RouteReady>} />
+        <Route path="features" element={
+          <RouteReady>
+            <div className="code-mode" style={{ overflow: 'auto', height: '100%' }}>
+              <FeaturesView />
+            </div>
+          </RouteReady>
+        } />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>
@@ -145,7 +161,13 @@ function App() {
     void safeInvoke<BackendPolicyState | null>('policy_get', undefined, null)
       .then((policy) => {
         if (!policy) return
-        setPolicySnapshot(policy.flags, policy.denyRules ?? [], policy.enabledToolIds ?? [])
+        setPolicySnapshot(
+          policy.flags,
+          policy.denyRules ?? [],
+          policy.enabledToolIds ?? [],
+          policy.activeToolsetPolicyId,
+          policy.toolsetPolicies
+        )
       })
       .catch(() => {})
     seedDefaultPersonalities().catch(() => {})
@@ -249,9 +271,9 @@ function App() {
   }, [])
 
   return (
-    <MemoryRouter>
+    <BrowserRouter>
       <AppRoutes />
-    </MemoryRouter>
+    </BrowserRouter>
   )
 }
 

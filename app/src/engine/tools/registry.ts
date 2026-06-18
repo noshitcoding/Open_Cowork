@@ -1226,7 +1226,7 @@ const desktopLaunchAppTool: Tool<{ app_path: string; args?: string[]; cwd?: stri
     type: 'object',
     properties: {
       app_path: { type: 'string', description: 'Path to the .exe or application to run' },
-      args: { type: 'array', description: 'Optional start arguments' },
+      args: { type: 'array', description: 'Optional start arguments', items: { type: 'string', description: 'Single command-line argument' } },
       cwd: { type: 'string', description: 'Optional working directory' },
       initial_delay_ms: { type: 'number', description: 'Optional delay after launch' },
     },
@@ -1363,7 +1363,7 @@ const desktopKeypressTool: Tool<{ keys: string[] }> = {
   inputSchema: {
     type: 'object',
     properties: {
-      keys: { type: 'array', description: 'Array of keys or modifiers' },
+      keys: { type: 'array', description: 'Array of keys or modifiers', items: { type: 'string', description: 'Single key or modifier' } },
     },
     required: ['keys'],
   },

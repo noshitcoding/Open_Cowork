@@ -418,7 +418,10 @@ fn build_workflow_rows(request: &OfficeWorkflowRequest) -> Vec<Vec<String>> {
     for (index, paragraph) in request.paragraphs.iter().enumerate() {
         let trimmed = paragraph.trim();
         if !trimmed.is_empty() {
-            rows.push(vec![format!("paragraph_{}", index + 1), trimmed.to_string()]);
+            rows.push(vec![
+                format!("paragraph_{}", index + 1),
+                trimmed.to_string(),
+            ]);
         }
     }
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { DragEvent, KeyboardEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { open } from '@tauri-apps/plugin-dialog'
@@ -28,12 +28,12 @@ import { createChatProviderSelection, getChatProviderState } from '../utils/chat
 import { useConfigStore } from '../stores/configStore'
 import { useEngineStore } from '../stores/engineStore'
 import { useUiStore } from '../stores/uiStore'
-import { tr } from '../i18n'
+import i18n, { tr } from '../i18n'
 
 const THREAD_DND_MIME = 'application/open-cowork-thread-id'
 
 function formatDate(timestamp: number): string {
-  return new Date(timestamp).toLocaleDateString('en-US', {
+  return new Date(timestamp).toLocaleDateString(i18n.resolvedLanguage ?? i18n.language ?? 'en', {
     day: '2-digit',
     month: '2-digit',
     year: '2-digit',
@@ -86,6 +86,9 @@ export default function ProjectView() {
   const [linkDraft, setLinkDraft] = useState('')
   const [dropActive, setDropActive] = useState(false)
   const [deletePromptOpen, setDeletePromptOpen] = useState(false)
+  const deleteTriggerRef = useRef<HTMLButtonElement | null>(null)
+  const deleteDialogRef = useRef<HTMLDivElement | null>(null)
+  const deleteCancelRef = useRef<HTMLButtonElement | null>(null)
 
   const activeProject = useMemo(
     () => projects.find((project) => project.id === activeProjectId) ?? projects[0] ?? null,
@@ -130,9 +133,49 @@ export default function ProjectView() {
     setDeletePromptOpen(false)
   }, [activeProject?.id, activeProject?.instructions, activeProject?.title])
 
+  useEffect(() => {
+    if (!deletePromptOpen) return
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    window.requestAnimationFrame(() => deleteCancelRef.current?.focus())
+    return () => {
+      document.body.style.overflow = previousOverflow
+    }
+  }, [deletePromptOpen])
+
   const handleCreateProject = () => {
-    const id = addProject(`Project ${projects.length + 1}`)
+    const id = addProject(`${tr("Project")} ${projects.length + 1}`)
     setActiveProject(id)
+  }
+
+  const openDeletePrompt = () => {
+    deleteTriggerRef.current = document.activeElement instanceof HTMLButtonElement ? document.activeElement : null
+    setDeletePromptOpen(true)
+  }
+
+  const closeDeletePrompt = () => {
+    setDeletePromptOpen(false)
+    window.requestAnimationFrame(() => deleteTriggerRef.current?.focus())
+  }
+
+  const handleDeleteDialogKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      closeDeletePrompt()
+      return
+    }
+    if (event.key !== 'Tab' || !deleteDialogRef.current) return
+    const focusable = Array.from(deleteDialogRef.current.querySelectorAll<HTMLElement>('button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])'))
+    if (focusable.length === 0) return
+    const first = focusable[0]
+    const last = focusable[focusable.length - 1]
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault()
+      last.focus()
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault()
+      first.focus()
+    }
   }
 
   const commitTitle = () => {
@@ -267,6 +310,7 @@ export default function ProjectView() {
                 key={project.id}
                 type="button"
                 className={`project-list-item${active ? ' active' : ''}`}
+                aria-current={active ? 'page' : undefined}
                 onClick={() => setActiveProject(project.id)}
                 onDragOver={(event) => {
                   event.preventDefault()
@@ -276,7 +320,7 @@ export default function ProjectView() {
               >
                 <span className="project-list-item-title">{project.title}</span>
                 <span className="project-list-item-meta">
-                  {existingThreadCount}{tr("Chats /")}{project.resources.length}{tr("sources")}</span>
+                  {existingThreadCount} {tr("Chats")} / {project.resources.length} {tr("sources")}</span>
               </button>
             )
           })}
@@ -325,10 +369,12 @@ export default function ProjectView() {
                 <button type="button" className="btn-sm project-icon-button" onClick={handleAddFolders}>
                   <FolderPlus size={14} aria-hidden="true" />{tr("Folder")}</button>
                 <button
+                  ref={deleteTriggerRef}
                   type="button"
                   className="btn-sm project-icon-button danger"
-                  onClick={() => setDeletePromptOpen(true)}
+                  onClick={openDeletePrompt}
                   title={tr("Delete project")}
+                  aria-label={tr("Delete project")}
                 >
                   <Trash2 size={14} aria-hidden="true" />
                 </button>
@@ -336,15 +382,26 @@ export default function ProjectView() {
             </header>
 
             {deletePromptOpen && (
-              <div className="project-delete-panel" role="dialog" aria-label={tr("Delete project")}>
-                <div>
-                  <strong>{tr("Delete project")}</strong>
-                  <p>{tr("Choose whether assigned chats should be kept or deleted as well.")}</p>
-                </div>
-                <div className="project-delete-actions">
-                  <button type="button" className="btn-sm" onClick={() => handleDeleteProject(false)}>{tr("Detach project only")}</button>
-                  <button type="button" className="btn-sm project-icon-button danger" onClick={() => handleDeleteProject(true)}>{tr("Delete project and chats")}</button>
-                  <button type="button" className="btn-sm" onClick={() => setDeletePromptOpen(false)}>{tr("Cancel")}</button>
+              <div className="project-delete-modal">
+                <button type="button" className="project-delete-backdrop" aria-label={tr("Cancel project deletion")} onClick={closeDeletePrompt} />
+                <div
+                  ref={deleteDialogRef}
+                  className="project-delete-panel"
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="project-delete-title"
+                  aria-describedby="project-delete-description"
+                  onKeyDown={handleDeleteDialogKeyDown}
+                >
+                  <div>
+                    <strong id="project-delete-title">{tr("Delete project")}</strong>
+                    <p id="project-delete-description">{tr("Choose whether assigned chats should be kept or deleted as well.")}</p>
+                  </div>
+                  <div className="project-delete-actions">
+                    <button type="button" className="btn-sm" onClick={() => handleDeleteProject(false)}>{tr("Detach project only")}</button>
+                    <button type="button" className="btn-sm project-icon-button danger" onClick={() => handleDeleteProject(true)}>{tr("Delete project and chats")}</button>
+                    <button ref={deleteCancelRef} type="button" className="btn-sm" onClick={closeDeletePrompt}>{tr("Cancel")}</button>
+                  </div>
                 </div>
               </div>
             )}
@@ -366,11 +423,13 @@ export default function ProjectView() {
               <section className="project-panel">
                 <div className="project-panel-header">
                   <h2>{tr("Project sources")}</h2>
-                  <span>{activeProject.resources.filter((resource) => resource.enabled).length}{tr("active")}</span>
+                  <span>{activeProject.resources.filter((resource) => resource.enabled).length} {tr("active")}</span>
                 </div>
                 <div className="project-link-add">
                   <Link2 size={15} aria-hidden="true" />
+                  <label className="sr-only" htmlFor="project-link-input">{tr("Project link URL")}</label>
                   <input
+                    id="project-link-input"
                     value={linkDraft}
                     onChange={(event) => setLinkDraft(event.currentTarget.value)}
                     onKeyDown={(event) => {
@@ -393,7 +452,7 @@ export default function ProjectView() {
                           onChange={(event) => setResourceEnabled(activeProject.id, resource.id, event.currentTarget.checked)}
                         />
                         <span className="project-resource-kind">
-                          {resource.kind === 'folder' ? 'Folder' : resource.kind === 'link' ? 'Link' : 'File'}
+                          {resource.kind === 'folder' ? tr('Folder') : resource.kind === 'link' ? tr('Link') : tr('File')}
                         </span>
                         <span className="project-resource-name" title={resource.path}>
                           {resource.label ?? getPathName(resource.path)}
@@ -404,7 +463,8 @@ export default function ProjectView() {
                         type="button"
                         className="project-row-action"
                         onClick={() => removeResource(activeProject.id, resource.id)}
-                        title={tr("Source entfernen")}
+                        title={tr("Remove source")}
+                        aria-label={tr("Remove source")}
                       >
                         <X size={14} aria-hidden="true" />
                       </button>
@@ -437,13 +497,14 @@ export default function ProjectView() {
                         onClick={() => handleOpenThread(thread.id)}
                       >
                         <span>{thread.title}</span>
-                        <small>{thread.messages.filter((message) => message.role !== 'system').length}{tr("Messages /")}{formatDate(thread.updatedAt)}</small>
+                        <small>{thread.messages.filter((message) => message.role !== 'system').length} {tr("Messages")} / {formatDate(thread.updatedAt)}</small>
                       </button>
                       <button
                         type="button"
                         className="project-row-action"
                         onClick={() => detachThread(activeProject.id, thread.id)}
                         title={tr("Remove from project")}
+                        aria-label={tr("Remove chat from project")}
                       >
                         <X size={14} aria-hidden="true" />
                       </button>

@@ -1,9 +1,14 @@
 mod artifact_pipeline;
 mod audit;
+mod audit_service;
+mod audit_sink;
+mod capability_model;
 mod claude_code_bridge;
+mod context;
 mod cowork_features;
 mod crew_python_bridge;
 mod db;
+mod event_sink;
 mod file_safety;
 mod file_watch;
 mod insights;
@@ -13,27 +18,30 @@ mod office_integration;
 mod ollama;
 mod process_manager;
 mod scheduler;
+mod service_error;
 mod skill_engine;
 mod terminal_backends;
 mod terminal_sessions;
+#[cfg(test)]
+mod test_fixtures;
 mod worker_sandbox;
 
 use claude_code_bridge::ClaudeCodeBridge;
 use crew_python_bridge::{
-    CrewPythonBridge, CrewRuntimeExecutionLog, crew_runtime_bootstrap,
-    crew_runtime_execute_request, crew_runtime_status, crew_runtime_validate_definition,
+    crew_runtime_bootstrap, crew_runtime_execute_request, crew_runtime_status,
+    crew_runtime_validate_definition, CrewPythonBridge, CrewRuntimeExecutionLog,
 };
 use db::Database;
 use mcp::{
-    McpCallRequest, McpError, McpRuntimeServerStatus, McpServerRequest, call_tool, probe_server,
-    runtime_call_tool, runtime_has_server, runtime_list_servers, runtime_probe_server,
-    runtime_restart_server, runtime_start_server, runtime_stop_server,
+    call_tool, probe_server, runtime_call_tool, runtime_has_server, runtime_list_servers,
+    runtime_probe_server, runtime_restart_server, runtime_start_server, runtime_stop_server,
+    McpCallRequest, McpError, McpRuntimeServerStatus, McpServerRequest,
 };
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use ollama::{
-    ChatMessage, ChatStreamChunkPayload, ChatToolDef, OllamaConfig, OllamaError,
     chat_turn as chat_turn_internal, chat_turn_stream as chat_turn_stream_internal, check_health,
-    generate_plan as generate_plan_internal,
+    generate_plan as generate_plan_internal, ChatMessage, ChatStreamChunkPayload, ChatToolDef,
+    OllamaConfig, OllamaError,
 };
 use reqwest::{Method, StatusCode};
 use serde::de::DeserializeOwned;
@@ -79,6 +87,8 @@ const POLICY_FLAG_FILE_READ: &str = "allowFileReadExtraction";
 const POLICY_FLAG_AUTO_COMPACT: &str = "autoCompactLongContext";
 const POLICY_FLAG_SHELL_EXECUTION: &str = "allowShellExecution";
 const POLICY_FLAG_WEB_SEARCH: &str = "allowWebSearch";
+const POLICY_SETTING_ACTIVE_TOOLSET: &str = "activeToolsetPolicyId";
+const CUSTOM_TOOLSET_POLICY_ID: &str = "custom";
 const DEFAULT_POLICY_ENABLED_TOOL_IDS: &[&str] = &[
     "bash",
     "read_file",
@@ -361,6 +371,18 @@ struct PolicySetRequest {
     deny_rules: Vec<String>,
     #[serde(default = "default_policy_enabled_tool_ids_vec")]
     enabled_tool_ids: Vec<String>,
+    #[serde(default)]
+    active_toolset_policy_id: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct ToolsetPolicyPayload {
+    id: String,
+    label: String,
+    description: String,
+    risk_level: String,
+    tool_ids: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -369,6 +391,8 @@ struct PolicyStatePayload {
     flags: PolicyFlagsPayload,
     deny_rules: Vec<String>,
     enabled_tool_ids: Vec<String>,
+    active_toolset_policy_id: String,
+    toolset_policies: Vec<ToolsetPolicyPayload>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -380,11 +404,18 @@ struct EngineRunCreateRequest {
     session_id: Option<String>,
     title: String,
     input_summary: Option<String>,
+    source: Option<String>,
     status: Option<String>,
     phase: Option<String>,
     cwd: Option<String>,
+    workspace_path: Option<String>,
     model: Option<String>,
     provider: Option<String>,
+    provider_profile_id: Option<String>,
+    runtime_mode: Option<String>,
+    toolset_policy_id: Option<String>,
+    channel_kind: Option<String>,
+    channel_ref: Option<String>,
     retry_count: Option<i32>,
     resumed_from_run_id: Option<String>,
     checkpoint_json: Option<String>,
@@ -409,6 +440,26 @@ struct EngineRunCheckpointRequest {
     run_id: String,
     label: String,
     snapshot_json: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EngineRunEventAppendRequest {
+    run_id: String,
+    event_type: String,
+    summary: Option<String>,
+    payload_json: Option<String>,
+    redaction_level: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EngineRunArtifactAddRequest {
+    run_id: String,
+    kind: String,
+    path: String,
+    title: Option<String>,
+    summary: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -542,6 +593,69 @@ struct CrewProviderModelsResponse {
     models: Vec<String>,
 }
 
+#[derive(Debug, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct GatewayHealthRequest {
+    #[serde(default)]
+    include_provider_probe: bool,
+    #[serde(default)]
+    provider_kind: Option<String>,
+    #[serde(default)]
+    base_url: Option<String>,
+    #[serde(default)]
+    api_key: Option<String>,
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default = "default_true")]
+    verify_tls_certificates: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GatewayProbeRequest {
+    subsystem: String,
+    #[serde(default)]
+    provider: Option<GatewayHealthRequest>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct GatewaySubsystemPayload {
+    id: String,
+    label: String,
+    category: String,
+    status: String,
+    message: String,
+    checked_at: String,
+    detail_json: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct GatewayHealthPayload {
+    status: String,
+    checked_at: String,
+    subsystems: Vec<GatewaySubsystemPayload>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RuntimeProviderMappingRequest {
+    base_url: String,
+    #[serde(default)]
+    runtime_mode: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct RuntimeProviderMappingResponse {
+    input_url: String,
+    mapped_url: String,
+    runtime_mode: String,
+    changed: bool,
+    reason: String,
+}
+
 #[derive(Debug, Deserialize)]
 struct OpenAiModelsResponse {
     data: Vec<OpenAiModelRow>,
@@ -600,7 +714,11 @@ fn find_model_suggestion<'a>(models: &'a [String], configured_model: &str) -> Op
                 .iter()
                 .find(|model| model_name_suffix(model).to_lowercase() == lower_configured)
         })
-        .or_else(|| models.iter().find(|model| models.len() == 1 && !model.is_empty()))
+        .or_else(|| {
+            models
+                .iter()
+                .find(|model| models.len() == 1 && !model.is_empty())
+        })
         .map(|model| model.as_str())
 }
 
@@ -1453,7 +1571,8 @@ fn collect_crew_memory_payload(
         .collect::<Vec<_>>();
 
     let summary = if entries.is_empty() && user_profile.is_empty() {
-        "No saved crew knowledge found. Work conservatively and mark assumptions explicitly.".to_string()
+        "No saved crew knowledge found. Work conservatively and mark assumptions explicitly."
+            .to_string()
     } else {
         format!(
             "{} memory entries and {} profile notes are available as crew context. Use them as working hypotheses and verify disputed points.",
@@ -1885,10 +2004,7 @@ async fn execute_pipeline_llm_step(
         if previous_context.trim().is_empty() {
             None
         } else {
-            Some(format!(
-                "Previous pipeline context:\n{}",
-                previous_context
-            ))
+            Some(format!("Previous pipeline context:\n{}", previous_context))
         },
         gateway_context,
         Some(format!("Tool: {}\nTask:\n{}", tool_name, prompt)),
@@ -1986,10 +2102,7 @@ fn validate_crew_request(
             .iter()
             .any(|dependency| dependency == &task.id)
         {
-            return Err(format!(
-                "Task {} must not depend on itself",
-                task.id
-            ));
+            return Err(format!("Task {} must not depend on itself", task.id));
         }
 
         dependency_graph.insert(task.id.clone(), task.dependencies.clone());
@@ -6008,12 +6121,9 @@ fn office_open_document(
     request: office_integration::OfficeOpenRequest,
     run_id: Option<String>,
 ) -> Result<office_integration::OfficeOpenResponse, String> {
-    let canonical_target =
-        ensure_run_file_access(&state, run_id.as_deref(), &request.path, false)?;
-    let response = office_integration::open_document(
-        canonical_target.as_path(),
-        request.app_kind.as_deref(),
-    )?;
+    let canonical_target = ensure_run_file_access(&state, run_id.as_deref(), &request.path, false)?;
+    let response =
+        office_integration::open_document(canonical_target.as_path(), request.app_kind.as_deref())?;
 
     let app_data_dir = app.path().app_data_dir().map_err(|err| err.to_string())?;
     let details = serde_json::json!({
@@ -6039,8 +6149,7 @@ fn document_render_preview(
     request: office_integration::DocumentPreviewRequest,
     run_id: Option<String>,
 ) -> Result<office_integration::DocumentPreviewResponse, String> {
-    let canonical_target =
-        ensure_run_file_access(&state, run_id.as_deref(), &request.path, false)?;
+    let canonical_target = ensure_run_file_access(&state, run_id.as_deref(), &request.path, false)?;
     let app_data_dir = app.path().app_data_dir().map_err(|err| err.to_string())?;
     let response = office_integration::render_document_preview(
         canonical_target.as_path(),
@@ -6332,64 +6441,62 @@ fn scheduled_task_dependencies_ready(
 }
 
 fn start_scheduler_worker(app: tauri::AppHandle, database: Arc<Database>) {
-    std::thread::spawn(move || {
-        loop {
-            let now = chrono::Utc::now().to_rfc3339();
-            let due_tasks: Vec<(
-                String,
-                String,
-                String,
-                String,
-                Option<String>,
-                String,
-                Option<String>,
-                Option<String>,
-                Option<String>,
-                i64,
-                String,
-                Option<String>,
-            )> = database.list_due_scheduled_tasks(&now).unwrap_or_default();
-            for (
-                task_id,
-                task_name,
-                task_prompt,
-                schedule_expr,
-                _,
-                task_kind,
-                crew_id,
-                crew_snapshot_json,
-                model_config_json,
-                _,
-                depends_on_task_ids_json,
-                task_last_run_at,
-            ) in due_tasks
-            {
-                if !scheduled_task_dependencies_ready(
-                    &database,
-                    &depends_on_task_ids_json,
-                    task_last_run_at.as_deref(),
-                ) {
-                    continue;
-                }
-                let crew_id_ref: Option<&str> = crew_id.as_deref();
-                let crew_snapshot_json_ref: Option<&str> = crew_snapshot_json.as_deref();
-                let model_config_json_ref: Option<&str> = model_config_json.as_deref();
-                run_scheduled_task_once(
-                    &app,
-                    &database,
-                    &task_id,
-                    &task_name,
-                    &task_prompt,
-                    &schedule_expr,
-                    &task_kind,
-                    crew_id_ref,
-                    crew_snapshot_json_ref,
-                    model_config_json_ref,
-                );
+    std::thread::spawn(move || loop {
+        let now = chrono::Utc::now().to_rfc3339();
+        let due_tasks: Vec<(
+            String,
+            String,
+            String,
+            String,
+            Option<String>,
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            i64,
+            String,
+            Option<String>,
+        )> = database.list_due_scheduled_tasks(&now).unwrap_or_default();
+        for (
+            task_id,
+            task_name,
+            task_prompt,
+            schedule_expr,
+            _,
+            task_kind,
+            crew_id,
+            crew_snapshot_json,
+            model_config_json,
+            _,
+            depends_on_task_ids_json,
+            task_last_run_at,
+        ) in due_tasks
+        {
+            if !scheduled_task_dependencies_ready(
+                &database,
+                &depends_on_task_ids_json,
+                task_last_run_at.as_deref(),
+            ) {
+                continue;
             }
-
-            std::thread::sleep(Duration::from_secs(30));
+            let crew_id_ref: Option<&str> = crew_id.as_deref();
+            let crew_snapshot_json_ref: Option<&str> = crew_snapshot_json.as_deref();
+            let model_config_json_ref: Option<&str> = model_config_json.as_deref();
+            run_scheduled_task_once(
+                &app,
+                &database,
+                &task_id,
+                &task_name,
+                &task_prompt,
+                &schedule_expr,
+                &task_kind,
+                crew_id_ref,
+                crew_snapshot_json_ref,
+                model_config_json_ref,
+            );
         }
+
+        std::thread::sleep(Duration::from_secs(30));
     });
 }
 
@@ -6808,6 +6915,414 @@ fn status_message_with_body(status: StatusCode, body: &str) -> String {
     }
 }
 
+fn gateway_subsystem(
+    id: &str,
+    label: &str,
+    category: &str,
+    status: &str,
+    message: impl Into<String>,
+    detail: Option<Value>,
+) -> GatewaySubsystemPayload {
+    GatewaySubsystemPayload {
+        id: id.to_string(),
+        label: label.to_string(),
+        category: category.to_string(),
+        status: status.to_string(),
+        message: message.into(),
+        checked_at: chrono::Utc::now().to_rfc3339(),
+        detail_json: detail.map(|value| value.to_string()),
+    }
+}
+
+fn aggregate_gateway_status(subsystems: &[GatewaySubsystemPayload]) -> String {
+    if subsystems.iter().any(|entry| entry.status == "failed") {
+        return "failed".to_string();
+    }
+    if subsystems.iter().any(|entry| {
+        entry.status == "degraded" || entry.status == "unavailable" || entry.status == "unknown"
+    }) {
+        return "degraded".to_string();
+    }
+    "ok".to_string()
+}
+
+fn gateway_payload(subsystems: Vec<GatewaySubsystemPayload>) -> GatewayHealthPayload {
+    GatewayHealthPayload {
+        status: aggregate_gateway_status(&subsystems),
+        checked_at: chrono::Utc::now().to_rfc3339(),
+        subsystems,
+    }
+}
+
+fn audit_log_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let mut path = app.path().app_data_dir().map_err(|err| err.to_string())?;
+    path.push("audit");
+    path.push("events.jsonl");
+    Ok(path)
+}
+
+fn check_audit_writable(app: &tauri::AppHandle) -> GatewaySubsystemPayload {
+    let checked_at = chrono::Utc::now().to_rfc3339();
+    match audit_log_path(app) {
+        Ok(path) => {
+            if let Some(parent) = path.parent() {
+                if let Err(error) = fs::create_dir_all(parent) {
+                    return GatewaySubsystemPayload {
+                        id: "audit".to_string(),
+                        label: "Audit log".to_string(),
+                        category: "storage".to_string(),
+                        status: "failed".to_string(),
+                        message: format!("Audit directory is not writable: {}", error),
+                        checked_at,
+                        detail_json: Some(
+                            serde_json::json!({ "path": path.display().to_string() }).to_string(),
+                        ),
+                    };
+                }
+            }
+
+            match fs::OpenOptions::new().create(true).append(true).open(&path) {
+                Ok(_) => gateway_subsystem(
+                    "audit",
+                    "Audit log",
+                    "storage",
+                    "ok",
+                    "Audit log path is writable",
+                    Some(serde_json::json!({ "path": path.display().to_string() })),
+                ),
+                Err(error) => gateway_subsystem(
+                    "audit",
+                    "Audit log",
+                    "storage",
+                    "failed",
+                    format!("Audit log is not writable: {}", error),
+                    Some(serde_json::json!({ "path": path.display().to_string() })),
+                ),
+            }
+        }
+        Err(error) => gateway_subsystem("audit", "Audit log", "storage", "failed", error, None),
+    }
+}
+
+fn build_local_gateway_subsystems(
+    app: &tauri::AppHandle,
+    state: &Arc<Database>,
+) -> Vec<GatewaySubsystemPayload> {
+    let mut rows = Vec::new();
+
+    rows.push(match state.list_engine_runs(1, None) {
+        Ok(_) => gateway_subsystem(
+            "database",
+            "SQLite database",
+            "storage",
+            "ok",
+            "Database is reachable",
+            None,
+        ),
+        Err(error) => gateway_subsystem(
+            "database",
+            "SQLite database",
+            "storage",
+            "failed",
+            format!("Database check failed: {}", error),
+            None,
+        ),
+    });
+
+    rows.push(match state.list_scheduled_tasks() {
+        Ok(tasks) => {
+            let active = tasks.iter().filter(|entry| entry.10).count();
+            gateway_subsystem(
+                "scheduler",
+                "Scheduler",
+                "runtime",
+                "ok",
+                format!("{} task(s), {} active", tasks.len(), active),
+                Some(serde_json::json!({ "tasks": tasks.len(), "activeTasks": active })),
+            )
+        }
+        Err(error) => gateway_subsystem(
+            "scheduler",
+            "Scheduler",
+            "runtime",
+            "failed",
+            format!("Scheduler check failed: {}", error),
+            None,
+        ),
+    });
+
+    rows.push(match state.list_terminal_backends() {
+        Ok(backends) if backends.is_empty() => gateway_subsystem(
+            "terminal_backends",
+            "Terminal backends",
+            "runtime",
+            "unavailable",
+            "No terminal backend is configured",
+            Some(serde_json::json!({ "backends": 0 })),
+        ),
+        Ok(backends) => {
+            let connected = backends
+                .iter()
+                .filter(|entry| entry.status == "connected")
+                .count();
+            gateway_subsystem(
+                "terminal_backends",
+                "Terminal backends",
+                "runtime",
+                "ok",
+                format!("{} backend(s), {} connected", backends.len(), connected),
+                Some(serde_json::json!({ "backends": backends.len(), "connected": connected })),
+            )
+        }
+        Err(error) => gateway_subsystem(
+            "terminal_backends",
+            "Terminal backends",
+            "runtime",
+            "failed",
+            format!("Terminal backend check failed: {}", error),
+            None,
+        ),
+    });
+
+    rows.push(match state.list_managed_processes() {
+        Ok(processes) => {
+            let running = processes
+                .iter()
+                .filter(|entry| entry.status == "running")
+                .count();
+            gateway_subsystem(
+                "process_manager",
+                "Process manager",
+                "runtime",
+                "ok",
+                format!(
+                    "{} process definition(s), {} running",
+                    processes.len(),
+                    running
+                ),
+                Some(serde_json::json!({ "processes": processes.len(), "running": running })),
+            )
+        }
+        Err(error) => gateway_subsystem(
+            "process_manager",
+            "Process manager",
+            "runtime",
+            "failed",
+            format!("Process manager check failed: {}", error),
+            None,
+        ),
+    });
+
+    rows.push(match runtime_list_servers() {
+        Ok(servers) if servers.is_empty() => gateway_subsystem(
+            "mcp_runtime",
+            "MCP runtime",
+            "tools",
+            "unavailable",
+            "No MCP runtime server is running",
+            Some(serde_json::json!({ "servers": 0 })),
+        ),
+        Ok(servers) => {
+            let with_errors = servers
+                .iter()
+                .filter(|entry| entry.last_error.is_some())
+                .count();
+            gateway_subsystem(
+                "mcp_runtime",
+                "MCP runtime",
+                "tools",
+                if with_errors > 0 { "degraded" } else { "ok" },
+                format!(
+                    "{} runtime server(s), {} with errors",
+                    servers.len(),
+                    with_errors
+                ),
+                Some(serde_json::json!({ "servers": servers.len(), "withErrors": with_errors })),
+            )
+        }
+        Err(error) => gateway_subsystem(
+            "mcp_runtime",
+            "MCP runtime",
+            "tools",
+            "failed",
+            format!("MCP runtime check failed: {}", map_mcp_error(error)),
+            None,
+        ),
+    });
+
+    rows.push(match state.list_tool_gateway_entries() {
+        Ok(entries) => {
+            let enabled = entries.iter().filter(|entry| entry.enabled).count();
+            gateway_subsystem(
+                "tool_gateway",
+                "Tool gateway",
+                "tools",
+                if entries.is_empty() {
+                    "unavailable"
+                } else {
+                    "ok"
+                },
+                format!("{} gateway entrie(s), {} enabled", entries.len(), enabled),
+                Some(serde_json::json!({ "entries": entries.len(), "enabled": enabled })),
+            )
+        }
+        Err(error) => gateway_subsystem(
+            "tool_gateway",
+            "Tool gateway",
+            "tools",
+            "failed",
+            format!("Tool gateway check failed: {}", error),
+            None,
+        ),
+    });
+
+    rows.push(match state.list_worker_sandboxes(20, None) {
+        Ok(sandboxes) => {
+            let active = sandboxes
+                .iter()
+                .filter(|entry| entry.status == "active")
+                .count();
+            gateway_subsystem(
+                "worker_sandbox",
+                "Worker sandbox",
+                "isolation",
+                if active > 0 { "ok" } else { "degraded" },
+                format!("{} sandbox record(s), {} active", sandboxes.len(), active),
+                Some(serde_json::json!({ "sandboxes": sandboxes.len(), "active": active })),
+            )
+        }
+        Err(error) => gateway_subsystem(
+            "worker_sandbox",
+            "Worker sandbox",
+            "isolation",
+            "failed",
+            format!("Worker sandbox check failed: {}", error),
+            None,
+        ),
+    });
+
+    rows.push(gateway_subsystem(
+        "isolated_runtime",
+        "Container runtime",
+        "isolation",
+        "unavailable",
+        "Docker/container execution is not configured in P0; workspace_copy sandbox is the current isolation path",
+        Some(serde_json::json!({ "runtimeMode": "workspace_copy", "dockerManaged": false })),
+    ));
+
+    rows.push(check_audit_writable(app));
+
+    rows
+}
+
+async fn gateway_provider_probe(request: &GatewayHealthRequest) -> GatewaySubsystemPayload {
+    let provider_kind = request
+        .provider_kind
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or("");
+    let base_url = request.base_url.as_deref().map(str::trim).unwrap_or("");
+
+    if provider_kind.is_empty() || base_url.is_empty() {
+        return gateway_subsystem(
+            "provider",
+            "Active provider",
+            "provider",
+            "unavailable",
+            "Provider probe skipped because provider kind or base URL is missing",
+            None,
+        );
+    }
+
+    let health_request = CrewProviderHealthCheckRequest {
+        provider_kind: provider_kind.to_string(),
+        base_url: base_url.to_string(),
+        api_key: request.api_key.clone(),
+        model: request.model.clone(),
+        verify_tls_certificates: request.verify_tls_certificates,
+    };
+
+    match crew_provider_health_check(health_request).await {
+        Ok(response) => gateway_subsystem(
+            "provider",
+            "Active provider",
+            "provider",
+            if response.reachable { "ok" } else { "failed" },
+            response.message,
+            Some(serde_json::json!({
+                "providerKind": provider_kind,
+                "endpoint": response.endpoint,
+                "status": response.status,
+                "checkedAt": response.checked_at,
+            })),
+        ),
+        Err(error) => gateway_subsystem(
+            "provider",
+            "Active provider",
+            "provider",
+            "failed",
+            format!("Provider probe failed: {}", error),
+            Some(serde_json::json!({ "providerKind": provider_kind, "baseUrl": base_url })),
+        ),
+    }
+}
+
+fn runtime_mode_needs_host_mapping(runtime_mode: &str) -> bool {
+    matches!(
+        runtime_mode.trim().to_ascii_lowercase().as_str(),
+        "container" | "docker" | "isolated" | "sandbox" | "workspace_copy" | "wsl"
+    )
+}
+
+fn map_provider_url_for_runtime(
+    base_url: &str,
+    runtime_mode: Option<&str>,
+) -> Result<RuntimeProviderMappingResponse, String> {
+    let input_url = trim_required_url(base_url)?;
+    let mode = runtime_mode
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("host")
+        .to_string();
+
+    if !runtime_mode_needs_host_mapping(&mode) {
+        return Ok(RuntimeProviderMappingResponse {
+            input_url: input_url.clone(),
+            mapped_url: input_url,
+            runtime_mode: mode,
+            changed: false,
+            reason: "Host runtime uses the configured URL unchanged".to_string(),
+        });
+    }
+
+    let mut parsed =
+        Url::parse(&input_url).map_err(|error| format!("ungueltige URL: {}", error))?;
+    let host = parsed.host_str().unwrap_or("").to_ascii_lowercase();
+    let should_map = matches!(host.as_str(), "localhost" | "127.0.0.1" | "::1");
+
+    if should_map {
+        parsed
+            .set_host(Some("host.docker.internal"))
+            .map_err(|_| "provider URL host could not be remapped".to_string())?;
+        return Ok(RuntimeProviderMappingResponse {
+            input_url,
+            mapped_url: parsed.to_string().trim_end_matches('/').to_string(),
+            runtime_mode: mode,
+            changed: true,
+            reason: "Localhost was mapped to host.docker.internal for isolated execution"
+                .to_string(),
+        });
+    }
+
+    Ok(RuntimeProviderMappingResponse {
+        input_url: input_url.clone(),
+        mapped_url: input_url,
+        runtime_mode: mode,
+        changed: false,
+        reason: "External or already mapped host remains unchanged".to_string(),
+    })
+}
+
 #[tauri::command]
 async fn crew_provider_health_check(
     request: CrewProviderHealthCheckRequest,
@@ -6828,10 +7343,7 @@ async fn crew_provider_health_check(
             status: None,
             endpoint: health.endpoint,
             message: health.error.unwrap_or_else(|| {
-                format!(
-                    "Ollama reachable, {} model(s) found",
-                    health.models.len()
-                )
+                format!("Ollama reachable, {} model(s) found", health.models.len())
             }),
             checked_at,
         });
@@ -6867,10 +7379,7 @@ async fn crew_provider_health_check(
                                 reachable: true,
                                 status: Some(status.as_u16()),
                                 endpoint,
-                                message: format!(
-                                    "Endpoint reachable, model '{}' available",
-                                    model
-                                ),
+                                message: format!("Endpoint reachable, model '{}' available", model),
                                 checked_at,
                             });
                         }
@@ -7054,9 +7563,8 @@ async fn crew_provider_models_list(
         });
     }
 
-    Err(last_error.unwrap_or_else(|| {
-        "Model list is not available. Enter the model manually.".to_string()
-    }))
+    Err(last_error
+        .unwrap_or_else(|| "Model list is not available. Enter the model manually.".to_string()))
 }
 
 #[tauri::command]
@@ -7150,6 +7658,80 @@ async fn connector_test_reachability(
 }
 
 #[tauri::command]
+fn gateway_status(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Arc<Database>>,
+) -> Result<GatewayHealthPayload, String> {
+    Ok(gateway_payload(build_local_gateway_subsystems(
+        &app,
+        state.inner(),
+    )))
+}
+
+#[tauri::command]
+async fn gateway_health(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Arc<Database>>,
+    request: Option<GatewayHealthRequest>,
+) -> Result<GatewayHealthPayload, String> {
+    let mut rows = build_local_gateway_subsystems(&app, state.inner());
+    if let Some(request) = request.filter(|entry| entry.include_provider_probe) {
+        rows.push(gateway_provider_probe(&request).await);
+    }
+    Ok(gateway_payload(rows))
+}
+
+#[tauri::command]
+async fn gateway_probe(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Arc<Database>>,
+    request: GatewayProbeRequest,
+) -> Result<GatewaySubsystemPayload, String> {
+    let subsystem = request.subsystem.trim().to_ascii_lowercase();
+    if subsystem == "provider" || subsystem == "active_provider" {
+        let provider = request.provider.unwrap_or(GatewayHealthRequest {
+            include_provider_probe: true,
+            provider_kind: None,
+            base_url: None,
+            api_key: None,
+            model: None,
+            verify_tls_certificates: true,
+        });
+        return Ok(gateway_provider_probe(&provider).await);
+    }
+
+    let rows = build_local_gateway_subsystems(&app, state.inner());
+    rows.into_iter()
+        .find(|entry| entry.id == subsystem || entry.category == subsystem)
+        .ok_or_else(|| format!("unknown gateway subsystem '{}'", request.subsystem))
+}
+
+#[tauri::command]
+fn gateway_logs_tail(app: tauri::AppHandle, limit: Option<usize>) -> Result<Vec<String>, String> {
+    let limit = limit.unwrap_or(80).clamp(1, 1000);
+    let path = audit_log_path(&app)?;
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let contents = fs::read_to_string(&path).map_err(|err| err.to_string())?;
+    let mut lines = contents
+        .lines()
+        .rev()
+        .take(limit)
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>();
+    lines.reverse();
+    Ok(lines)
+}
+
+#[tauri::command]
+fn runtime_provider_mapping_resolve(
+    request: RuntimeProviderMappingRequest,
+) -> Result<RuntimeProviderMappingResponse, String> {
+    map_provider_url_for_runtime(&request.base_url, request.runtime_mode.as_deref())
+}
+
+#[tauri::command]
 fn policy_get(state: tauri::State<'_, Arc<Database>>) -> Result<PolicyStatePayload, String> {
     load_policy_state(&state)
 }
@@ -7200,10 +7782,21 @@ fn policy_set(
         .replace_policy_deny_rules(&request.deny_rules)
         .map_err(|err| err.to_string())?;
 
+    let active_toolset_policy_id =
+        normalize_active_toolset_policy_id(request.active_toolset_policy_id.as_deref())?;
+    let enabled_tool_ids = if active_toolset_policy_id == CUSTOM_TOOLSET_POLICY_ID {
+        normalize_policy_enabled_tool_ids(&request.enabled_tool_ids)
+    } else {
+        find_toolset_policy(active_toolset_policy_id.as_str())
+            .ok_or_else(|| format!("unknown toolset policy {}", active_toolset_policy_id))?
+            .tool_ids
+    };
+
     state
-        .replace_policy_tool_states(&build_policy_tool_states(
-            &normalize_policy_enabled_tool_ids(&request.enabled_tool_ids),
-        ))
+        .replace_policy_tool_states(&build_policy_tool_states(&enabled_tool_ids))
+        .map_err(|err| err.to_string())?;
+    state
+        .set_policy_setting(POLICY_SETTING_ACTIVE_TOOLSET, &active_toolset_policy_id)
         .map_err(|err| err.to_string())?;
 
     load_policy_state(&state)
@@ -7243,23 +7836,52 @@ fn engine_run_create(
     state: tauri::State<'_, Arc<Database>>,
     request: EngineRunCreateRequest,
 ) -> Result<(), String> {
+    let workspace_path = request.workspace_path.as_deref().or(request.cwd.as_deref());
+    let status = request.status.as_deref().unwrap_or("pending");
+    let phase = request.phase.as_deref().unwrap_or("queued");
+    let source = request.source.as_deref().unwrap_or("desktop");
     state
-        .insert_engine_run(
+        .insert_engine_run_with_gateway_metadata(
             &request.id,
             request.parent_run_id.as_deref(),
             request.thread_id.as_deref(),
             request.session_id.as_deref(),
             &request.title,
             request.input_summary.as_deref(),
-            request.status.as_deref().unwrap_or("pending"),
-            request.phase.as_deref().unwrap_or("queued"),
+            status,
+            phase,
             request.cwd.as_deref(),
             request.model.as_deref(),
             request.provider.as_deref(),
+            request.source.as_deref(),
+            workspace_path,
+            request.provider_profile_id.as_deref(),
+            request.runtime_mode.as_deref(),
+            request.toolset_policy_id.as_deref(),
+            request.channel_kind.as_deref(),
+            request.channel_ref.as_deref(),
             request.retry_count.unwrap_or(0),
             request.resumed_from_run_id.as_deref(),
             request.checkpoint_json.as_deref(),
             request.metadata_json.as_deref(),
+        )
+        .map_err(|err| err.to_string())?;
+
+    let event_payload = serde_json::json!({
+      "status": status,
+      "phase": phase,
+      "source": source,
+      "workspacePath": workspace_path,
+    })
+    .to_string();
+    state
+        .insert_engine_run_event_with_details(
+            &uuid::Uuid::new_v4().to_string(),
+            &request.id,
+            "run_created",
+            Some("Run created"),
+            Some(&event_payload),
+            None,
         )
         .map_err(|err| err.to_string())
 }
@@ -7269,6 +7891,10 @@ fn engine_run_update(
     state: tauri::State<'_, Arc<Database>>,
     request: EngineRunUpdateRequest,
 ) -> Result<(), String> {
+    let previous_status = state
+        .get_engine_run(&request.id)
+        .map_err(|err| err.to_string())?
+        .map(|run| run.status);
     state
         .update_engine_run(
             &request.id,
@@ -7279,7 +7905,30 @@ fn engine_run_update(
             request.error.as_deref(),
             request.metadata_json.as_deref(),
         )
-        .map_err(|err| err.to_string())
+        .map_err(|err| err.to_string())?;
+
+    if let (Some(before), Some(after)) = (previous_status, request.status.as_deref()) {
+        if before != after {
+            let event_payload = serde_json::json!({
+              "from": before,
+              "to": after,
+              "phase": request.phase,
+            })
+            .to_string();
+            state
+                .insert_engine_run_event_with_details(
+                    &uuid::Uuid::new_v4().to_string(),
+                    &request.id,
+                    "status_changed",
+                    Some("Run status changed"),
+                    Some(&event_payload),
+                    None,
+                )
+                .map_err(|err| err.to_string())?;
+        }
+    }
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -7303,6 +7952,10 @@ fn engine_run_list(
 
 #[tauri::command]
 fn engine_run_cancel(state: tauri::State<'_, Arc<Database>>, id: String) -> Result<(), String> {
+    let previous_status = state
+        .get_engine_run(&id)
+        .map_err(|err| err.to_string())?
+        .map(|run| run.status);
     if let Some(sandbox) = state
         .get_worker_sandbox_by_run(&id)
         .map_err(|err| err.to_string())?
@@ -7319,7 +7972,27 @@ fn engine_run_cancel(state: tauri::State<'_, Arc<Database>>, id: String) -> Resu
             None,
             None,
         )
-        .map_err(|err| err.to_string())
+        .map_err(|err| err.to_string())?;
+
+    if previous_status.as_deref() != Some("canceled") {
+        let event_payload = serde_json::json!({
+          "from": previous_status,
+          "to": "canceled",
+        })
+        .to_string();
+        state
+            .insert_engine_run_event_with_details(
+                &uuid::Uuid::new_v4().to_string(),
+                &id,
+                "run_canceled",
+                Some("Run canceled"),
+                Some(&event_payload),
+                None,
+            )
+            .map_err(|err| err.to_string())?;
+    }
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -7355,7 +8028,7 @@ fn engine_run_retry(state: tauri::State<'_, Arc<Database>>, id: String) -> Resul
     let new_id = uuid::Uuid::new_v4().to_string();
 
     state
-        .insert_engine_run(
+        .insert_engine_run_with_gateway_metadata(
             &new_id,
             existing.parent_run_id.as_deref(),
             existing.thread_id.as_deref(),
@@ -7367,6 +8040,13 @@ fn engine_run_retry(state: tauri::State<'_, Arc<Database>>, id: String) -> Resul
             existing.cwd.as_deref(),
             existing.model.as_deref(),
             existing.provider.as_deref(),
+            Some(existing.source.as_str()),
+            existing.workspace_path.as_deref(),
+            existing.provider_profile_id.as_deref(),
+            Some(existing.runtime_mode.as_str()),
+            existing.toolset_policy_id.as_deref(),
+            existing.channel_kind.as_deref(),
+            existing.channel_ref.as_deref(),
             existing.retry_count + 1,
             Some(&id),
             existing.checkpoint_json.as_deref(),
@@ -7400,6 +8080,104 @@ fn engine_run_checkpoint_list(
 ) -> Result<Vec<db::EngineRunCheckpointRow>, String> {
     state
         .list_engine_run_checkpoints(&run_id, limit.unwrap_or(20).clamp(1, 200))
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+fn engine_run_event_append(
+    state: tauri::State<'_, Arc<Database>>,
+    request: EngineRunEventAppendRequest,
+) -> Result<String, String> {
+    let run_id = request.run_id.trim();
+    let event_type = request.event_type.trim();
+    if run_id.is_empty() {
+        return Err("run_id must not be empty".to_string());
+    }
+    if event_type.is_empty() {
+        return Err("event_type must not be empty".to_string());
+    }
+
+    let id = uuid::Uuid::new_v4().to_string();
+    state
+        .insert_engine_run_event_with_details(
+            &id,
+            run_id,
+            event_type,
+            request
+                .summary
+                .as_deref()
+                .map(str::trim)
+                .filter(|summary| !summary.is_empty()),
+            request.payload_json.as_deref(),
+            request
+                .redaction_level
+                .as_deref()
+                .map(str::trim)
+                .filter(|level| !level.is_empty()),
+        )
+        .map_err(|err| err.to_string())?;
+    Ok(id)
+}
+
+#[tauri::command]
+fn engine_run_event_list(
+    state: tauri::State<'_, Arc<Database>>,
+    run_id: String,
+    limit: Option<i64>,
+) -> Result<Vec<db::EngineRunEventRow>, String> {
+    state
+        .list_engine_run_events(run_id.trim(), limit.unwrap_or(200).clamp(1, 1000))
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+fn engine_run_artifact_add(
+    state: tauri::State<'_, Arc<Database>>,
+    request: EngineRunArtifactAddRequest,
+) -> Result<String, String> {
+    let run_id = request.run_id.trim();
+    let kind = request.kind.trim();
+    let path = request.path.trim();
+    if run_id.is_empty() {
+        return Err("run_id must not be empty".to_string());
+    }
+    if kind.is_empty() {
+        return Err("kind must not be empty".to_string());
+    }
+    if path.is_empty() {
+        return Err("path must not be empty".to_string());
+    }
+
+    let id = uuid::Uuid::new_v4().to_string();
+    state
+        .insert_engine_run_artifact(
+            &id,
+            run_id,
+            kind,
+            path,
+            request
+                .title
+                .as_deref()
+                .map(str::trim)
+                .filter(|title| !title.is_empty()),
+            request
+                .summary
+                .as_deref()
+                .map(str::trim)
+                .filter(|summary| !summary.is_empty()),
+        )
+        .map_err(|err| err.to_string())?;
+    Ok(id)
+}
+
+#[tauri::command]
+fn engine_run_artifact_list(
+    state: tauri::State<'_, Arc<Database>>,
+    run_id: String,
+    limit: Option<i64>,
+) -> Result<Vec<db::EngineRunArtifactRow>, String> {
+    state
+        .list_engine_run_artifacts(run_id.trim(), limit.unwrap_or(100).clamp(1, 500))
         .map_err(|err| err.to_string())
 }
 
@@ -7761,6 +8539,132 @@ fn default_policy_enabled_tool_ids_vec() -> Vec<String> {
         .collect()
 }
 
+fn build_toolset_policy(
+    id: &str,
+    label: &str,
+    description: &str,
+    risk_level: &str,
+    tool_ids: &[&str],
+) -> ToolsetPolicyPayload {
+    let requested = tool_ids
+        .iter()
+        .map(|tool_id| (*tool_id).to_string())
+        .collect::<Vec<_>>();
+
+    ToolsetPolicyPayload {
+        id: id.to_string(),
+        label: label.to_string(),
+        description: description.to_string(),
+        risk_level: risk_level.to_string(),
+        tool_ids: normalize_policy_enabled_tool_ids(&requested),
+    }
+}
+
+fn toolset_policy_definitions() -> Vec<ToolsetPolicyPayload> {
+    vec![
+        build_toolset_policy(
+            "host_full",
+            "Host full",
+            "Full local agent profile for trusted workspace automation.",
+            "high",
+            DEFAULT_POLICY_ENABLED_TOOL_IDS,
+        ),
+        build_toolset_policy(
+            "safe_research",
+            "Safe research",
+            "Read-only workspace and web research without shell, file edits, MCP, or delegation.",
+            "low",
+            &[
+                "read_file",
+                "glob",
+                "grep",
+                "web_fetch",
+                "web_search",
+                "todo",
+                "ask_user",
+            ],
+        ),
+        build_toolset_policy(
+            "code_edit",
+            "Code edit",
+            "Local development profile with filesystem edits and shell, without web, MCP, or delegation.",
+            "medium",
+            &[
+                "bash",
+                "read_file",
+                "edit_file",
+                "create_directory",
+                "move_path",
+                "copy_path",
+                "glob",
+                "grep",
+                "todo",
+                "ask_user",
+            ],
+        ),
+        build_toolset_policy(
+            "remote_mcp",
+            "Remote MCP",
+            "Connector-oriented profile for remote tools and web research, without local shell or file edits.",
+            "medium",
+            &["web_fetch", "web_search", "todo", "ask_user", "mcp"],
+        ),
+        build_toolset_policy(
+            "supervisor",
+            "Supervisor",
+            "Coordination profile for planning, asking the user, delegation, and read-only context gathering.",
+            "medium",
+            &[
+                "read_file",
+                "glob",
+                "grep",
+                "todo",
+                "delegate_task",
+                "ask_user",
+                "mcp",
+            ],
+        ),
+    ]
+}
+
+fn find_toolset_policy(policy_id: &str) -> Option<ToolsetPolicyPayload> {
+    toolset_policy_definitions()
+        .into_iter()
+        .find(|policy| policy.id == policy_id)
+}
+
+fn normalize_active_toolset_policy_id(input: Option<&str>) -> Result<String, String> {
+    let candidate = input.unwrap_or(CUSTOM_TOOLSET_POLICY_ID).trim();
+    if candidate.is_empty() || candidate == CUSTOM_TOOLSET_POLICY_ID {
+        return Ok(CUSTOM_TOOLSET_POLICY_ID.to_string());
+    }
+
+    if find_toolset_policy(candidate).is_some() {
+        return Ok(candidate.to_string());
+    }
+
+    Err(format!("unknown toolset policy {}", candidate))
+}
+
+fn infer_active_toolset_policy_id(stored_id: Option<&str>, enabled_tool_ids: &[String]) -> String {
+    if let Some(stored_id) = stored_id.map(str::trim) {
+        if stored_id == CUSTOM_TOOLSET_POLICY_ID {
+            return CUSTOM_TOOLSET_POLICY_ID.to_string();
+        }
+        if let Some(policy) = find_toolset_policy(stored_id) {
+            if policy.tool_ids == enabled_tool_ids {
+                return policy.id;
+            }
+        }
+    }
+
+    toolset_policy_definitions()
+        .into_iter()
+        .find(|policy| policy.tool_ids == enabled_tool_ids)
+        .map(|policy| policy.id)
+        .unwrap_or_else(|| CUSTOM_TOOLSET_POLICY_ID.to_string())
+}
+
 fn normalize_policy_enabled_tool_ids(enabled_tool_ids: &[String]) -> Vec<String> {
     let requested = enabled_tool_ids
         .iter()
@@ -7805,7 +8709,10 @@ fn enforce_tool_policy(
         .iter()
         .any(|enabled_tool_id| enabled_tool_id == &canonical_tool)
     {
-        return Err(format!("tool {} is disabled in the profile", canonical_tool));
+        return Err(format!(
+            "tool {} is disabled in the profile",
+            canonical_tool
+        ));
     }
 
     if policy
@@ -8152,11 +9059,20 @@ fn load_policy_state(state: &Arc<Database>) -> Result<PolicyStatePayload, String
             .map(|tool_id| (*tool_id).to_string())
             .collect()
     };
+    let stored_active_toolset_policy_id = state
+        .get_policy_setting(POLICY_SETTING_ACTIVE_TOOLSET)
+        .map_err(|err| err.to_string())?;
+    let active_toolset_policy_id = infer_active_toolset_policy_id(
+        stored_active_toolset_policy_id.as_deref(),
+        &enabled_tool_ids,
+    );
 
     Ok(PolicyStatePayload {
         flags,
         deny_rules,
         enabled_tool_ids,
+        active_toolset_policy_id,
+        toolset_policies: toolset_policy_definitions(),
     })
 }
 
@@ -9223,6 +10139,82 @@ fn personality_delete(state: tauri::State<'_, Arc<Database>>, id: String) -> Res
     state.delete_personality(&id).map_err(|e| e.to_string())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn toolset_policy_definitions_are_canonical() {
+        let safe_research = find_toolset_policy("safe_research").unwrap();
+
+        assert_eq!(
+            safe_research.tool_ids,
+            vec![
+                "read_file".to_string(),
+                "glob".to_string(),
+                "grep".to_string(),
+                "web_fetch".to_string(),
+                "web_search".to_string(),
+                "todo".to_string(),
+                "ask_user".to_string(),
+            ]
+        );
+        assert!(!safe_research.tool_ids.contains(&"bash".to_string()));
+        assert!(!safe_research.tool_ids.contains(&"edit_file".to_string()));
+    }
+
+    #[test]
+    fn active_toolset_inference_detects_custom_edits() {
+        let safe_research = find_toolset_policy("safe_research").unwrap();
+        assert_eq!(
+            infer_active_toolset_policy_id(Some("safe_research"), &safe_research.tool_ids),
+            "safe_research"
+        );
+
+        let mut custom_tools = safe_research.tool_ids;
+        custom_tools.push("bash".to_string());
+        assert_eq!(
+            infer_active_toolset_policy_id(Some("safe_research"), &custom_tools),
+            CUSTOM_TOOLSET_POLICY_ID
+        );
+    }
+
+    #[test]
+    fn runtime_provider_mapping_rewrites_localhost_for_isolation() {
+        let mapped =
+            map_provider_url_for_runtime("http://localhost:11434", Some("isolated")).unwrap();
+
+        assert!(mapped.changed);
+        assert_eq!(mapped.mapped_url, "http://host.docker.internal:11434");
+    }
+
+    #[test]
+    fn runtime_provider_mapping_rewrites_loopback_for_isolation() {
+        let mapped =
+            map_provider_url_for_runtime("https://127.0.0.1:8080/v1", Some("docker")).unwrap();
+
+        assert!(mapped.changed);
+        assert_eq!(mapped.mapped_url, "https://host.docker.internal:8080/v1");
+    }
+
+    #[test]
+    fn runtime_provider_mapping_keeps_external_hosts() {
+        let mapped =
+            map_provider_url_for_runtime("https://openrouter.ai/api/v1", Some("isolated")).unwrap();
+
+        assert!(!mapped.changed);
+        assert_eq!(mapped.mapped_url, "https://openrouter.ai/api/v1");
+    }
+
+    #[test]
+    fn runtime_provider_mapping_keeps_host_runtime_localhost() {
+        let mapped = map_provider_url_for_runtime("http://localhost:11434", Some("host")).unwrap();
+
+        assert!(!mapped.changed);
+        assert_eq!(mapped.mapped_url, "http://localhost:11434");
+    }
+}
+
 // -- Insights commands ------------------------------------------------------
 
 #[tauri::command]
@@ -9564,6 +10556,10 @@ pub fn run() {
             engine_run_retry,
             engine_run_checkpoint_add,
             engine_run_checkpoint_list,
+            engine_run_event_append,
+            engine_run_event_list,
+            engine_run_artifact_add,
+            engine_run_artifact_list,
             runtime_instruction_upsert,
             runtime_instruction_delete,
             runtime_instruction_list,
@@ -9648,6 +10644,11 @@ pub fn run() {
             tool_gateway_list,
             tool_gateway_delete,
             connector_test_reachability,
+            gateway_status,
+            gateway_health,
+            gateway_probe,
+            gateway_logs_tail,
+            runtime_provider_mapping_resolve,
             crew_provider_health_check,
             crew_provider_models_list,
             openai_compatible_chat_completion,

@@ -97,7 +97,7 @@ describe('ProjectView', () => {
     fireEvent.click(screen.getByTitle('Delete project'))
     expect(screen.getByRole('dialog', { name: 'Delete project' })).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Delete project and chats' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Delete project and assigned chats' }))
 
     expect(useProjectStore.getState().projects).toEqual([])
     expect(useChatStore.getState().threads).toEqual([])

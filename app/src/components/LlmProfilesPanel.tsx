@@ -343,7 +343,7 @@ export default function LlmProfilesPanel() {
   return (
     <div className="panel">
       <div className="panel-heading-row">
-        <h2>{tr("🧩 LLM-Profile")}</h2>
+        <h2>{tr("LLM profiles")}</h2>
         <div className="actions" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <button type="button" className="btn-sm" onClick={() => handleAddProfile('ollama')}>{tr("+ Ollama")}</button>
           <button type="button" className="btn-sm" onClick={() => handleAddProfile('openai-compatible')}>{tr("+ OpenAI-compatible")}</button>

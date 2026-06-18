@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { extractWebSearchSources } from '../utils/webSearchSources'
+import { tr } from '../i18n'
 
 type HighlightedChatTextProps = {
   content: string
@@ -57,6 +58,7 @@ export function HighlightedChatText({ content }: HighlightedChatTextProps) {
               key={`${source.url}-${index}`}
               className="message-source-chip"
               title={source.url}
+              aria-label={`${tr("Open source")}: ${source.title}`}
               onClick={() => handleSourceClick(source.url)}
             >
               {source.title}

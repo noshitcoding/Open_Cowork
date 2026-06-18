@@ -1,9 +1,9 @@
 use pdfium_render::prelude::*;
 use serde::Serialize;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::fs;
 use std::io::Read;
-use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
@@ -212,9 +212,7 @@ fn safe_extract_pdf_text_limited(
             None => (text, false),
         }),
         Ok(Err(err)) => Err(err.to_string()),
-        Err(_) => {
-            Err("PDF text could not be extracted: parser crashed".to_string())
-        }
+        Err(_) => Err("PDF text could not be extracted: parser crashed".to_string()),
     }
 }
 

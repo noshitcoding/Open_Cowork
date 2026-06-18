@@ -9,6 +9,7 @@ import CrewHistoryPanel from './crew/CrewHistoryPanel'
 import CrewRuntimePanel from './crew/CrewRuntimePanel'
 import { safeInvoke } from '../utils/safeInvoke'
 import { tr } from '../i18n'
+import { ChevronDown, Trash2 } from 'lucide-react'
 
 const ROLE_OPTIONS: AgentRole[] = ['researcher', 'writer', 'reviewer', 'planner', 'executor', 'analyst', 'custom']
 const PROCESS_OPTIONS: Array<{ value: CrewProcess; label: string }> = [
@@ -804,8 +805,8 @@ export default function CrewPanel() {
   const toggleAgent = (id: string) => setExpandedAgents((s) => ({ ...s, [id]: !s[id] }))
   const toggleCrewListVisibility = () => setIsCrewListVisible((current) => !current)
   const roleEmoji = (role: AgentRole) => {
-    const map: Record<AgentRole, string> = { researcher: '🔍', writer: '✍️', reviewer: '🔎', planner: '📋', executor: '⚙️', analyst: '📊', custom: '🤖' }
-    return map[role] ?? '🤖'
+    const map: Record<AgentRole, string> = { researcher: 'RE', writer: 'WR', reviewer: 'RV', planner: 'PL', executor: 'EX', analyst: 'AN', custom: 'AG' }
+    return map[role] ?? 'AG'
   }
   const processLabel = (p: CrewProcess) => PROCESS_OPTIONS.find((o) => o.value === p)?.label ?? p
   const activeAgentCount = activeCrew?.agents.filter((agent) => agent.enabled).length ?? 0
@@ -884,18 +885,30 @@ export default function CrewPanel() {
                 const diag = getCrewDiagnostics(crew, defaultOpenAICompatibleProfile, defaultOpenRouterProfile)
                 const enabledCount = crew.agents.filter((a) => a.enabled).length
                 return (
-                  <div key={crew.id} className={`crew-card${activeCrew?.id === crew.id ? ' active' : ''}`} onClick={() => setActiveCrew(crew.id)}>
-                    <span className={`crew-card-dot${diag.errors.length > 0 ? ' has-errors' : ''}`} />
-                    <div className="crew-card-body">
-                      <div className="crew-card-name">{crew.name}</div>
-                      <div className="crew-card-meta">
-                        <span>{processLabel(crew.process)}</span>
-                        <span>·</span>
-                        <span>{enabledCount}/{crew.agents.length}{tr("active")}</span>
-                        {diag.errors.length > 0 && <><span>·</span><span style={{ color: 'var(--danger)' }}>{diag.errors.length}{tr("Blocker")}</span></>}
-                      </div>
-                    </div>
-                    <button type="button" className="crew-card-delete" onClick={(e) => { e.stopPropagation(); deleteCrew(crew.id) }}>✕</button>
+                  <div
+                    key={crew.id}
+                    className={`crew-card${activeCrew?.id === crew.id ? ' active' : ''}`}
+                  >
+                    <button
+                      type="button"
+                      className="crew-card-main"
+                      aria-current={activeCrew?.id === crew.id ? 'page' : undefined}
+                      onClick={() => setActiveCrew(crew.id)}
+                    >
+                      <span className={`crew-card-dot${diag.errors.length > 0 ? ' has-errors' : ''}`} />
+                      <span className="crew-card-body">
+                        <span className="crew-card-name">{crew.name}</span>
+                        <span className="crew-card-meta">
+                          <span>{processLabel(crew.process)}</span>
+                          <span> / </span>
+                          <span>{enabledCount}/{crew.agents.length} {tr("active")}</span>
+                          {diag.errors.length > 0 && <><span> / </span><span style={{ color: 'var(--danger)' }}>{diag.errors.length} {tr("Blocker")}</span></>}
+                        </span>
+                      </span>
+                    </button>
+                    <button type="button" className="crew-card-delete" onClick={(e) => { e.stopPropagation(); deleteCrew(crew.id) }} aria-label={tr("Delete crew")}>
+                      <Trash2 size={14} aria-hidden="true" />
+                    </button>
                   </div>
                 )
               })}
@@ -914,8 +927,8 @@ export default function CrewPanel() {
                         <div className="crew-active-compact-name">{activeCrew.name}</div>
                         <div className="crew-active-compact-meta">
                           <span>{processLabel(activeCrew.process)}</span>
-                          <span>·</span>
-                          <span>{activeCrew.agents.filter((agent) => agent.enabled).length}/{activeCrew.agents.length}{tr("active")}</span>
+                          <span> / </span>
+                          <span>{activeCrew.agents.filter((agent) => agent.enabled).length}/{activeCrew.agents.length} {tr("active")}</span>
                         </div>
                       </div>
                     </div>
@@ -925,41 +938,41 @@ export default function CrewPanel() {
 
                 {/* Section: General */}
                 <div className={`crew-section${openSections.general ? ' open' : ''}`}>
-                  <button type="button" className="crew-section-header" onClick={() => toggleSection('general')}>
-                    <span className="crew-section-icon">📝</span>{tr("General")}<span className="crew-section-chevron">▾</span>
+                  <button type="button" className="crew-section-header" aria-expanded={openSections.general} aria-controls="crew-section-general" onClick={() => toggleSection('general')}>
+                    <span className="crew-section-icon" aria-hidden="true">01</span>{tr("General")}<ChevronDown className="crew-section-chevron" size={16} aria-hidden="true" />
                   </button>
                   {openSections.general && (
-                    <div className="crew-section-body">
+                    <div id="crew-section-general" className="crew-section-body">
                       <div className="crew-form-row">
                         <div className="crew-form-group">
                           <span className="crew-label">{tr("Crew-Name")}</span>
-                          <input className="crew-input" value={activeCrew.name} onChange={(e) => updateActiveCrew({ name: e.target.value })} />
+                          <input aria-label={tr("Crew-Name")} className="crew-input" value={activeCrew.name} onChange={(e) => updateActiveCrew({ name: e.target.value })} />
                         </div>
                         <div className="crew-form-group">
                           <span className="crew-label">{tr("Execution mode")}</span>
-                          <select className="crew-select" value={activeCrew.process} onChange={(e) => updateActiveCrew({ process: e.target.value as CrewProcess })}>
+                          <select aria-label={tr("Execution mode")} className="crew-select" value={activeCrew.process} onChange={(e) => updateActiveCrew({ process: e.target.value as CrewProcess })}>
                             {PROCESS_OPTIONS.map((o) => <option key={o.value} value={o.value}>{tr(o.label)}</option>)}
                           </select>
                         </div>
                       </div>
                       <div className="crew-form-group full-width">
                         <span className="crew-label">{tr("Description")}</span>
-                        <AutoResizeTextarea className="crew-textarea" value={activeCrew.description} onChange={(e) => updateActiveCrew({ description: e.target.value })} />
+                        <AutoResizeTextarea aria-label={tr("Description")} className="crew-textarea" value={activeCrew.description} onChange={(e) => updateActiveCrew({ description: e.target.value })} />
                       </div>
                       <div className="crew-form-row">
                         <div className="crew-form-group">
                           <span className="crew-label">{tr("Execution Subject")}</span>
-                          <input className="crew-input" value={activeCrew.executionSubject} onChange={(e) => updateActiveCrew({ executionSubject: e.target.value })} placeholder={tr("workspace-user")} />
+                          <input aria-label={tr("Execution Subject")} className="crew-input" value={activeCrew.executionSubject} onChange={(e) => updateActiveCrew({ executionSubject: e.target.value })} placeholder={tr("workspace-user")} />
                           <span className="crew-hint">{tr("Must match a stored crew role when governance is active.")}</span>
                         </div>
                       </div>
                       <div className="crew-form-group full-width">
                         <span className="crew-label">{tr("Additional crew instructions")}</span>
-                        <AutoResizeTextarea className="crew-textarea" value={activeCrew.executionGuidelines} onChange={(e) => updateActiveCrew({ executionGuidelines: e.target.value })} placeholder={tr("e.g. respond with risks, assumptions, and next steps")} />
+                        <AutoResizeTextarea aria-label={tr("Additional crew instructions")} className="crew-textarea" value={activeCrew.executionGuidelines} onChange={(e) => updateActiveCrew({ executionGuidelines: e.target.value })} placeholder={tr("e.g. respond with risks, assumptions, and next steps")} />
                       </div>
                       <div className="crew-form-group full-width">
                         <span className="crew-label">{tr("Knowledge focus")}</span>
-                        <AutoResizeTextarea className="crew-textarea" value={activeCrew.knowledgeFocus} onChange={(e) => updateActiveCrew({ knowledgeFocus: e.target.value })} placeholder={tr("z. B. priorisiere API-Vertraege, Scheduler-Verhalten und letzte Crew-Laeufe")} />
+                        <AutoResizeTextarea aria-label={tr("Knowledge focus")} className="crew-textarea" value={activeCrew.knowledgeFocus} onChange={(e) => updateActiveCrew({ knowledgeFocus: e.target.value })} placeholder={tr("z. B. priorisiere API-Vertraege, Scheduler-Verhalten und letzte Crew-Laeufe")} />
                         <span className="crew-hint">{tr("Guides memory and knowledge search for the Python runtime prompt.")}</span>
                       </div>
                     </div>
@@ -968,15 +981,15 @@ export default function CrewPanel() {
 
                 {/* Section: Execution */}
                 <div className={`crew-section${openSections.execution ? ' open' : ''}`}>
-                  <button type="button" className="crew-section-header" onClick={() => toggleSection('execution')}>
-                    <span className="crew-section-icon">⚡</span>{tr("Execution")}<span className="crew-section-chevron">▾</span>
+                  <button type="button" className="crew-section-header" aria-expanded={openSections.execution} aria-controls="crew-section-execution" onClick={() => toggleSection('execution')}>
+                    <span className="crew-section-icon" aria-hidden="true">02</span>{tr("Execution")}<ChevronDown className="crew-section-chevron" size={16} aria-hidden="true" />
                   </button>
                   {openSections.execution && (
-                    <div className="crew-section-body">
+                    <div id="crew-section-execution" className="crew-section-body">
                       <div className="crew-form-row">
                         <div className="crew-form-group">
                           <span className="crew-label">{tr("Manager-Agent")}</span>
-                          <select className="crew-select" value={activeCrew.managerAgentId ?? ''} onChange={(e) => updateActiveCrew({ managerAgentId: e.target.value || null })}>
+                          <select aria-label={tr("Manager-Agent")} className="crew-select" value={activeCrew.managerAgentId ?? ''} onChange={(e) => updateActiveCrew({ managerAgentId: e.target.value || null })}>
                             <option value="">{tr("Nor")}</option>
                             {activeCrew.agents.map((a) => {
                               const profile = a.personalityId ? personalityProfiles.find((entry) => entry.id === a.personalityId) : null
@@ -987,7 +1000,7 @@ export default function CrewPanel() {
                         </div>
                         <div className="crew-form-group">
                           <span className="crew-label">{tr("Outputformat")}</span>
-                          <select className="crew-select" value={activeCrew.outputMode} onChange={(e) => updateActiveCrew({ outputMode: e.target.value as CrewOutputMode })}>
+                          <select aria-label={tr("Outputformat")} className="crew-select" value={activeCrew.outputMode} onChange={(e) => updateActiveCrew({ outputMode: e.target.value as CrewOutputMode })}>
                             <option value="standard">{tr("Standard")}</option>
                             <option value="bullet-report">{tr("Stichpunkt-Report")}</option>
                             <option value="json">{tr("JSON")}</option>
@@ -997,21 +1010,21 @@ export default function CrewPanel() {
                       <div className="crew-form-row">
                         <div className="crew-form-group">
                           <span className="crew-label">{tr("Max RPM")}</span>
-                          <input className="crew-input" type="number" min={1} max={600} value={activeCrew.maxRpm} onChange={(e) => updateActiveCrew({ maxRpm: Number(e.target.value) || 1 })} />
+                          <input aria-label={tr("Max RPM")} className="crew-input" type="number" min={1} max={600} value={activeCrew.maxRpm} onChange={(e) => updateActiveCrew({ maxRpm: Number(e.target.value) || 1 })} />
                         </div>
                         <div className="crew-form-group">
                           <span className="crew-label">{tr("Max parallele Tasks")}</span>
-                          <input className="crew-input" type="number" min={1} max={24} value={activeCrew.maxParallelTasks} onChange={(e) => updateActiveCrew({ maxParallelTasks: Number(e.target.value) || 1 })} />
+                          <input aria-label={tr("Max parallele Tasks")} className="crew-input" type="number" min={1} max={24} value={activeCrew.maxParallelTasks} onChange={(e) => updateActiveCrew({ maxParallelTasks: Number(e.target.value) || 1 })} />
                         </div>
                       </div>
                       <div className="crew-form-row">
                         <div className="crew-form-group">
                           <span className="crew-label">{tr("Retry-Versuche pro Task")}</span>
-                          <input className="crew-input" type="number" min={0} max={5} value={activeCrew.retryCount} onChange={(e) => updateActiveCrew({ retryCount: Math.max(0, Number(e.target.value) || 0) })} />
+                          <input aria-label={tr("Retry-Versuche pro Task")} className="crew-input" type="number" min={0} max={5} value={activeCrew.retryCount} onChange={(e) => updateActiveCrew({ retryCount: Math.max(0, Number(e.target.value) || 0) })} />
                         </div>
                         <div className="crew-form-group">
                           <span className="crew-label">{tr("Zeichenlimit geteilte Resultse")}</span>
-                          <input className="crew-input" type="number" min={0} max={50000} value={activeCrew.sharedOutputCharLimit} onChange={(e) => updateActiveCrew({ sharedOutputCharLimit: Math.max(0, Number(e.target.value) || 0) })} />
+                          <input aria-label={tr("Zeichenlimit geteilte Resultse")} className="crew-input" type="number" min={0} max={50000} value={activeCrew.sharedOutputCharLimit} onChange={(e) => updateActiveCrew({ sharedOutputCharLimit: Math.max(0, Number(e.target.value) || 0) })} />
                         </div>
                       </div>
                       <label className="crew-checkbox-label"><input type="checkbox" checked={activeCrew.verbose} onChange={(e) => updateActiveCrew({ verbose: e.target.checked })} />{tr("Enable verbose crew logging")}</label>
@@ -1020,7 +1033,7 @@ export default function CrewPanel() {
                       {activeCrew.managerReviewEnabled && (
                         <div className="crew-form-group">
                           <span className="crew-label">{tr("Manager-Review-instructions")}</span>
-                          <AutoResizeTextarea className="crew-textarea" value={activeCrew.managerReviewGuidelines} onChange={(e) => updateActiveCrew({ managerReviewGuidelines: e.target.value })} placeholder={tr("e.g. assess risks more strictly and escalate early")} />
+                          <AutoResizeTextarea aria-label={tr("Manager-Review-instructions")} className="crew-textarea" value={activeCrew.managerReviewGuidelines} onChange={(e) => updateActiveCrew({ managerReviewGuidelines: e.target.value })} placeholder={tr("e.g. assess risks more strictly and escalate early")} />
                         </div>
                       )}
                       <label className="crew-checkbox-label"><input type="checkbox" checked={activeCrew.shareAllTaskOutputs} onChange={(e) => updateActiveCrew({ shareAllTaskOutputs: e.target.checked })} />{tr("Vorherige Task-Resultse global als Context teilen")}</label>
@@ -1030,11 +1043,11 @@ export default function CrewPanel() {
 
                 {/* Section: Provider & Model */}
                 <div className={`crew-section${openSections.provider ? ' open' : ''}`}>
-                  <button type="button" className="crew-section-header" onClick={() => toggleSection('provider')}>
-                    <span className="crew-section-icon">🔌</span>{tr("Provider & Model")}<span className="crew-section-chevron">▾</span>
+                  <button type="button" className="crew-section-header" aria-expanded={openSections.provider} aria-controls="crew-section-provider" onClick={() => toggleSection('provider')}>
+                    <span className="crew-section-icon" aria-hidden="true">03</span>{tr("Provider & Model")}<ChevronDown className="crew-section-chevron" size={16} aria-hidden="true" />
                   </button>
                   {openSections.provider && (
-                    <div className="crew-section-body">
+                    <div id="crew-section-provider" className="crew-section-body">
                       <div className="crew-form-row">
                         <div className="crew-form-group">
                           <span className="crew-label">{tr("Crew-Provider")}</span>
@@ -1048,7 +1061,7 @@ export default function CrewPanel() {
                         </div>
                         <div className="crew-form-group">
                           <span className="crew-label">{tr("Crew-Model")}</span>
-                          <select className="crew-select" value={activeCrew.defaultModel || ''} onChange={(e) => updateActiveCrew({ defaultModel: e.target.value })}>
+                          <select aria-label={tr("Crew-Model")} className="crew-select" value={activeCrew.defaultModel || ''} onChange={(e) => updateActiveCrew({ defaultModel: e.target.value })}>
                             <option value="">{tr("Globale Settings verwenden")}</option>
                             {getCrewDefaultModelOptions().map((m) => <option key={m} value={m}>{m}</option>)}
                           </select>
@@ -1065,20 +1078,20 @@ export default function CrewPanel() {
 
                 {/* Diagnostics */}
                 <div className={`crew-section${openSections.diagnostics ? ' open' : ''}`}>
-                  <button type="button" className="crew-section-header" onClick={() => toggleSection('diagnostics')}>
-                    <span className="crew-section-icon">🩺</span>{tr("Diagnostik")}<span className="crew-section-chevron">▾</span>
+                  <button type="button" className="crew-section-header" aria-expanded={openSections.diagnostics} aria-controls="crew-section-diagnostics" onClick={() => toggleSection('diagnostics')}>
+                    <span className="crew-section-icon" aria-hidden="true">04</span>{tr("Diagnostics")}<ChevronDown className="crew-section-chevron" size={16} aria-hidden="true" />
                   </button>
                   {openSections.diagnostics && (
-                    <div className="crew-section-body">
+                    <div id="crew-section-diagnostics" className="crew-section-body">
                       {activeCrewDiagnostics.errors.length === 0 && activeCrewDiagnostics.warnings.length === 0 ? (
-                        <div className="crew-alert success"><span className="crew-alert-icon">✅</span>{tr("No blockers found. Crew is ready to start.")}</div>
+                        <div className="crew-alert success"><span className="crew-alert-icon" aria-hidden="true">OK</span>{tr("No blockers found. Crew is ready to start.")}</div>
                       ) : (
                         <>
                           {activeCrewDiagnostics.errors.map((entry) => (
-                            <div key={`e-${entry}`} className="crew-alert error"><span className="crew-alert-icon">🚫</span> {entry}</div>
+                            <div key={`e-${entry}`} className="crew-alert error"><span className="crew-alert-icon" aria-hidden="true">!</span> {entry}</div>
                           ))}
                           {activeCrewDiagnostics.warnings.map((entry) => (
-                            <div key={`w-${entry}`} className="crew-alert warning"><span className="crew-alert-icon">⚠️</span> {entry}</div>
+                            <div key={`w-${entry}`} className="crew-alert warning"><span className="crew-alert-icon" aria-hidden="true">!</span> {entry}</div>
                           ))}
                         </>
                       )}
@@ -1089,7 +1102,7 @@ export default function CrewPanel() {
                 {/* Agents */}
                 <div className="crew-section open">
                   <div className="crew-section-header" style={{ cursor: 'default' }}>
-                    <span className="crew-section-icon">👥</span>{tr("Crew-members (")}{activeAgentCount}/{activeCrew.agents.length})
+                    <span className="crew-section-icon" aria-hidden="true">05</span>{tr("Crew-members (")}{activeAgentCount}/{activeCrew.agents.length})
                   </div>
                   <div className="crew-section-body">
                     <div className="crew-members-hero">
@@ -1206,7 +1219,12 @@ export default function CrewPanel() {
                         }
                         return (
                           <div key={agent.id} className={`crew-agent-card${!agent.enabled ? ' disabled' : ''}${isOpen ? ' open' : ''}`}>
-                            <div className="crew-agent-header" onClick={() => toggleAgent(agent.id)}>
+                            <button
+                              type="button"
+                              className="crew-agent-header"
+                              aria-expanded={isOpen}
+                              onClick={() => toggleAgent(agent.id)}
+                            >
                               <div className="crew-agent-avatar">{roleEmoji(profileAgent.role)}</div>
                               <div className="crew-agent-info">
                                 <div className="crew-agent-name">{profileAgent.name}</div>
@@ -1218,10 +1236,10 @@ export default function CrewPanel() {
                                 </div>
                               </div>
                               <div className="crew-agent-header-actions">
-                                <span className={`crew-badge ${agent.enabled ? 'active' : 'inactive'}`}>{agent.enabled ? 'Active' : 'Inactive'}</span>
-                                <span className="crew-agent-chevron">▾</span>
+                                <span className={`crew-badge ${agent.enabled ? 'active' : 'inactive'}`}>{agent.enabled ? tr("Active") : tr("Inactive")}</span>
+                                <ChevronDown className="crew-agent-chevron" size={16} aria-hidden="true" />
                               </div>
-                            </div>
+                            </button>
                             {isOpen && (
                               <div className="crew-agent-body">
                                 <div className="crew-agent-panel">
@@ -1234,31 +1252,31 @@ export default function CrewPanel() {
                                       {profile && (
                                         <div className="crew-form-group">
                                           <span className="crew-label">{tr("Icon")}</span>
-                                          <input className="crew-input" value={profile.icon ?? ''} maxLength={4} onChange={(e) => updateCrewPersonalityProfile(profile, { icon: e.target.value || null })} />
+                                          <input aria-label={tr("Icon")} className="crew-input" value={profile.icon ?? ''} maxLength={4} onChange={(e) => updateCrewPersonalityProfile(profile, { icon: e.target.value || null })} />
                                         </div>
                                       )}
-                                      <div className="crew-form-group"><span className="crew-label">{tr("Name")}</span><input className="crew-input" value={profileAgent.name} onChange={(e) => updateProfileOrSnapshot({ name: e.target.value })} /></div>
-                                      <div className="crew-form-group"><span className="crew-label">{tr("Rolle")}</span><select className="crew-select" value={profileAgent.role} onChange={(e) => updateProfileOrSnapshot({ role: e.target.value as AgentRole })}>{ROLE_OPTIONS.map((r) => <option key={r} value={r}>{r}</option>)}</select></div>
+                                      <div className="crew-form-group"><span className="crew-label">{tr("Name")}</span><input aria-label={tr("Name")} className="crew-input" value={profileAgent.name} onChange={(e) => updateProfileOrSnapshot({ name: e.target.value })} /></div>
+                                      <div className="crew-form-group"><span className="crew-label">{tr("Rolle")}</span><select aria-label={tr("Rolle")} className="crew-select" value={profileAgent.role} onChange={(e) => updateProfileOrSnapshot({ role: e.target.value as AgentRole })}>{ROLE_OPTIONS.map((r) => <option key={r} value={r}>{r}</option>)}</select></div>
                                       {profile && (
                                         <div className="crew-form-group">
                                           <span className="crew-label">{tr("Temperatur")}</span>
-                                          <input className="crew-input" type="number" min={0} max={2} step={0.1} value={profile.temperature ?? ''} onChange={(e) => updateCrewPersonalityProfile(profile, { temperature: e.target.value === '' ? null : Number(e.target.value) })} />
+                                          <input aria-label={tr("Temperatur")} className="crew-input" type="number" min={0} max={2} step={0.1} value={profile.temperature ?? ''} onChange={(e) => updateCrewPersonalityProfile(profile, { temperature: e.target.value === '' ? null : Number(e.target.value) })} />
                                         </div>
                                       )}
                                     </div>
                                     {profile && (
                                       <label className="crew-checkbox-label"><input type="checkbox" checked={profile.isDefault ?? false} onChange={(e) => updateCrewPersonalityProfile(profile, { isDefault: e.target.checked })} />{tr("Als Standard verwenden")}</label>
                                     )}
-                                    <div className="crew-form-group"><span className="crew-label">{tr("Target / Prompt-Fokus")}</span><AutoResizeTextarea className="crew-textarea" value={profileAgent.goal} onChange={(e) => updateProfileOrSnapshot({ goal: e.target.value })} /></div>
-                                    <div className="crew-form-group"><span className="crew-label">{tr("Background / system prompt")}</span><AutoResizeTextarea className="crew-textarea" value={profileAgent.backstory} onChange={(e) => updateProfileOrSnapshot({ backstory: e.target.value })} /></div>
-                                    <div className="crew-form-group"><span className="crew-label">{tr("skills.md")}</span><AutoResizeTextarea className="crew-textarea" value={profileAgent.skillsMarkdown} onChange={(e) => updateProfileOrSnapshot({ skillsMarkdown: e.target.value })} placeholder={tr("# skills.md&#10;- Project context&#10;- Work style")} /></div>
-                                    <span className="crew-hint">{profile ? 'Profile fields are synchronized globally for all crews.' : 'Local snapshot without active profile synchronization.'}</span>
+                                    <div className="crew-form-group"><span className="crew-label">{tr("Target / Prompt-Fokus")}</span><AutoResizeTextarea aria-label={tr("Target / Prompt-Fokus")} className="crew-textarea" value={profileAgent.goal} onChange={(e) => updateProfileOrSnapshot({ goal: e.target.value })} /></div>
+                                    <div className="crew-form-group"><span className="crew-label">{tr("Background / system prompt")}</span><AutoResizeTextarea aria-label={tr("Background / system prompt")} className="crew-textarea" value={profileAgent.backstory} onChange={(e) => updateProfileOrSnapshot({ backstory: e.target.value })} /></div>
+                                    <div className="crew-form-group"><span className="crew-label">{tr("skills.md")}</span><AutoResizeTextarea aria-label={tr("skills.md")} className="crew-textarea" value={profileAgent.skillsMarkdown} onChange={(e) => updateProfileOrSnapshot({ skillsMarkdown: e.target.value })} placeholder={tr("# skills.md&#10;- Project context&#10;- Work style")} /></div>
+                                    <span className="crew-hint">{profile ? tr("Profile fields are synchronized globally for all crews.") : tr("Local snapshot without active profile synchronization.")}</span>
                                   </div>
                                 </div>
                                 <div className="crew-agent-panel">
                                   <div className="crew-agent-panel-header">
                                     <div className="crew-agent-panel-title">{tr("Configuration")}</div>
-                                    <div className="crew-agent-panel-subtitle">{tr("Status, Provider, Model und runtimeverhalten.")}</div>
+                                    <div className="crew-agent-panel-subtitle">{tr("Status, provider, model, and runtime behavior.")}</div>
                                   </div>
                                   <div className="crew-agent-col">
                                     <div className="crew-checkbox-stack">
@@ -1269,17 +1287,17 @@ export default function CrewPanel() {
                                     <div className="crew-form-row">
                                       <div className="crew-form-group">
                                         <span className="crew-label">{tr("Provider")}</span>
-                                        <input className="crew-input" value={getProviderLabel(effectiveProviderKind)} readOnly />
+                                        <input aria-label={tr("Provider")} className="crew-input" value={getProviderLabel(effectiveProviderKind)} readOnly />
                                         <span className="crew-hint">{tr("Controlled by the crew provider.")}</span>
                                       </div>
                                       <div className="crew-form-group">
                                         <span className="crew-label">{tr("Max Iterationen")}</span>
-                                        <input className="crew-input" type="number" min={1} max={100} value={agent.maxIterations} onChange={(e) => updateActiveCrewAgent(agent.id, { maxIterations: Number(e.target.value) || 1 })} />
+                                        <input aria-label={tr("Max Iterationen")} className="crew-input" type="number" min={1} max={100} value={agent.maxIterations} onChange={(e) => updateActiveCrewAgent(agent.id, { maxIterations: Number(e.target.value) || 1 })} />
                                       </div>
                                     </div>
                                     <div className="crew-form-group">
                                       <span className="crew-label">{tr("Model")}</span>
-                                      <select className="crew-select" value={selModel} onChange={(e) => updateProfileOrSnapshot({ modelOverride: e.target.value || null })}>
+                                      <select aria-label={tr("Model")} className="crew-select" value={selModel} onChange={(e) => updateProfileOrSnapshot({ modelOverride: e.target.value || null })}>
                                         <option value="">{tr("Crew-Model (")}{getCrewDefaultModelLabel(effectiveProviderKind)})</option>
                                         {amo.map((m) => <option key={m} value={m}>{m}</option>)}
                                       </select>

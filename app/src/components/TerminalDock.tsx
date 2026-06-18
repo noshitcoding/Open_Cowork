@@ -245,6 +245,7 @@ export default function TerminalDock({ threadId, cwd }: TerminalDockProps) {
               key={session.id}
               type="button"
               role="tab"
+              aria-selected={session.id === activeSession?.id}
               className={`terminal-tab${session.id === activeSession?.id ? ' active' : ''}${session.hidden ? ' hidden-activity' : ''}`}
               onClick={() => setActiveSession(threadId, session.id)}
               title={session.cwd}

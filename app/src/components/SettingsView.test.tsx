@@ -1,5 +1,6 @@
 import { render, screen, fireEvent, within, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { MemoryRouter } from 'react-router-dom'
 import SettingsView from './SettingsView'
 import { useConfigStore } from '../stores/configStore'
 import { useEngineStore } from '../stores/engineStore'
@@ -162,6 +163,14 @@ function resetEngineStore() {
   })
 }
 
+function renderSettingsView(initialEntries = ['/settings']) {
+  return render(
+    <MemoryRouter initialEntries={initialEntries}>
+      <SettingsView />
+    </MemoryRouter>
+  )
+}
+
 describe('SettingsView', () => {
   beforeEach(async () => {
     await i18n.changeLanguage('en')
@@ -172,47 +181,53 @@ describe('SettingsView', () => {
     resetEngineStore()
   })
 
-  /* ── 1. sidebar renders all 9 categories ── */
+  /* 1. sidebar renders all 9 categories */
   it('renders all 9 category buttons in sidebar', () => {
-    render(<SettingsView />)
-    const nav = screen.getByRole('navigation', { name: 'Settings categories' })
-    const buttons = nav.querySelectorAll('.settings-nav-item')
+    renderSettingsView()
+    const tabs = screen.getByRole('tablist', { name: 'Settings categories' })
+    const buttons = tabs.querySelectorAll('.settings-nav-item')
     expect(buttons.length).toBe(9)
   })
 
-  /* ── 2. default category is AI & model ── */
+  /* 2. default category is AI & model */
   it('shows AI & model content by default', () => {
-    render(<SettingsView />)
+    renderSettingsView()
     expect(screen.getByRole('heading', { level: 1, name: 'AI & model' })).toBeInTheDocument()
   })
 
-  /* ── 3. navigation switches categories ── */
+  it('opens a category from the section query parameter', () => {
+    renderSettingsView(['/settings?section=security'])
+    expect(screen.getByRole('heading', { level: 1, name: 'Security & data' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Security & data' })).toHaveAttribute('aria-selected', 'true')
+  })
+
+  /* 3. navigation switches categories */
   it('switches to Agent & Skills when clicked', () => {
-    render(<SettingsView />)
+    renderSettingsView()
     fireEvent.click(screen.getByText('Agent & Skills'))
     expect(screen.getByRole('heading', { level: 1, name: 'Agent & Skills' })).toBeInTheDocument()
   })
 
-  /* ── 4. Interface category ── */
+  /* 4. Interface category */
   it('switches to Interface category', () => {
-    render(<SettingsView />)
+    renderSettingsView()
     fireEvent.click(screen.getByText('Interface'))
     expect(screen.getByRole('heading', { level: 1, name: 'Interface' })).toBeInTheDocument()
     expect(screen.getByText('Focus mode')).toBeInTheDocument()
     expect(screen.getByText('Compact mode')).toBeInTheDocument()
   })
 
-  /* ── 5. security category ── */
+  /* 5. security category */
   it('switches to Security & data category', () => {
-    render(<SettingsView />)
+    renderSettingsView()
     fireEvent.click(screen.getByText('Security & data'))
     expect(screen.getByRole('heading', { level: 1, name: 'Security & data' })).toBeInTheDocument()
     expect(screen.getByText('Read-only mode')).toBeInTheDocument()
   })
 
-  /* ── 6. System & Info shows runtime info ── */
+  /* 6. System & Info shows runtime info */
   it('switches to System & Info and shows runtime info', () => {
-    render(<SettingsView />)
+    renderSettingsView()
     fireEvent.click(screen.getByText('System & Info'))
     expect(screen.getByRole('heading', { level: 1, name: 'System & Info' })).toBeInTheDocument()
     expect(screen.getByText('Local LLM endpoint')).toBeInTheDocument()
@@ -226,53 +241,53 @@ describe('SettingsView', () => {
     expect(screen.getByText(/Use it at your own risk/)).toBeInTheDocument()
   })
 
-  /* ── 7. Memory category renders ── */
+  /* 7. Memory category renders */
   it('switches to Memory category', () => {
-    render(<SettingsView />)
+    renderSettingsView()
     fireEvent.click(screen.getByText('Memory'))
     expect(screen.getByRole('heading', { level: 1, name: 'Memory' })).toBeInTheDocument()
   })
 
-  /* ── 8. Sessions & Insights category renders ── */
+  /* 8. Sessions & Insights category renders */
   it('switches to Sessions & Insights', () => {
-    render(<SettingsView />)
+    renderSettingsView()
     fireEvent.click(screen.getByText('Sessions & Insights'))
     expect(screen.getByRole('heading', { level: 1, name: 'Sessions & Insights' })).toBeInTheDocument()
   })
 
-  /* ── 9. Terminal & Processes category renders ── */
+  /* 9. Terminal & Processes category renders */
   it('switches to Terminal & Processes', () => {
-    render(<SettingsView />)
+    renderSettingsView()
     fireEvent.click(screen.getByText('Terminal & Processes'))
     expect(screen.getByRole('heading', { level: 1, name: 'Terminal & Processes' })).toBeInTheDocument()
     expect(screen.getByText('Terminal dock')).toBeInTheDocument()
     expect(screen.getByRole('combobox', { name: 'Persistence' })).toHaveValue('runtime')
   })
 
-  /* ── 10. MCP Server category renders ── */
+  /* 10. MCP Server category renders */
   it('switches to MCP Server', () => {
-    render(<SettingsView />)
+    renderSettingsView()
     fireEvent.click(screen.getByText('MCP Server'))
     // McpView also has an h1 "MCP Server", so check for the settings toggle instead
     expect(screen.getByText('Auto-reconnect')).toBeInTheDocument()
     expect(screen.getByText('Verbose logging')).toBeInTheDocument()
   })
 
-  /* ── 11. Legacy Ollama config section removed ── */
+  /* 11. Legacy Ollama config section removed */
   it('does not render the legacy Ollama configuration section', () => {
-    render(<SettingsView />)
+    renderSettingsView()
     expect(screen.queryByRole('heading', { level: 2, name: /Ollama configuration/ })).not.toBeInTheDocument()
   })
 
   it('does not render OpenAI Computer Use settings', () => {
-    render(<SettingsView />)
+    renderSettingsView()
     expect(screen.queryByRole('heading', { level: 2, name: /OpenAI Computer Use/ })).not.toBeInTheDocument()
     expect(screen.queryByText('Safety Checks automatisch bestaetigen')).not.toBeInTheDocument()
   })
 
-  /* ── 12. Default Ollama profile endpoint updates store ── */
+  /* 12. Default Ollama profile endpoint updates store */
   it('updates default Ollama profile endpoint on input change', () => {
-    render(<SettingsView />)
+    renderSettingsView()
     const profileCard = screen.getByText('Lokales Ollama', { selector: 'strong' }).closest('.card') as HTMLElement
     const endpointInput = within(profileCard).getByLabelText('Endpoint')
     fireEvent.change(endpointInput, { target: { value: 'http://localhost:11434' } })
@@ -280,10 +295,10 @@ describe('SettingsView', () => {
     expect(useConfigStore.getState().llmProfiles.find((profile) => profile.id === 'default-ollama')?.baseUrl).toBe('http://localhost:11434')
   })
 
-  /* ── 13. Default Ollama profile model updates store ── */
+  /* 13. Default Ollama profile model updates store */
   it('updates default Ollama profile model on input change', () => {
     useConfigStore.getState().setLlmProfileModels('default-ollama', ['llama3.1:8b', 'mistral:7b'])
-    render(<SettingsView />)
+    renderSettingsView()
     const profileCard = screen.getByText('Lokales Ollama', { selector: 'strong' }).closest('.card') as HTMLElement
     const modelControl = within(profileCard).getByLabelText('Model')
     expect(modelControl.tagName).toBe('SELECT')
@@ -292,9 +307,9 @@ describe('SettingsView', () => {
     expect(useConfigStore.getState().llmProfiles.find((profile) => profile.id === 'default-ollama')?.model).toBe('mistral:7b')
   })
 
-  /* ── 14. Toggle updates preference ── */
+  /* 14. Toggle updates preference */
   it('toggles autoApproveSafeTools preference', () => {
-    render(<SettingsView />)
+    renderSettingsView()
     fireEvent.click(screen.getByText('Agent & Skills'))
     const toggleBtn = screen.getByText('Automatically approve safe tools').closest('.toggle-row')!.querySelector('button[role="switch"]')!
     expect(toggleBtn.getAttribute('aria-checked')).toBe('true')
@@ -302,10 +317,10 @@ describe('SettingsView', () => {
     expect(useConfigStore.getState().preferences.autoApproveSafeTools).toBe(false)
   })
 
-  /* ── 15. Model dropdown with Ollama profile models ── */
+  /* 15. Model dropdown with Ollama profile models */
   it('renders model dropdown when Ollama profile models are set', () => {
     useConfigStore.getState().setLlmProfileModels('default-ollama', ['llama3.1:8b', 'mistral:7b', 'codellama:13b'])
-    render(<SettingsView />)
+    renderSettingsView()
     const profileCard = screen.getByText('Lokales Ollama', { selector: 'strong' }).closest('.card') as HTMLElement
     const modelControl = within(profileCard).getByLabelText('Model')
     expect(modelControl.tagName).toBe('SELECT')
@@ -328,7 +343,7 @@ describe('SettingsView', () => {
       return defaultInvoke(cmd)
     })
 
-    render(<SettingsView />)
+    renderSettingsView()
     const profileCards = screen.getAllByText('OpenAI-compatible', { selector: 'strong' })
     const profileCard = profileCards[1].closest('.card') as HTMLElement
     fireEvent.click(within(profileCard).getByRole('button', { name: 'Load models' }))
@@ -340,44 +355,44 @@ describe('SettingsView', () => {
     expect(await within(profileCard).findByText('Model automatically set to 0xSero/Hy3-preview-nvfp4.')).toBeInTheDocument()
   })
 
-  /* ── 17. Number input for maxToolCalls ── */
+  /* 17. Number input for maxToolCalls */
   it('updates maxToolCallsPerLoop preference', () => {
-    render(<SettingsView />)
+    renderSettingsView()
     fireEvent.click(screen.getByText('Agent & Skills'))
     const input = screen.getByDisplayValue('12')
     fireEvent.change(input, { target: { value: '25' } })
     expect(useConfigStore.getState().preferences.maxToolCallsPerLoop).toBe(25)
   })
 
-  /* ── 18. Font scale input in Interface ── */
+  /* 18. Font scale input in Interface */
   it('updates fontScale preference', () => {
-    render(<SettingsView />)
+    renderSettingsView()
     fireEvent.click(screen.getByText('Interface'))
     const input = screen.getByDisplayValue('100')
     fireEvent.change(input, { target: { value: '110' } })
     expect(useConfigStore.getState().preferences.fontScale).toBe(110)
   })
 
-  /* ── 19. active category button gets active class ── */
+  /* 19. active category button gets active class */
   it('highlights the active category button', () => {
-    render(<SettingsView />)
-    const nav = screen.getByRole('navigation', { name: 'Settings categories' })
-    const aiBtn = nav.querySelector('.settings-nav-item.active')!
+    renderSettingsView()
+    const tabs = screen.getByRole('tablist', { name: 'Settings categories' })
+    const aiBtn = tabs.querySelector('.settings-nav-item.active')!
     expect(aiBtn.textContent).toContain('AI & model')
 
     fireEvent.click(screen.getByText('Interface'))
-    const uiBtn = nav.querySelector('.settings-nav-item.active')!
+    const uiBtn = tabs.querySelector('.settings-nav-item.active')!
     expect(uiBtn.textContent).toContain('Interface')
   })
 
-  /* ── 20. sidebar has navigation role ── */
-  it('sidebar has proper navigation role', () => {
-    render(<SettingsView />)
-    expect(screen.getByRole('navigation', { name: 'Settings categories' })).toBeInTheDocument()
+  /* 20. sidebar has navigation role */
+  it('sidebar has proper tablist role', () => {
+    renderSettingsView()
+    expect(screen.getByRole('tablist', { name: 'Settings categories' })).toBeInTheDocument()
   })
 
   it('updates visible settings text when the language changes', async () => {
-    render(<SettingsView />)
+    renderSettingsView()
     fireEvent.click(screen.getByText('Terminal & Processes'))
 
     expect(screen.getByRole('option', { name: 'Runtime only' })).toBeInTheDocument()
@@ -385,7 +400,7 @@ describe('SettingsView', () => {
     await i18n.changeLanguage('de')
 
     await waitFor(() => {
-      expect(screen.getByRole('navigation', { name: 'Einstellungskategorien' })).toBeInTheDocument()
+      expect(screen.getByRole('tablist', { name: 'Einstellungskategorien' })).toBeInTheDocument()
     })
     expect(screen.getByRole('option', { name: 'Nur Laufzeit' })).toBeInTheDocument()
   })

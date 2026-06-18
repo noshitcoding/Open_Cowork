@@ -142,6 +142,9 @@ npm run smoke:desktop
 ## Documentation
 
 - [Architecture](docs/ARCHITECTURE.md)
+- [OpenClaw and Hermes feature adoption deep spec](docs/OPENCLAW_HERMES_FEATURE_ADOPTION_DEEP_SPEC.md)
+- [OpenClaw and Hermes P0 implementation backlog](docs/OPENCLAW_HERMES_P0_IMPLEMENTATION_BACKLOG.md)
+- [OpenClaw and Hermes P0 smoke checklist](docs/OPENCLAW_HERMES_P0_SMOKE_CHECKLIST.md)
 - [Development and operations](docs/DEVELOPMENT_AND_OPERATIONS.md)
 - [Ollama configuration](docs/OLLAMA_CONFIGURATION.md)
 - [Desktop smoke test](docs/DESKTOP_SMOKE_TEST.md)

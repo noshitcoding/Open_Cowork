@@ -805,14 +805,12 @@ fn build_chat_turn_response(
         let response_steps = parse_steps(&assistant_message);
         let steps: Vec<String> = response_steps.into_iter().take(6).collect();
         if steps.is_empty() || (steps.len() == 1 && steps[0] == assistant_message.trim()) {
-            vec![
-                assistant_message
-                    .lines()
-                    .next()
-                    .unwrap_or("Aktion pruefen")
-                    .trim()
-                    .to_string(),
-            ]
+            vec![assistant_message
+                .lines()
+                .next()
+                .unwrap_or("Aktion pruefen")
+                .trim()
+                .to_string()]
         } else {
             steps
         }
@@ -857,7 +855,7 @@ fn parse_steps(raw: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        OllamaConfig, OllamaToolCall, OllamaToolFunctionCall, build_chat_turn_response, parse_steps,
+        build_chat_turn_response, parse_steps, OllamaConfig, OllamaToolCall, OllamaToolFunctionCall,
     };
     use serde_json::{Map, Value};
 
@@ -871,7 +869,7 @@ mod tests {
             vec![
                 "Initialize project".to_string(),
                 "Configure Ollama".to_string(),
-            "Run tests".to_string()
+                "Run tests".to_string()
             ]
         );
     }
