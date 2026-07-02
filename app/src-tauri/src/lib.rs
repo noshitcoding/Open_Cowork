@@ -1,3 +1,5 @@
+#![allow(clippy::too_many_arguments, clippy::type_complexity)]
+
 mod artifact_pipeline;
 mod audit;
 mod audit_service;
@@ -6268,7 +6270,7 @@ fn run_scheduled_task_once(
                     let registry = app.state::<CrewExecutionRegistry>();
                     let bridge = app.state::<CrewPythonBridge>();
                     match tauri::async_runtime::block_on(execute_crew_request(
-                        &app,
+                        app,
                         database,
                         &registry,
                         bridge.inner(),
@@ -9449,17 +9451,15 @@ fn run_command_once(
     let stdout_handle = thread::spawn(move || {
         let mut buffer = String::new();
         let reader = BufReader::new(stdout);
-        for line in reader.lines() {
-            if let Ok(text) = line {
-                buffer.push_str(&text);
-                buffer.push('\n');
-                emit_exec_chunk(
-                    &app_for_stdout,
-                    stream_for_stdout.as_deref(),
-                    "stdout",
-                    &text,
-                );
-            }
+        for text in reader.lines().map_while(Result::ok) {
+            buffer.push_str(&text);
+            buffer.push('\n');
+            emit_exec_chunk(
+                &app_for_stdout,
+                stream_for_stdout.as_deref(),
+                "stdout",
+                &text,
+            );
         }
         buffer
     });
@@ -9467,17 +9467,15 @@ fn run_command_once(
     let stderr_handle = thread::spawn(move || {
         let mut buffer = String::new();
         let reader = BufReader::new(stderr);
-        for line in reader.lines() {
-            if let Ok(text) = line {
-                buffer.push_str(&text);
-                buffer.push('\n');
-                emit_exec_chunk(
-                    &app_for_stderr,
-                    stream_for_stderr.as_deref(),
-                    "stderr",
-                    &text,
-                );
-            }
+        for text in reader.lines().map_while(Result::ok) {
+            buffer.push_str(&text);
+            buffer.push('\n');
+            emit_exec_chunk(
+                &app_for_stderr,
+                stream_for_stderr.as_deref(),
+                "stderr",
+                &text,
+            );
         }
         buffer
     });

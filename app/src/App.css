@@ -2,6 +2,8 @@
 :root {
   --bg-primary: #faf8f5;
   --bg-secondary: #f5f1ec;
+  --bg-tertiary: #eee8df;
+  --bg-hover: #ebe5dc;
   --bg-sidebar: #f0ebe4;
   --bg-white: #ffffff;
   --text-primary: #1a1a1a;
@@ -21,12 +23,15 @@
   --radius-lg: 16px;
   --shadow-sm: 0 1px 3px rgba(0,0,0,0.06);
   --shadow-md: 0 2px 8px rgba(0,0,0,0.08);
+  --shadow-lg: 0 12px 32px rgba(0,0,0,0.12);
   --transition: 150ms ease;
 }
 
 [data-theme='dark'] {
   --bg-primary: #12151a;
   --bg-secondary: #1a2028;
+  --bg-tertiary: #242d38;
+  --bg-hover: #293342;
   --bg-sidebar: #161b22;
   --bg-white: #1f2630;
   --text-primary: #edf3fb;
@@ -43,6 +48,7 @@
   --info: #6ca9ff;
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.35);
   --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.55);
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -61,6 +67,177 @@ body {
   font-size: 14px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+}
+
+/* === UI Primitives ===
+   Opt-in shared controls for new markup. Existing feature-specific styles stay in place until intentionally migrated. */
+.ui-button {
+  --ui-button-bg: var(--bg-white);
+  --ui-button-border: var(--border-color);
+  --ui-button-color: var(--text-primary);
+  --ui-button-hover-bg: var(--bg-hover);
+  --ui-button-hover-border: color-mix(in srgb, var(--border-color) 55%, var(--accent));
+  --ui-button-hover-color: var(--text-primary);
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--ui-button-border);
+  border-radius: var(--radius-sm);
+  background: var(--ui-button-bg);
+  color: var(--ui-button-color);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--transition), border-color var(--transition), color var(--transition), box-shadow var(--transition);
+}
+
+.ui-button:hover:not(:disabled):not([aria-disabled='true']) {
+  border-color: var(--ui-button-hover-border);
+  background: var(--ui-button-hover-bg);
+  color: var(--ui-button-hover-color);
+}
+
+.ui-button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  outline-offset: 2px;
+}
+
+.ui-button:disabled,
+.ui-button[aria-disabled='true'] {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.ui-button--sm { min-height: 30px; gap: 4px; padding: 0 9px; font-size: 12px; }
+.ui-button--md { min-height: 36px; padding: 0 12px; }
+.ui-button--lg { min-height: 42px; padding: 0 16px; font-size: 14px; }
+.ui-button--icon { width: 36px; min-width: 36px; padding: 0; }
+.ui-button--icon.ui-button--sm { width: 30px; min-width: 30px; }
+.ui-button--icon.ui-button--lg { width: 42px; min-width: 42px; }
+
+.ui-button--primary {
+  --ui-button-bg: var(--accent);
+  --ui-button-border: var(--accent);
+  --ui-button-color: #fff;
+  --ui-button-hover-bg: var(--accent-hover);
+  --ui-button-hover-border: var(--accent-hover);
+  --ui-button-hover-color: #fff;
+}
+
+.ui-button--secondary {
+  --ui-button-color: var(--text-secondary);
+}
+
+.ui-button--ghost {
+  --ui-button-bg: transparent;
+  --ui-button-border: transparent;
+  --ui-button-color: var(--text-secondary);
+  --ui-button-hover-border: transparent;
+}
+
+.ui-button--danger {
+  --ui-button-bg: color-mix(in srgb, var(--danger) 10%, transparent);
+  --ui-button-border: color-mix(in srgb, var(--danger) 30%, var(--border-color));
+  --ui-button-color: var(--danger);
+  --ui-button-hover-bg: var(--danger);
+  --ui-button-hover-border: var(--danger);
+  --ui-button-hover-color: #fff;
+}
+
+.ui-field {
+  width: 100%;
+  min-height: 36px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-white);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.4;
+  outline: none;
+  transition: border-color var(--transition), box-shadow var(--transition), background var(--transition);
+}
+
+textarea.ui-field {
+  min-height: 88px;
+  resize: vertical;
+}
+
+.ui-field::placeholder {
+  color: var(--text-muted);
+}
+
+.ui-field:hover:not(:disabled):not([readonly]) {
+  border-color: color-mix(in srgb, var(--border-color) 55%, var(--accent));
+}
+
+.ui-field:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+
+.ui-field:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+  background: var(--bg-secondary);
+}
+
+.ui-badge {
+  --ui-badge-bg: var(--bg-secondary);
+  --ui-badge-border: var(--border-light);
+  --ui-badge-color: var(--text-secondary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 22px;
+  padding: 0 7px;
+  border: 1px solid var(--ui-badge-border);
+  border-radius: 999px;
+  background: var(--ui-badge-bg);
+  color: var(--ui-badge-color);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.ui-badge--accent {
+  --ui-badge-bg: var(--accent-light);
+  --ui-badge-border: color-mix(in srgb, var(--accent) 30%, var(--border-light));
+  --ui-badge-color: var(--accent);
+}
+
+.ui-badge--success {
+  --ui-badge-bg: color-mix(in srgb, var(--success) 12%, transparent);
+  --ui-badge-border: color-mix(in srgb, var(--success) 30%, var(--border-light));
+  --ui-badge-color: var(--success);
+}
+
+.ui-badge--warning {
+  --ui-badge-bg: color-mix(in srgb, var(--warning) 14%, transparent);
+  --ui-badge-border: color-mix(in srgb, var(--warning) 30%, var(--border-light));
+  --ui-badge-color: var(--warning);
+}
+
+.ui-badge--danger {
+  --ui-badge-bg: color-mix(in srgb, var(--danger) 12%, transparent);
+  --ui-badge-border: color-mix(in srgb, var(--danger) 30%, var(--border-light));
+  --ui-badge-color: var(--danger);
+}
+
+.ui-badge--info {
+  --ui-badge-bg: color-mix(in srgb, var(--info) 12%, transparent);
+  --ui-badge-border: color-mix(in srgb, var(--info) 30%, var(--border-light));
+  --ui-badge-color: var(--info);
 }
 
 /* === View Loading === */

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import {
   Bell,
   Bot,
@@ -34,7 +34,6 @@ import TerminalPanel from './TerminalPanel'
 import PersonalitySelector from './PersonalitySelector'
 import SessionSearchPanel from './SessionSearchPanel'
 import PipelinePanel from './PipelinePanel'
-import CrewPanel from './CrewPanel'
 import ConnectorPanel from './ConnectorPanel'
 import McpView from './McpView'
 import RunPanel from './RunPanel'
@@ -146,6 +145,8 @@ function GatewayDiagnosticsPanel() {
 
   useEffect(() => {
     void refreshGateway(false)
+    // Initial gateway snapshot only; manual buttons trigger later probes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   return (
@@ -384,7 +385,14 @@ export default function SettingsView() {
 
             <SkillPanel />
             <PipelinePanel />
-            <CrewPanel />
+            <Section title={tr("Crew configuration")} icon={Bot}>
+              <p className="hint-text settings-policy-description">
+                {tr("Crew setup now lives in the dedicated crew workspace. Use it to manage crew members, tasks, and run settings in one place.")}
+              </p>
+              <div className="settings-inline-actions">
+                <Link className="btn-sm" to="/crew">{tr("Open crew workspace")}</Link>
+              </div>
+            </Section>
           </div>
         )}
 

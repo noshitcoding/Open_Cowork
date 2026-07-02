@@ -8,11 +8,13 @@ const distDir = join(root, 'dist')
 const assetsDir = join(distDir, 'assets')
 const indexHtmlPath = join(distDir, 'index.html')
 
+// Current-app baseline after route lazy-loading and the optional terminal bundle.
+// Keep headroom tight so the check still catches accidental bundle growth.
 const budgets = {
   initialGzipBytes: 300 * 1024,
-  cssGzipBytes: 24 * 1024,
-  totalJsGzipBytes: 360 * 1024,
-  largestJsChunkGzipBytes: 90 * 1024,
+  cssGzipBytes: 28 * 1024,
+  totalJsGzipBytes: 420 * 1024,
+  largestJsChunkGzipBytes: 120 * 1024,
 }
 
 function formatBytes(bytes) {

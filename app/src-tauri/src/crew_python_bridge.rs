@@ -446,7 +446,7 @@ fn extract_file_from_zip(
                 error
             )
         })?;
-        let Some(entry_path) = entry.enclosed_name().map(PathBuf::from) else {
+        let Some(entry_path) = entry.enclosed_name() else {
             continue;
         };
         if entry_path.file_name().and_then(|value| value.to_str()) != Some(file_name) {
@@ -527,7 +527,7 @@ fn python_version_supported(version: &str) -> bool {
     let major = parts.next().and_then(|value| value.parse::<u32>().ok());
     let minor = parts.next().and_then(|value| value.parse::<u32>().ok());
 
-    matches!((major, minor), (Some(3), Some(minor)) if minor >= MIN_SUPPORTED_PYTHON_MINOR && minor < MAX_SUPPORTED_PYTHON_MINOR_EXCLUSIVE)
+    matches!((major, minor), (Some(3), Some(minor)) if (MIN_SUPPORTED_PYTHON_MINOR..MAX_SUPPORTED_PYTHON_MINOR_EXCLUSIVE).contains(&minor))
 }
 
 fn resolve_local_wheels_path<R: Runtime>(app: &AppHandle<R>) -> PathBuf {
@@ -656,7 +656,7 @@ fn extract_zip_if_needed(zip_path: &Path, destination: &Path) -> Result<(), Stri
                 error
             )
         })?;
-        let Some(entry_name) = entry.enclosed_name().map(PathBuf::from) else {
+        let Some(entry_name) = entry.enclosed_name() else {
             continue;
         };
         let output_path = destination.join(entry_name);
@@ -935,20 +935,20 @@ fn crew_runtime_status_internal<R: Runtime>(
     bridge: &CrewPythonBridge,
 ) -> Result<CrewRuntimeStatusResponse, String> {
     ensure_bundled_runtime_assets(app)?;
-    let runtime_root = resolve_runtime_root(&app)?;
+    let runtime_root = resolve_runtime_root(app)?;
     if !runtime_root.exists() {
         fs::create_dir_all(&runtime_root)
             .map_err(|error| format!("Crew runtime root could not be created: {}", error))?;
     }
 
-    let scripts_path = resolve_runtime_scripts_path(&app);
+    let scripts_path = resolve_runtime_scripts_path(app);
     let main_script = scripts_path.join("main.py");
     let venv_python = resolve_venv_python_path(&runtime_root);
     let venv_exists = venv_python.exists();
     let base_python = if venv_exists {
         Some(venv_python.display().to_string())
     } else {
-        detect_base_python_command(&app)
+        detect_base_python_command(app)
             .filter(|command| command != "python")
             .filter(|command| command_available(command))
     };
@@ -963,7 +963,7 @@ fn crew_runtime_status_internal<R: Runtime>(
 
     if !main_script.exists() {
         return Ok(build_status_from_json(
-            &app,
+            app,
             bridge,
             &runtime_root,
             detected_python_path,
@@ -1001,7 +1001,7 @@ fn crew_runtime_status_internal<R: Runtime>(
     };
 
     Ok(build_status_from_json(
-        &app,
+        app,
         bridge,
         &runtime_root,
         detected_python_path,

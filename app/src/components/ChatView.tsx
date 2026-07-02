@@ -355,7 +355,10 @@ export default function ChatView() {
   const activeThread = useChatStore(getActiveThread)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const logRef = useRef<HTMLDivElement>(null)
-  const activeMessages = Array.isArray(activeThread?.messages) ? activeThread.messages : []
+  const activeMessages = useMemo(
+    () => (Array.isArray(activeThread?.messages) ? activeThread.messages : []),
+    [activeThread?.messages],
+  )
   const lastActiveMessage = activeMessages[activeMessages.length - 1]
   const providerContext = useMemo(
     () => ({

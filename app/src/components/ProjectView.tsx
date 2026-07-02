@@ -127,6 +127,8 @@ export default function ProjectView() {
   }, [activeProject, projects, setActiveProject])
 
   useEffect(() => {
+    // This mirrors the selected project into editable draft fields.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setTitleDraft(activeProject?.title ?? '')
     setInstructionsDraft(activeProject?.instructions ?? '')
     setLinkDraft('')

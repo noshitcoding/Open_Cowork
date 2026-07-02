@@ -421,7 +421,7 @@ describe('sampleOllamaMessage', () => {
         {
           function: {
             name: 'Read',
-            arguments: { filename: 'C:\workspace\README.md' },
+            arguments: { filename: 'C:\\workspace\\README.md' },
           },
         },
       ],
@@ -447,8 +447,8 @@ describe('sampleOllamaMessage', () => {
         id: expect.stringContaining('ollama-fallback-tool-'),
         name: 'Read',
         input: {
-          filename: 'C:\workspace\README.md',
-          file_path: 'C:\workspace\README.md',
+          filename: 'C:\\workspace\\README.md',
+          file_path: 'C:\\workspace\\README.md',
         },
       },
     ])

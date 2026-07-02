@@ -3847,6 +3847,7 @@ impl Database {
 
     // -- Engine Runs --
 
+    #[allow(dead_code)]
     pub fn insert_engine_run(
         &self,
         id: &str,
@@ -4004,8 +4005,7 @@ impl Database {
                  ORDER BY updated_at DESC
                  LIMIT ?2"
             )?;
-            let mapped =
-                stmt.query_map(params![status_filter, limit], |row| map_engine_run_row(row))?;
+            let mapped = stmt.query_map(params![status_filter, limit], map_engine_run_row)?;
             mapped.collect::<SqlResult<Vec<_>>>()?
         } else {
             let mut stmt = conn.prepare(
@@ -4018,7 +4018,7 @@ impl Database {
                  ORDER BY updated_at DESC
                  LIMIT ?1"
             )?;
-            let mapped = stmt.query_map(params![limit], |row| map_engine_run_row(row))?;
+            let mapped = stmt.query_map(params![limit], map_engine_run_row)?;
             mapped.collect::<SqlResult<Vec<_>>>()?
         };
         Ok(rows)
@@ -5490,6 +5490,15 @@ mod tests {
         assert_eq!(defaults.workspace_path, None);
         assert_eq!(defaults.provider_profile_id, None);
         assert_eq!(defaults.toolset_policy_id, None);
+
+        db.insert_thread(
+            "thread-1",
+            "Gateway Thread",
+            "2025-01-01T00:00:00",
+            None,
+            None,
+        )
+        .unwrap();
 
         db.insert_engine_run_with_gateway_metadata(
             "run-gateway",

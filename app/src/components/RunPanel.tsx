@@ -304,6 +304,8 @@ export default function RunPanel() {
 
   useEffect(() => {
     void refreshRuns()
+    // Refresh once on mount; manual refresh and actions keep the list current.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {

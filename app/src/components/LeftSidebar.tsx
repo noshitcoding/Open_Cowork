@@ -243,6 +243,8 @@ export default function LeftSidebar() {
       window.removeEventListener('pointerup', finishPointerDrag)
       window.removeEventListener('pointercancel', cancelPointerDrag)
     }
+    // Drag handlers close over the active store actions for the current gesture.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detachThreadFromAll, pointerDrag, threadIds])
 
   const handleNewChat = (projectId?: string) => {

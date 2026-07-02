@@ -531,6 +531,8 @@ export default function CrewPanel() {
     if (current?.cacheKey === cacheKey && (current.endpoint || current.error)) return
 
     void handleLoadProviderModels(providerKey)
+    // Provider loaders are render-local; this effect tracks their store inputs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeCrew, providerModelOptions, resolvedActiveProviderConfigs])
 
   useEffect(() => {
@@ -586,6 +588,8 @@ export default function CrewPanel() {
 
       updateCrewAgent(activeCrew.id, agentId, { modelOverride: null })
     })
+    // The catalog helper is render-local; this effect tracks its store inputs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeCrew, availableModels, personalityProfiles, providerModelOptions, updateCrewAgent, updateCrewPersonalityProfile])
 
   const handleCreateCrew = () => {

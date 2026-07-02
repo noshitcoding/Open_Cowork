@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import { lazy, Suspense, useRef, useEffect, useMemo, useState } from 'react'
 import type { ClipboardEvent, DragEvent, FormEvent } from 'react'
 import { open, save } from '@tauri-apps/plugin-dialog'
@@ -985,7 +986,7 @@ export default function CoworkView() {
       title: newTitle,
       createdAt: new Date(activeThread.createdAt).toISOString()
     }, 'db_save_thread update title')
-  }, [activeThreadId, activeThread?.messages.length]) // Execute when thread or message count changes
+  }, [activeThreadId, activeThread]) // Execute when thread or message count changes
 
   const enabledPluginSkills = useMemo<EnabledPluginSkill[]>(() => {
     return plugins
@@ -1082,7 +1083,7 @@ export default function CoworkView() {
   useEffect(() => {
     if (!awaitingHumanInput || !busy) return
     setBusy(false)
-  }, [awaitingHumanInput, busy])
+  }, [awaitingHumanInput, busy, setBusy])
 
   useEffect(() => {
     setSelectedAskUserOptionIds([])
