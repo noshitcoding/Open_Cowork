@@ -1,136 +1,110 @@
-import {
-  Boxes,
-  Brain,
-  CheckCircle2,
-  Clock3,
-  FileSearch,
-  GitCompareArrows,
-  Network,
-  PlugZap,
-  Search,
-  ShieldCheck,
-} from 'lucide-react'
+import { useMemo, useState } from 'react'
+import { Brain, Command, PlugZap, Sparkles } from 'lucide-react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { tr } from '../i18n'
+import { useCommandRegistry } from '../stores/commandRegistryStore'
+import McpView from './McpView'
+import MemoryPanel from './MemoryPanel'
+import SkillPanel from './SkillPanel'
 
-type FeatureStatus = 'ready' | 'partial' | 'planned'
+type WorkbenchTab = 'mcp' | 'knowledge' | 'skills' | 'commands'
 
-type FeatureItem = {
-  title: string
-  description: string
-  status: FeatureStatus
-  action: string
-  icon: typeof CheckCircle2
-}
-
-const STATUS_LABELS: Record<FeatureStatus, string> = {
-  ready: 'Ready',
-  partial: 'In progress',
-  planned: 'Planned',
-}
-
-const FEATURES: FeatureItem[] = [
-  {
-    title: 'MCP Server',
-    description: 'Configure servers, test them, and connect tools for agentic work.',
-    status: 'partial',
-    action: 'Build lifecycle, logs, and auto-reconnect',
-    icon: PlugZap,
-  },
-  {
-    title: 'Skills & Plugins',
-    description: 'Manage skills, learning history, and extensions as reusable work blocks.',
-    status: 'partial',
-    action: 'Add hot-reload and plugin lifecycle',
-    icon: Boxes,
-  },
-  {
-    title: 'Crew AI',
-    description: 'Manage roles, providers, models, and governance for multi-agent runs.',
-    status: 'partial',
-    action: 'Unify the run state machine and pause/resume behavior',
-    icon: Network,
-  },
-  {
-    title: 'Memory',
-    description: 'Persistent notes, profiles, and context suggestions for recurring tasks.',
-    status: 'ready',
-    action: 'Extend learning loop after task completion',
-    icon: Brain,
-  },
-  {
-    title: 'Global Search',
-    description: 'Find threads, sessions, tasks, artifacts, skills, settings, and logs in one place.',
-    status: 'planned',
-    action: 'Implement search index and grouped result view',
-    icon: Search,
-  },
-  {
-    title: 'Artifact and diff preview',
-    description: 'Review files, Markdown, Office outputs, tables, and tool results directly.',
-    status: 'planned',
-    action: 'Build a preview surface with diff and export actions',
-    icon: GitCompareArrows,
-  },
-  {
-    title: 'File Safety',
-    description: 'Show allowlists, backups, restore options, delete gates, and audit data per file operation.',
-    status: 'partial',
-    action: 'Refine policy UI and restore workflows',
-    icon: ShieldCheck,
-  },
-  {
-    title: 'Desktop Smoke Tests',
-    description: 'Run doctor, typecheck, lint, tests, build, and optional Rust checks reproducibly.',
-    status: 'ready',
-    action: 'Add Playwright E2E after localhost policy approval',
-    icon: FileSearch,
-  },
+const TABS: Array<{ id: WorkbenchTab; label: string; icon: typeof PlugZap }> = [
+  { id: 'mcp', label: 'MCP Server', icon: PlugZap },
+  { id: 'knowledge', label: 'Knowledge base', icon: Brain },
+  { id: 'skills', label: 'Skills', icon: Sparkles },
+  { id: 'commands', label: 'Slash commands', icon: Command },
 ]
 
-function statusClass(status: FeatureStatus): string {
-  if (status === 'ready') return 'success'
-  if (status === 'partial') return 'warning'
-  return 'muted'
+function isWorkbenchTab(value: string | null): value is WorkbenchTab {
+  return TABS.some((tab) => tab.id === value)
 }
 
 export default function FeaturesView() {
+  const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const requestedTab = searchParams.get('tab')
+  const activeTab: WorkbenchTab = isWorkbenchTab(requestedTab) ? requestedTab : 'mcp'
+  const commands = useCommandRegistry((state) => state.commands)
+  const [commandQuery, setCommandQuery] = useState('')
+
+  const filteredCommands = useMemo(() => {
+    const query = commandQuery.trim().toLowerCase()
+    if (!query) return commands
+    return commands.filter((command) => (
+      `${command.command} ${command.label} ${command.description} ${command.category}`.toLowerCase().includes(query)
+    ))
+  }, [commandQuery, commands])
+
+  const selectTab = (tab: WorkbenchTab) => {
+    const next = new URLSearchParams(searchParams)
+    next.set('tab', tab)
+    setSearchParams(next, { replace: true })
+  }
+
+  const openCommandInChat = (command: string) => {
+    navigate(`/?slash=${encodeURIComponent(command)}`)
+  }
+
   return (
-    <div className="settings-view settings-view-wide">
-      <header className="features-header">
+    <main className="feature-workbench">
+      <header className="feature-workbench-header">
         <div>
-          <h1>{tr("Features")}</h1>
-          <p className="hint-text">{tr("Status of key Open_Cowork features, extension points, and upcoming improvements.")}</p>
-        </div>
-        <div className="feature-summary">
-          <CheckCircle2 size={16} aria-hidden="true" />
-          <span>{FEATURES.filter((feature) => feature.status === 'ready').length}{tr("produktiv")}</span>
-          <Clock3 size={16} aria-hidden="true" />
-          <span>{FEATURES.filter((feature) => feature.status !== 'ready').length}{tr("offen")}</span>
+          <h1>{tr('Tools and knowledge')}</h1>
+          <p className="hint-text">{tr('Connect MCP tools, maintain reusable knowledge, manage skills, and discover commands.')}</p>
         </div>
       </header>
 
-      <div className="features-grid">
-        {FEATURES.map((feature) => {
-          const Icon = feature.icon
+      <div className="feature-workbench-tabs" role="tablist" aria-label={tr('Tools and knowledge')}>
+        {TABS.map((tab) => {
+          const Icon = tab.icon
           return (
-            <article key={feature.title} className="card feature-card">
-              <div className="feature-card-header">
-                <Icon size={18} aria-hidden="true" />
-                <h2>{feature.title}</h2>
-                <span className={`feature-status ${statusClass(feature.status)}`}>
-                  {STATUS_LABELS[feature.status]}
-                </span>
-              </div>
-              <p>{tr(feature.description)}</p>
-              <div className="feature-next-action">{feature.action}</div>
-            </article>
+            <button
+              type="button"
+              key={tab.id}
+              role="tab"
+              aria-selected={activeTab === tab.id}
+              className={activeTab === tab.id ? 'active' : ''}
+              onClick={() => selectTab(tab.id)}
+            >
+              <Icon size={16} aria-hidden="true" />
+              {tr(tab.label)}
+            </button>
           )
         })}
       </div>
-    </div>
+
+      <section className="feature-workbench-body" role="tabpanel">
+        {activeTab === 'mcp' && <McpView />}
+        {activeTab === 'knowledge' && <MemoryPanel />}
+        {activeTab === 'skills' && <SkillPanel />}
+        {activeTab === 'commands' && (
+          <div className="command-workbench">
+            <div className="command-workbench-toolbar">
+              <input
+                type="search"
+                value={commandQuery}
+                onChange={(event) => setCommandQuery(event.target.value)}
+                placeholder={tr('Search slash commands...')}
+                aria-label={tr('Search slash commands...')}
+              />
+              <span>{filteredCommands.length} {tr('commands')}</span>
+            </div>
+            <div className="command-workbench-list">
+              {filteredCommands.map((command) => (
+                <button type="button" key={command.id} onClick={() => openCommandInChat(command.command)}>
+                  <code>{command.command}</code>
+                  <span className="command-workbench-copy">
+                    <strong>{tr(command.label)}</strong>
+                    <small>{tr(command.description)}</small>
+                  </span>
+                  <span className="command-workbench-category">{tr(command.category)}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </section>
+    </main>
   )
 }
-
-
-
-

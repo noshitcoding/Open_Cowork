@@ -1,15 +1,17 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import CrewPanel from './CrewPanel'
-import { safeInvoke } from '../utils/safeInvoke'
+import { hasTauriRuntime, safeInvoke } from '../utils/safeInvoke'
 import { useConfigStore } from '../stores/configStore'
 import { useCrewStore, type CrewAgent } from '../stores/crewStore'
 import { usePersonalityStore } from '../stores/personalityStore'
 
 vi.mock('../utils/safeInvoke', () => ({
+  hasTauriRuntime: vi.fn(() => false),
   safeInvoke: vi.fn(),
 }))
 
+const hasTauriRuntimeMock = vi.mocked(hasTauriRuntime)
 const safeInvokeMock = vi.mocked(safeInvoke)
 
 const baseAgent: CrewAgent = {
@@ -33,6 +35,8 @@ const baseAgent: CrewAgent = {
 describe('CrewPanel', () => {
   beforeEach(() => {
     window.localStorage.removeItem('open-cowork-crew')
+    hasTauriRuntimeMock.mockReset()
+    hasTauriRuntimeMock.mockReturnValue(false)
     safeInvokeMock.mockReset()
     safeInvokeMock.mockResolvedValue({
       endpoint: 'https://api.openai.com/v1',
@@ -159,6 +163,18 @@ describe('CrewPanel', () => {
     })
   })
 
+  it('does not run desktop personality migration in the browser preview', async () => {
+    const migrateAgentsToPersonalityProfiles = vi.fn().mockResolvedValue(true)
+    useCrewStore.setState({ migrateAgentsToPersonalityProfiles })
+
+    await act(async () => {
+      render(<CrewPanel />)
+    })
+
+    expect(migrateAgentsToPersonalityProfiles).not.toHaveBeenCalled()
+    expect(usePersonalityStore.getState().loadPersonalities).toHaveBeenCalledTimes(1)
+  })
+
   it('syncs member providers to the crew provider when changing the crew provider', async () => {
     await act(async () => {
       render(<CrewPanel />)
@@ -214,6 +230,49 @@ describe('CrewPanel', () => {
 
     const crew = useCrewStore.getState().crews[0]
     expect(crew.agents.every((agent) => agent.mcpServerNames.includes('workspace-mcp'))).toBe(true)
+  })
+
+  it('starts a configured crew directly from the crew workspace', async () => {
+    useCrewStore.setState((state) => ({
+      crews: state.crews.map((crew) => ({
+        ...crew,
+        tasks: [{
+          id: 'task-run',
+          description: 'Run the configured crew',
+          expectedOutput: 'Verified result',
+          agentId: 'agent-default',
+          context: [],
+          dependencies: [],
+          asyncExecution: false,
+          status: 'pending' as const,
+          output: null,
+        }],
+      })),
+    }))
+    safeInvokeMock.mockImplementation(async (command) => {
+      if (command === 'crew_execute') {
+        return {
+          crewId: 'crew-1',
+          status: 'completed',
+          taskResults: [{ taskId: 'task-run', agentId: 'agent-default', status: 'completed', output: 'Done' }],
+          logs: [],
+          error: null,
+        }
+      }
+      return { endpoint: 'https://api.openai.com/v1', models: ['gpt-4.1-mini'] }
+    })
+
+    await act(async () => {
+      render(<CrewPanel />)
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Run crew' }))
+    })
+
+    expect(safeInvokeMock).toHaveBeenCalledWith('crew_execute', expect.objectContaining({
+      request: expect.objectContaining({ id: 'crew-1' }),
+    }))
+    expect(useCrewStore.getState().crews[0].status).toBe('completed')
   })
 
   it('adds newly created custom personalities to existing crew members automatically', async () => {

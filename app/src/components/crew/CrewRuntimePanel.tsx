@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { useCrewRuntimeStore } from '../../stores/crewRuntimeStore'
+import { hasTauriRuntime } from '../../utils/safeInvoke'
 import i18n, { tr } from '../../i18n'
 
 function formatTimestamp(value: string | null): string {
@@ -12,7 +13,7 @@ export default function CrewRuntimePanel() {
   const { status, loading, bootstrapping, error, loadStatus, bootstrap } = useCrewRuntimeStore()
 
   useEffect(() => {
-    if (!status && !loading) {
+    if (hasTauriRuntime() && !status && !loading) {
       void loadStatus()
     }
   }, [loadStatus, loading, status])

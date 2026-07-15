@@ -25,7 +25,8 @@ export default function TerminalPanel() {
 
   const handleAdd = async () => {
     if (!form.name.trim()) return
-    await upsertBackend({ id: randomId(), name: form.name.trim(), backendType: form.type, configJson: form.config })
+    const saved = await upsertBackend({ id: randomId(), name: form.name.trim(), backendType: form.type, configJson: form.config })
+    if (!saved) return
     setForm({ name: '', type: 'local', config: '{}' })
     setShowAdd(false)
     void loadBackends()
@@ -96,7 +97,7 @@ export default function TerminalPanel() {
               <option value="serverless">{tr("Serverless")}</option>
             </select>
             </label>
-            <label>{tr("Config (JSON)")}<input type="text" value={form.config} onChange={(e) => setForm({ ...form, config: e.target.value })} />
+            <label>{tr("Protected config (JSON)")}<input type="text" value={form.config} onChange={(e) => setForm({ ...form, config: e.target.value })} />
             </label>
           </div>
           <button type="button" className="btn-sm" onClick={handleAdd}>{tr("Create backend")}</button>

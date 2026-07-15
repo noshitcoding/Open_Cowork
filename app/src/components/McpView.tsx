@@ -116,6 +116,7 @@ export default function McpView() {
     activeMcpServerName,
     preferences,
     setMcpServer,
+    setMcpServerEnv,
     setActiveMcpServer,
     importMcpServers,
     deleteMcpServer,
@@ -162,7 +163,7 @@ export default function McpView() {
     setNotice(null)
     try {
       const env = currentEnv()
-      setMcpServer({ env })
+      await setMcpServerEnv(env)
       const response = await safeInvoke<McpProbeResponse>('mcp_probe', {
         request: {
           name: mcpServer.name,
@@ -191,7 +192,7 @@ export default function McpView() {
     setNotice(null)
     try {
       const env = currentEnv()
-      setMcpServer({ env })
+      await setMcpServerEnv(env)
       await safeInvoke<McpRuntimeServerStatus>('mcp_runtime_start', {
         request: {
           name: mcpServer.name,
@@ -230,7 +231,7 @@ export default function McpView() {
     setNotice(null)
     try {
       const env = currentEnv()
-      setMcpServer({ env })
+      await setMcpServerEnv(env)
       await safeInvoke<McpRuntimeServerStatus>('mcp_runtime_restart', {
         request: {
           name: mcpServer.name,
@@ -256,7 +257,7 @@ export default function McpView() {
     try {
       const parsedArgs = JSON.parse(toolArgs) as Record<string, unknown>
       const env = currentEnv()
-      setMcpServer({ env })
+      await setMcpServerEnv(env)
 
       const response = await safeInvoke<McpCallResponse>('mcp_call_tool', {
         request: {
@@ -282,7 +283,7 @@ export default function McpView() {
     setCallResult(null)
     try {
       const env = currentEnv()
-      setMcpServer({ env })
+      await setMcpServerEnv(env)
 
       const response = await safeInvoke<McpCallResponse>('mcp_call_tool', {
         request: {
@@ -306,12 +307,12 @@ export default function McpView() {
     }
   }
 
-  const handleImport = () => {
+  const handleImport = async () => {
     setError(null)
     setNotice(null)
     try {
       const imported = parseMcpJson(importText)
-      importMcpServers(imported)
+      await importMcpServers(imported)
       setEnvText(JSON.stringify(imported[0]?.env ?? {}, null, 2))
       setNotice(`${imported.length} MCP-Server importiert`)
       setImportText('')
@@ -339,7 +340,7 @@ export default function McpView() {
             placeholder={exampleJson()}
           />
           <div className="actions">
-            <button type="button" disabled={!importText.trim()} onClick={handleImport}>{tr("Import JSON")}</button>
+            <button type="button" disabled={!importText.trim()} onClick={() => void handleImport()}>{tr("Import JSON")}</button>
             <button type="button" className="btn-secondary" onClick={() => setImportText(exampleJson())}>{tr("Insert example")}</button>
           </div>
         </div>
@@ -377,7 +378,7 @@ export default function McpView() {
           <button disabled={busy} onClick={handleProbe}>
             {busy ? tr('Probe running...') : tr('Connect server and load tools')}
           </button>
-          <button type="button" className="btn-secondary" disabled={servers.length <= 1} onClick={() => deleteMcpServer(mcpServer.name)}>{tr("Delete server")}</button>
+          <button type="button" className="btn-secondary" disabled={servers.length <= 1} onClick={() => void deleteMcpServer(mcpServer.name)}>{tr("Delete server")}</button>
         </div>
 
         <div className="actions mcp-runtime-actions">

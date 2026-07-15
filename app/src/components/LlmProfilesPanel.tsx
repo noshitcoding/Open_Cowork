@@ -3,6 +3,7 @@ import { checkOllamaConnection, listOllamaModels } from '../engine/api/ollamaCli
 import { useConfigStore, type LlmProfile, type LlmProviderKind } from '../stores/configStore'
 import { hasTauriRuntime, safeInvoke } from '../utils/safeInvoke'
 import { tr } from '../i18n'
+import SecureCredentialInput from './SecureCredentialInput'
 
 type ExternalProviderHealthCheckResult = {
   reachable: boolean
@@ -94,6 +95,7 @@ export default function LlmProfilesPanel() {
     llmProfileModels,
     addLlmProfile,
     updateLlmProfile,
+    setLlmProfileApiKey,
     deleteLlmProfile,
     setDefaultLlmProfile,
     setLlmProfileModels,
@@ -361,6 +363,7 @@ export default function LlmProfilesPanel() {
                 <div className="hint-text">{tr("Global default profile for this provider")}</div>
               </div>
               <select
+                aria-label={`${PROVIDER_LABELS[provider]} ${tr('Global default profile for this provider')}`}
                 value={defaultLlmProfileIds[provider]}
                 onChange={(event) => setDefaultLlmProfile(provider, event.target.value)}
                 disabled={profiles.length === 0}
@@ -430,10 +433,9 @@ export default function LlmProfilesPanel() {
                           )}
                         </label>
                         {supportsApiKey(profile.provider) && (
-                          <label>{tr("API Key")}<input
-                              type="password"
+                          <label>{tr("API Key")}<SecureCredentialInput
                               value={profile.apiKey}
-                              onChange={(event) => updateLlmProfile(profile.id, { apiKey: event.target.value })}
+                              onCommit={(value) => setLlmProfileApiKey(profile.id, value)}
                               placeholder={tr("sk?...")}
                               style={{ fontFamily: 'monospace' }}
                             />

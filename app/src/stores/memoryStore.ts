@@ -1,5 +1,11 @@
 import { create } from 'zustand'
-import { safeInvoke } from '../utils/safeInvoke'
+import { hasTauriRuntime, safeInvoke } from '../utils/safeInvoke'
+import {
+  getVolatileMemoryProviders,
+  migrateLegacyMemoryProviderConfigs,
+  setVolatileMemoryProviders,
+} from '../security/legacyConfigMigration'
+import { buildKnowledgeImportEntries } from '../engine/memory/knowledgeImport'
 
 export type MemoryEntry = {
   id: string
@@ -79,19 +85,6 @@ function setLocalProfile(entries: UserProfileEntry[]): void {
   try { localStorage.setItem(LOCAL_PROFILE_KEY, JSON.stringify(entries)) } catch { /* noop */ }
 }
 
-const LOCAL_PROVIDER_KEY = 'open-cowork-providers-local'
-
-function getLocalProviders(): MemoryProvider[] {
-  try {
-    const raw = localStorage.getItem(LOCAL_PROVIDER_KEY)
-    return raw ? JSON.parse(raw) : []
-  } catch { return [] }
-}
-
-function setLocalProviders(providers: MemoryProvider[]): void {
-  try { localStorage.setItem(LOCAL_PROVIDER_KEY, JSON.stringify(providers)) } catch { /* noop */ }
-}
-
 /* ── Store ────────────────────────────────────────────────────────────── */
 
 type MemoryState = {
@@ -107,6 +100,7 @@ type MemoryState = {
   loadEntries: (scope?: string, category?: string, limit?: number) => Promise<void>
   searchEntries: (query: string, limit?: number) => Promise<void>
   upsertEntry: (entry: { id: string; scope: string; category: string; key: string; content: string; confidence?: number }) => Promise<void>
+  importKnowledgeText: (title: string, content: string) => Promise<number>
   deleteEntry: (id: string) => Promise<void>
   compactEntries: (scope: string, minConfidence: number) => Promise<{ removed: number; remaining: number }>
   createSnapshot: () => Promise<FrozenSnapshot>
@@ -117,7 +111,7 @@ type MemoryState = {
   deleteProfile: (key: string) => Promise<void>
 
   loadProviders: () => Promise<void>
-  upsertProvider: (p: { id: string; name: string; provider_type: string; config_json: string; enabled?: boolean }) => Promise<void>
+  upsertProvider: (p: { id: string; name: string; provider_type: string; config_json: string; enabled?: boolean }) => Promise<boolean>
   deleteProvider: (id: string) => Promise<void>
 }
 
@@ -196,6 +190,17 @@ export const useMemoryStore = create<MemoryState>()((set, get) => ({
       else local.unshift(full)
       setLocalEntries(local)
     }
+  },
+
+  importKnowledgeText: async (title, content) => {
+    const entries = buildKnowledgeImportEntries(title, content)
+    for (const entry of entries) {
+      await get().upsertEntry(entry)
+    }
+    if (entries.length > 0) {
+      await get().loadEntries(undefined, undefined, 200)
+    }
+    return entries.length
   },
 
   deleteEntry: async (id) => {
@@ -293,7 +298,10 @@ export const useMemoryStore = create<MemoryState>()((set, get) => ({
 
   loadProviders: async () => {
     try {
-      const providers = await safeInvoke<MemoryProvider[]>('memory_provider_list', undefined, getLocalProviders())
+      await migrateLegacyMemoryProviderConfigs()
+      const providers = hasTauriRuntime()
+        ? await safeInvoke<MemoryProvider[]>('memory_provider_list')
+        : getVolatileMemoryProviders()
       set({ providers })
     } catch (e) {
       set({ error: String(e) })
@@ -309,9 +317,13 @@ export const useMemoryStore = create<MemoryState>()((set, get) => ({
         configJson: p.config_json,
         enabled: p.enabled ?? true,
       }, undefined)
-    } catch {
-      // Fallback: save locally
-      const local = getLocalProviders()
+      return true
+    } catch (error) {
+      if (hasTauriRuntime()) {
+        set({ error: error instanceof Error ? error.message : String(error) })
+        return false
+      }
+      const local = [...getVolatileMemoryProviders()]
       const now = new Date().toISOString()
       const existing = local.findIndex(pr => pr.id === p.id)
       const full: MemoryProvider = {
@@ -321,7 +333,9 @@ export const useMemoryStore = create<MemoryState>()((set, get) => ({
       }
       if (existing >= 0) local[existing] = full
       else local.unshift(full)
-      setLocalProviders(local)
+      setVolatileMemoryProviders(local)
+      set({ providers: local })
+      return true
     }
   },
 
@@ -329,9 +343,13 @@ export const useMemoryStore = create<MemoryState>()((set, get) => ({
     try {
       await safeInvoke('memory_provider_delete', { id }, undefined)
       set((s) => ({ providers: s.providers.filter((p) => p.id !== id) }))
-    } catch {
-      const local = getLocalProviders().filter(p => p.id !== id)
-      setLocalProviders(local)
+    } catch (error) {
+      if (hasTauriRuntime()) {
+        set({ error: error instanceof Error ? error.message : String(error) })
+        return
+      }
+      const local = getVolatileMemoryProviders().filter(p => p.id !== id)
+      setVolatileMemoryProviders(local)
       set((s) => ({ providers: s.providers.filter((p) => p.id !== id) }))
     }
   },

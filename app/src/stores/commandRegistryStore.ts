@@ -703,7 +703,12 @@ function buildAllCommands(): SlashCommand[] {
       id: 'crew-create', command: '/crew', label: 'Create crew', description: 'Create a new AI crew with agents',
       category: 'crew', execute: (args) => {
         if (args?.trim()) {
-          useCrewStore.getState().createCrew(uid(), args.trim(), [])
+          const raw = args.trim()
+          const separator = raw.indexOf(':')
+          useCrewStore.getState().createStarterCrew(
+            separator > 0 ? raw.slice(0, separator).trim() : raw.slice(0, 64),
+            separator > 0 ? raw.slice(separator + 1).trim() : raw,
+          )
         }
       },
     },

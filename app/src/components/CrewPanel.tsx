@@ -7,9 +7,9 @@ import CrewControlPlanePanel from './crew/CrewControlPlanePanel'
 import CrewGovernancePanel from './crew/CrewGovernancePanel'
 import CrewHistoryPanel from './crew/CrewHistoryPanel'
 import CrewRuntimePanel from './crew/CrewRuntimePanel'
-import { safeInvoke } from '../utils/safeInvoke'
+import { hasTauriRuntime, safeInvoke } from '../utils/safeInvoke'
 import { tr } from '../i18n'
-import { ChevronDown, Trash2 } from 'lucide-react'
+import { ChevronDown, ListCollapse, ListTree, MousePointerClick, Trash2, UsersRound, Workflow } from 'lucide-react'
 
 const ROLE_OPTIONS: AgentRole[] = ['researcher', 'writer', 'reviewer', 'planner', 'executor', 'analyst', 'custom']
 const PROCESS_OPTIONS: Array<{ value: CrewProcess; label: string }> = [
@@ -298,7 +298,9 @@ export default function CrewPanel() {
     crews,
     activeCrewId,
     createCrew,
+    createStarterCrew,
     updateCrew,
+    setCrewProviderProfiles,
     deleteCrew,
     setActiveCrew,
     loadAgents,
@@ -306,6 +308,8 @@ export default function CrewPanel() {
     syncAgentsFromPersonalityProfiles,
     migrateAgentsToPersonalityProfiles,
     updateCrewAgent,
+    runCrew,
+    stopCrew,
   } = useCrewStore()
   const { availableModels, defaultLlmProfileIds, llmProfiles, mcpServer, mcpServers, ollama } = useConfigStore()
   const claudeTools = useCoworkStore((state) => state.claudeTools)
@@ -320,7 +324,9 @@ export default function CrewPanel() {
   const [expandedAgents, setExpandedAgents] = useState<Record<string, boolean>>({})
   const [isCrewListVisible, setIsCrewListVisible] = useState(() => typeof window === 'undefined' ? true : window.innerWidth >= 1320)
   const importCrewInputRef = useRef<HTMLInputElement | null>(null)
+  const crewNameInputRef = useRef<HTMLInputElement | null>(null)
   const activeCrewDetailsRef = useRef<HTMLDivElement | null>(null)
+  const providerCredentialTokensRef = useRef(new Map<string, string>())
 
   useEffect(() => {
     loadAgents()
@@ -354,6 +360,8 @@ export default function CrewPanel() {
   }, [personalityProfiles, syncAgentsFromPersonalityProfiles])
 
   useEffect(() => {
+    if (!hasTauriRuntime() || personalityProfiles.length === 0) return
+
     void migrateAgentsToPersonalityProfiles(personalityProfiles).then((changed) => {
       if (changed) {
         void loadPersonalities()
@@ -420,7 +428,13 @@ export default function CrewPanel() {
   const getProviderModelCacheKey = (providerKey: 'openAICompatible' | 'openRouter') => {
     const config = resolvedActiveProviderConfigs[providerKey]
     if (!config) return ''
-    return `${config.baseUrl.trim()}::${config.apiKey.trim()}::${config.verifyTlsCertificates}`
+    const secret = config.apiKey.trim()
+    let credentialToken = providerCredentialTokensRef.current.get(secret)
+    if (!credentialToken) {
+      credentialToken = crypto.randomUUID()
+      providerCredentialTokensRef.current.set(secret, credentialToken)
+    }
+    return `${config.baseUrl.trim()}::${credentialToken}::${config.verifyTlsCertificates}`
   }
 
   const getProviderModelCatalog = (providerKind: CrewProviderKind) => {
@@ -594,9 +608,7 @@ export default function CrewPanel() {
 
   const handleCreateCrew = () => {
     const nextName = crewName.trim() || buildDefaultCrewName(crews.map((crew) => crew.name))
-    const id = crypto.randomUUID()
-    createCrew(id, nextName, [])
-    setActiveCrew(id)
+    const id = createStarterCrew(nextName, nextName)
     setPendingScrollCrewId(id)
     setCrewName('')
   }
@@ -633,7 +645,7 @@ export default function CrewPanel() {
     }))
   }
 
-  const handleDuplicateCrew = () => {
+  const handleDuplicateCrew = async () => {
     if (!activeCrew) return
     const newId = crypto.randomUUID()
     createCrew(newId, `${activeCrew.name} Kopie`, [])
@@ -649,7 +661,6 @@ export default function CrewPanel() {
       sharedOutputCharLimit: activeCrew.sharedOutputCharLimit,
       defaultProvider: activeCrew.defaultProvider,
       defaultModel: activeCrew.defaultModel,
-      providerProfiles: activeCrew.providerProfiles,
       process: activeCrew.process,
       managerAgentId: activeCrew.managerAgentId,
       verbose: activeCrew.verbose,
@@ -663,6 +674,10 @@ export default function CrewPanel() {
       })),
       tasks: [],
       status: 'idle',
+    })
+    await setCrewProviderProfiles(newId, {
+      openAICompatible: { ...activeCrew.providerProfiles.openAICompatible },
+      openRouter: { ...activeCrew.providerProfiles.openRouter },
     })
     setActiveCrew(newId)
     setPendingScrollCrewId(newId)
@@ -684,7 +699,10 @@ export default function CrewPanel() {
       sharedOutputCharLimit: activeCrew.sharedOutputCharLimit,
       defaultProvider: activeCrew.defaultProvider,
       defaultModel: activeCrew.defaultModel,
-      providerProfiles: activeCrew.providerProfiles,
+      providerProfiles: {
+        openAICompatible: { ...activeCrew.providerProfiles.openAICompatible, apiKey: '' },
+        openRouter: { ...activeCrew.providerProfiles.openRouter, apiKey: '' },
+      },
       process: activeCrew.process,
       managerAgentId: activeCrew.managerAgentId,
       verbose: activeCrew.verbose,
@@ -706,6 +724,7 @@ export default function CrewPanel() {
       const importedName = typeof imported.name === 'string' && imported.name.trim() ? imported.name : 'Importierte Crew'
       createCrew(newId, importedName, [])
       const patch: Parameters<typeof updateCrew>[1] = { tasks: [], status: 'idle' }
+      let importedProviderProfiles: CrewProviderProfiles | null = null
       if (typeof imported.description === 'string') patch.description = imported.description
       if (typeof imported.executionGuidelines === 'string') patch.executionGuidelines = imported.executionGuidelines
       if (imported.outputMode === 'standard' || imported.outputMode === 'bullet-report' || imported.outputMode === 'json') {
@@ -728,7 +747,7 @@ export default function CrewPanel() {
       if (
         isCrewProviderProfiles(imported.providerProfiles)
       ) {
-        patch.providerProfiles = imported.providerProfiles
+        importedProviderProfiles = imported.providerProfiles
       }
       if (imported.process === 'sequential' || imported.process === 'parallel' || imported.process === 'hierarchical') {
         patch.process = imported.process
@@ -749,6 +768,9 @@ export default function CrewPanel() {
       }
 
       updateCrew(newId, patch)
+      if (importedProviderProfiles) {
+        await setCrewProviderProfiles(newId, importedProviderProfiles)
+      }
       setActiveCrew(newId)
       setPendingScrollCrewId(newId)
     } finally {
@@ -826,12 +848,11 @@ export default function CrewPanel() {
   return (
     <div className="panel crew-shell">
       <div className="crew-shell-top">
-        <CrewRuntimePanel />
         <div className="crew-header">
           <div className="crew-header-copy">
             <div className="crew-header-eyebrow">{tr("Crew Workspace")}</div>
             <div className="crew-header-title">
-              <span className="crew-header-icon">🚀</span>
+              <span className="crew-header-icon" aria-hidden="true"><UsersRound size={24} strokeWidth={1.9} /></span>
               <span>{tr("Crew AI")}</span>
             </div>
             <div className="crew-header-subtitle">{tr("Plan roles, governance, and reproducible runs in a clean workspace instead of cramped individual cards.")}</div>
@@ -847,6 +868,7 @@ export default function CrewPanel() {
       <div className="crew-toolbar">
         <div className="crew-toolbar-primary">
           <input
+            ref={crewNameInputRef}
             className="crew-toolbar-input"
             placeholder={tr("New crew...")}
             value={crewName}
@@ -856,14 +878,29 @@ export default function CrewPanel() {
           <button type="button" className="crew-toolbar-btn" onClick={handleCreateCrew}>{tr("Create")}</button>
         </div>
         <div className="crew-toolbar-actions">
+          {activeCrew?.status === 'running' || activeCrew?.status === 'awaiting-approval' ? (
+            <button type="button" className="crew-toolbar-btn danger" onClick={() => void stopCrew(activeCrew.id)}>{tr('Stop run')}</button>
+          ) : (
+            <button
+              type="button"
+              className="crew-toolbar-btn run"
+              disabled={!activeCrew || activeCrew.tasks.length === 0 || activeCrewDiagnostics.errors.length > 0}
+              onClick={() => activeCrew && void runCrew(activeCrew.id)}
+            >
+              {activeCrew?.status === 'completed' || activeCrew?.status === 'failed' || activeCrew?.status === 'canceled' ? tr('Run again') : tr('Run crew')}
+            </button>
+          )}
           <button type="button" className="crew-toolbar-btn secondary" onClick={handleDuplicateCrew} disabled={!activeCrew}>{tr("Duplicate")}</button>
           <button type="button" className="crew-toolbar-btn secondary" onClick={handleExportCrew} disabled={!activeCrew}>{tr("Export")}</button>
           <button type="button" className="crew-toolbar-btn secondary" onClick={() => importCrewInputRef.current?.click()}>{tr("Import")}</button>
           <button type="button" className="crew-toolbar-btn secondary crew-toolbar-toggle" aria-pressed={isCrewListVisible} onClick={toggleCrewListVisibility}>
-            {isCrewListVisible ? 'Liste ausblenden' : 'Liste zeigen'}
+            {isCrewListVisible ? <ListCollapse size={15} aria-hidden="true" /> : <ListTree size={15} aria-hidden="true" />}
+            {isCrewListVisible ? tr('Hide list') : tr('Show list')}
           </button>
         </div>
       </div>
+
+      <CrewRuntimePanel />
 
       {activeCrew && (
         <div className="crew-overview-grid">
@@ -877,8 +914,17 @@ export default function CrewPanel() {
 
       {crews.length === 0 ? (
         <div className="crew-empty">
-          <div className="crew-empty-icon">🚀</div>
-          <div className="crew-empty-text">{tr("No crew available yet. Create your first crew above.")}</div>
+          <div className="crew-empty-icon" aria-hidden="true"><Workflow size={26} strokeWidth={1.7} /></div>
+          <div className="crew-empty-copy">
+            <strong>{tr('Build your first operating team')}</strong>
+            <div className="crew-empty-text">{tr('Create a crew, give each agent a clear role, then reuse the setup for repeatable work.')}</div>
+          </div>
+          <div className="crew-empty-steps" aria-label={tr('Crew setup steps')}>
+            <span><strong>01</strong>{tr('Name the crew')}</span>
+            <span><strong>02</strong>{tr('Add roles and tools')}</span>
+            <span><strong>03</strong>{tr('Run and review')}</span>
+          </div>
+          <button type="button" className="crew-toolbar-btn" onClick={() => crewNameInputRef.current?.focus()}>{tr('Create first crew')}</button>
         </div>
       ) : (
         <div className={`crew-grid${isCrewListVisible ? '' : ' crew-grid-list-hidden'}`}>
@@ -1386,7 +1432,7 @@ export default function CrewPanel() {
               </>
             ) : (
               <div className="crew-empty">
-                <div className="crew-empty-icon">👈</div>
+                <div className="crew-empty-icon" aria-hidden="true"><MousePointerClick size={24} /></div>
                 <div className="crew-empty-text">{tr("Select a crew from the list.")}</div>
               </div>
             )}

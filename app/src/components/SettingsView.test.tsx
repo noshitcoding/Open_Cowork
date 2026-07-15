@@ -7,11 +7,16 @@ import { useEngineStore } from '../stores/engineStore'
 import i18n from '../i18n'
 
 const invokeMock = vi.fn()
+const saveDialogMock = vi.fn()
 const checkOllamaStatusMock = vi.fn()
 const fetchOllamaModelsMock = vi.fn()
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: (...args: unknown[]) => invokeMock(...args),
+}))
+
+vi.mock('@tauri-apps/plugin-dialog', () => ({
+  save: (...args: unknown[]) => saveDialogMock(...args),
 }))
 
 /* Default invoke handler: return safe defaults for all known commands */
@@ -35,6 +40,18 @@ function defaultInvoke(cmd: string) {
     case 'process_list': return Promise.resolve([])
     case 'mcp_list_servers': return Promise.resolve([])
     case 'mcp_probe': return Promise.resolve({ tools: [] })
+    case 'startup_recovery_status': return Promise.resolve({
+      recoveredAt: '2026-07-10T12:00:00Z',
+      engineRuns: 0,
+      legacyTasks: 0,
+      taskSteps: 0,
+      workTasks: 0,
+      scheduledRuns: 0,
+      crewRuns: 0,
+      workerSandboxes: 0,
+      managedProcesses: 0,
+      terminalBackends: 0,
+    })
     default: return Promise.resolve(null)
   }
 }
@@ -177,6 +194,8 @@ describe('SettingsView', () => {
     delete (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
     invokeMock.mockReset()
     invokeMock.mockImplementation(defaultInvoke)
+    saveDialogMock.mockReset()
+    saveDialogMock.mockResolvedValue(null)
     resetConfigStore()
     resetEngineStore()
   })
@@ -330,9 +349,13 @@ describe('SettingsView', () => {
     ;(window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {}
     useConfigStore.getState().updateLlmProfile('default-openai-compatible', {
       baseUrl: 'https://mlis.example.test/v1/models',
-      apiKey: 'sk-test',
       model: 'Hy3-preview-nvfp4',
     })
+    useConfigStore.setState((state) => ({
+      llmProfiles: state.llmProfiles.map((profile) => (
+        profile.id === 'default-openai-compatible' ? { ...profile, apiKey: 'sk-test' } : profile
+      )),
+    }))
     invokeMock.mockImplementation((cmd: string) => {
       if (cmd === 'crew_provider_models_list') {
         return Promise.resolve({
@@ -403,5 +426,56 @@ describe('SettingsView', () => {
       expect(screen.getByRole('tablist', { name: 'Einstellungskategorien' })).toBeInTheDocument()
     })
     expect(screen.getByRole('option', { name: 'Nur Laufzeit' })).toBeInTheDocument()
+  })
+
+  it('creates a support bundle from system settings', async () => {
+    ;(window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {}
+    saveDialogMock.mockResolvedValue('C:\\Temp\\open-cowork-support.zip')
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'support_bundle_create') {
+        return Promise.resolve({
+          path: 'C:\\Temp\\open-cowork-support.zip',
+          sizeBytes: 2048,
+          createdAt: '2026-07-10T12:00:00Z',
+          fileCount: 5,
+        })
+      }
+      return defaultInvoke(cmd)
+    })
+
+    renderSettingsView(['/settings?section=system'])
+    fireEvent.click(screen.getByRole('button', { name: 'Create support bundle' }))
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith('support_bundle_create', {
+        path: 'C:\\Temp\\open-cowork-support.zip',
+      })
+    })
+    expect(await screen.findByRole('status')).toHaveTextContent('Support bundle saved.')
+  })
+
+  it('shows the number of states recovered during startup', async () => {
+    ;(window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {}
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'startup_recovery_status') {
+        return Promise.resolve({
+          recoveredAt: '2026-07-10T12:00:00Z',
+          engineRuns: 1,
+          legacyTasks: 0,
+          taskSteps: 0,
+          workTasks: 1,
+          scheduledRuns: 0,
+          crewRuns: 0,
+          workerSandboxes: 1,
+          managedProcesses: 0,
+          terminalBackends: 0,
+        })
+      }
+      return defaultInvoke(cmd)
+    })
+
+    renderSettingsView(['/settings?section=system'])
+
+    expect(await screen.findByLabelText('Recovered startup states')).toHaveValue('3')
   })
 })

@@ -818,6 +818,11 @@ const bashTool: Tool<{ command: string; timeout?: number }> = {
     const terminalThreadId = useTerminalStore.getState().activeAiThreadId
     if (terminalThreadId) {
       try {
+        await invoke('shell_command_validate', {
+          command: input.command,
+          cwd: context.cwd,
+          runId: context.runId,
+        })
         if (onProgress) {
           onProgress({
             toolUseID: '',
@@ -1990,6 +1995,7 @@ const deleteFileTool: Tool<{ file_path: string; confirm: boolean }> = {
       await invoke('fs_delete_file', {
         path: fullPath,
         confirmToken: 'DELETE',
+        runId: context.runId,
       })
       return { data: `File geloescht: ${input.file_path}` }
     } catch (err) {

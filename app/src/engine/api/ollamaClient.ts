@@ -279,11 +279,11 @@ export function buildOllamaChatRequest(
     stream: true,
   }
 
-  const requestedThinking = config.thinkingEnabled ?? capabilities.supportsThinking
-  if (requestedThinking) {
-    body.think = capabilities.family === 'gpt-oss' ? 'medium' : true
-  } else if (config.thinkingEnabled === false && capabilities.family !== 'gpt-oss') {
-    body.think = false
+  if (capabilities.supportsThinking) {
+    const requestedThinking = config.thinkingEnabled ?? true
+    body.think = requestedThinking
+      ? capabilities.family === 'gpt-oss' ? 'medium' : true
+      : false
   }
 
   if (ollamaTools && ollamaTools.length > 0) {
@@ -978,9 +978,8 @@ export async function* streamOllamaMessages(
   signal?: AbortSignal,
 ): AsyncGenerator<StreamEvent, SampleResult> {
   const baseUrl = config.baseUrl.replace(/\/$/, '')
-  const capabilities = detectModelCapabilities(config.model)
-  const requestedThinking = config.thinkingEnabled ?? capabilities.supportsThinking
   const { body } = buildOllamaChatRequest(config, messages, systemPrompt, tools)
+  const requestedThinking = body.think !== undefined && body.think !== false
 
   const controller = new AbortController()
   if (signal) {

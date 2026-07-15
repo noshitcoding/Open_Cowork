@@ -1,17 +1,19 @@
 import { useCoworkStore } from '../stores/coworkStore'
 import i18n, { tr } from '../i18n'
+import SecureCredentialInput from './SecureCredentialInput'
 
 export default function ConnectorPanel() {
   const connectors = useCoworkStore((s) => s.connectors)
   const toggleConnector = useCoworkStore((s) => s.toggleConnector)
   const setConnectorNote = useCoworkStore((s) => s.setConnectorNote)
-  const updateConnectorConfig = useCoworkStore((s) => s.updateConnectorConfig)
+  const setConnectorApiKey = useCoworkStore((s) => s.setConnectorApiKey)
+  const setConnectorWebhookUrl = useCoworkStore((s) => s.setConnectorWebhookUrl)
   const testConnector = useCoworkStore((s) => s.testConnector)
 
   return (
     <div className="panel connector-panel">
       <h2>{tr("Connectors")}</h2>
-      <p className="hint-text">{tr("Webhook URL and API key are saved locally. The connection test runs through the Rust backend to avoid WebView CORS issues.")}</p>
+      <p className="hint-text">{tr("Connector credentials are protected by the operating-system credential store.")}</p>
 
       <div className="connector-list">
         {connectors.map((connector) => {
@@ -32,18 +34,19 @@ export default function ConnectorPanel() {
                 </button>
               </div>
 
-              <label>{tr("Webhook / API URL")}<input
+              <label>{tr("Webhook / API URL")}<SecureCredentialInput
+                  type="url"
                   className="connector-input"
                   value={connector.webhookUrl ?? ''}
-                  onChange={(event) => updateConnectorConfig(connector.key, { webhookUrl: event.target.value })}
+                  onCommit={(value) => setConnectorWebhookUrl(connector.key, value)}
                   placeholder={tr("https://example.com/webhook")}
                 />
               </label>
 
-              <label>{tr("API Key")}<input
+              <label>{tr("API Key")}<SecureCredentialInput
                   className="connector-input"
                   value={connector.apiKey ?? ''}
-                  onChange={(event) => updateConnectorConfig(connector.key, { apiKey: event.target.value })}
+                  onCommit={(value) => setConnectorApiKey(connector.key, value)}
                   placeholder={tr("Optional bearer token")}
                 />
               </label>

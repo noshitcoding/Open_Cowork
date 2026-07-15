@@ -1,5 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { connectorLocator, setCredential } from '../security/credentialVault'
+import { sanitizeConnectorsForPersistence } from '../security/credentialPersistence'
 import { safeInvoke } from '../utils/safeInvoke'
 import { parseBackendDate } from '../utils/schedulerUtils'
 
@@ -137,7 +139,9 @@ type CoworkState = {
   removeFolderInstruction: (id: string) => void
   toggleConnector: (key: ConnectorKey, enabled: boolean) => void
   setConnectorNote: (key: ConnectorKey, note: string) => void
-  updateConnectorConfig: (key: ConnectorKey, patch: Partial<ConnectorConfig>) => void
+  updateConnectorConfig: (key: ConnectorKey, patch: Partial<Omit<ConnectorConfig, 'apiKey' | 'webhookUrl'>>) => void
+  setConnectorApiKey: (key: ConnectorKey, apiKey: string) => Promise<void>
+  setConnectorWebhookUrl: (key: ConnectorKey, webhookUrl: string) => Promise<void>
   testConnector: (key: ConnectorKey) => Promise<void>
   upsertPlugin: (plugin: Plugin) => void
   togglePlugin: (id: string, enabled: boolean) => void
@@ -590,6 +594,22 @@ export const useCoworkStore = create<CoworkState>()(
             connector.key === key ? { ...connector, ...patch } : connector
           ),
         })),
+      setConnectorApiKey: async (key, apiKey) => {
+        await setCredential(connectorLocator(key, 'api_key'), apiKey)
+        set((state) => ({
+          connectors: state.connectors.map((connector) => (
+            connector.key === key ? { ...connector, apiKey } : connector
+          )),
+        }))
+      },
+      setConnectorWebhookUrl: async (key, webhookUrl) => {
+        await setCredential(connectorLocator(key, 'webhook_url'), webhookUrl)
+        set((state) => ({
+          connectors: state.connectors.map((connector) => (
+            connector.key === key ? { ...connector, webhookUrl } : connector
+          )),
+        }))
+      },
       testConnector: async (key) => {
         const connector = get().connectors.find((entry) => entry.key === key)
         if (!connector) return
@@ -773,7 +793,7 @@ export const useCoworkStore = create<CoworkState>()(
         await Promise.all([get().loadScheduledTasks(), get().loadScheduledRuns()])
       },
       removeScheduledTask: async (id) => {
-        await safeInvoke('scheduler_delete_task', { id }, undefined)
+        await safeInvoke<null>('scheduler_delete_task', { id }, null)
         set((state) => ({
           scheduledTasks: state.scheduledTasks.filter((task) => task.id !== id),
           scheduledRuns: state.scheduledRuns.filter((run) => run.taskId !== id),
@@ -888,6 +908,10 @@ export const useCoworkStore = create<CoworkState>()(
     }),
     {
       name: 'open-cowork-features',
+      partialize: (state) => ({
+        ...state,
+        connectors: sanitizeConnectorsForPersistence(state.connectors),
+      }),
       onRehydrateStorage: () => () => {
         policySyncReady = true
         queuePolicySync(buildPolicySyncRequest(

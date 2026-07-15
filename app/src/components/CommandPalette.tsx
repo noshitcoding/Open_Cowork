@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { tr } from '../i18n'
 import { useCommandRegistry, type SlashCommandCategory } from '../stores/commandRegistryStore'
 import { useUiStore } from '../stores/uiStore'
+import { PRODUCT_ROUTES } from '../product/routeRegistry'
 
 const CATEGORY_LABELS: Record<SlashCommandCategory, string> = {
   navigation: 'Navigation',
@@ -56,9 +57,17 @@ export default function CommandPalette() {
 
   const legacyCommands = useMemo(
     () => [
-      { id: 'switch-work', label: 'Switch to workspace', hint: 'Ctrl+1', action: () => { setActiveMode('work'); navigate('/') } },
-      { id: 'switch-settings', label: 'Switch to settings', hint: 'Ctrl+2', action: () => { setActiveMode('settings'); navigate('/settings') } },
-      { id: 'switch-crew', label: 'Switch to crew area', hint: 'Ctrl+3', action: () => { setActiveMode('crew'); navigate('/crew') } },
+      ...PRODUCT_ROUTES.map((route) => ({
+        id: route.commandId,
+        label: route.commandLabel,
+        hint: route.shortcut,
+        action: () => {
+          if (route.activeMode) {
+            setActiveMode(route.activeMode)
+          }
+          navigate(route.path)
+        },
+      })),
       { id: 'toggle-left-sidebar', label: leftSidebarOpen ? 'Hide sidebar' : 'Show sidebar', hint: 'Ctrl+Shift+B', action: () => toggleLeftSidebar() },
       { id: 'show-shortcuts', label: 'Show shortcut overview', hint: 'Ctrl+Shift+?', action: () => setShortcutsOverlayOpen(true) },
       { id: 'toggle-theme', label: theme === 'light' ? 'Enable dark theme' : 'Enable light theme', hint: 'Ctrl+Shift+L', action: () => toggleTheme() },
@@ -157,6 +166,7 @@ export default function CommandPalette() {
       />
       <div
         className="command-palette"
+        data-doc-id="element:/app/command-palette"
         role="dialog"
         aria-modal="true"
         aria-label={tr('Command palette')}
@@ -173,13 +183,14 @@ export default function CommandPalette() {
               }
             }}
           />
-          <button type="button" onClick={closePalette}>{tr('Esc')}</button>
+          <button type="button" data-doc-id="button:/app/command-palette/close" onClick={closePalette}>{tr('Esc')}</button>
         </div>
 
         <div className="command-palette-categories" aria-label={tr("Command categories")}>
           <button
             type="button"
             className={`command-palette-category${selectedCategory === null ? ' active' : ''}`}
+            data-doc-id="button:/app/command-palette/select-category"
             onClick={() => setSelectedCategory(null)}
           >
             {tr('All')}
@@ -189,6 +200,7 @@ export default function CommandPalette() {
               key={cat}
               type="button"
               className={`command-palette-category${selectedCategory === cat ? ' active' : ''}`}
+              data-doc-id="button:/app/command-palette/select-category"
               onClick={() => setSelectedCategory(selectedCategory === cat ? null : cat)}
             >
               {tr(CATEGORY_LABELS[cat])}
@@ -208,7 +220,7 @@ export default function CommandPalette() {
                   <ul className="command-palette-group-list">
                     {cmds.slice(0, 5).map(cmd => (
                       <li key={cmd.id}>
-                        <button type="button" onClick={() => handleExecute(cmd)}>
+                        <button type="button" data-doc-id="button:/app/command-palette/execute-command" onClick={() => handleExecute(cmd)}>
                           <span>
                             {cmd.command && <span className="command-palette-command">{cmd.command}</span>}
                             {tr(cmd.label)}
@@ -225,7 +237,7 @@ export default function CommandPalette() {
           ) : (
             filteredCommands.map(cmd => (
               <li key={cmd.id}>
-                <button type="button" onClick={() => handleExecute(cmd)}>
+                <button type="button" data-doc-id="button:/app/command-palette/execute-command" onClick={() => handleExecute(cmd)}>
                   <span>
                     {cmd.command && <span className="command-palette-command">{cmd.command}</span>}
                     {tr(cmd.label)}

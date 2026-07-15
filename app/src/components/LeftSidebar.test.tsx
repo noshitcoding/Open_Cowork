@@ -7,6 +7,7 @@ import { useConfigStore } from '../stores/configStore'
 import { useCoworkStore } from '../stores/coworkStore'
 import { useEngineStore } from '../stores/engineStore'
 import { useProjectStore } from '../stores/projectStore'
+import { getProductRouteById } from '../product/routeRegistry'
 
 const navigateMock = vi.fn()
 
@@ -134,13 +135,32 @@ describe('LeftSidebar', () => {
 
     await waitFor(() => {
       // Check that the session was loaded and navigation occurred
-      expect(navigateMock).toHaveBeenCalledWith('/')
+      expect(navigateMock).toHaveBeenCalledWith(getProductRouteById('cowork').path)
       // Verify the engine store's loadSessionById was called
       const engineState = useEngineStore.getState()
       expect(engineState.loadSessionById).toHaveBeenCalledWith('session-1')
     })
 
-    expect(navigateMock).toHaveBeenCalledWith('/')
+    expect(navigateMock).toHaveBeenCalledWith(getProductRouteById('cowork').path)
+  })
+
+  it('uses route registry paths for sidebar navigation actions', () => {
+    render(
+      <MemoryRouter>
+        <LeftSidebar />
+      </MemoryRouter>,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '+ New chat' }))
+    expect(navigateMock).toHaveBeenLastCalledWith(getProductRouteById('cowork').path)
+
+    navigateMock.mockClear()
+    fireEvent.click(screen.getByRole('button', { name: '+ New project' }))
+    expect(navigateMock).toHaveBeenLastCalledWith(getProductRouteById('projects').path)
+
+    navigateMock.mockClear()
+    fireEvent.click(screen.getByRole('button', { name: 'Crew Studio' }))
+    expect(navigateMock).toHaveBeenLastCalledWith(getProductRouteById('crew').path)
   })
 
   it('moves a chat into a project via drag and drop', () => {

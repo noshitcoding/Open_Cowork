@@ -12,7 +12,8 @@ import { useProjectStore } from '../stores/projectStore'
 import { createChatProviderSelection, getChatProviderState } from '../utils/chatProvider'
 import { ContextPanel, DocumentWorkspacePanel, OutputsPanel, ProgressPanel, WorkingFolderPanel } from './RightSidebar'
 import { tr } from '../i18n'
-import { ChevronDown, ChevronRight, Plus, Trash2 } from 'lucide-react'
+import { Activity, ChevronDown, ChevronRight, FolderPlus, MessageSquarePlus, Plus, Trash2 } from 'lucide-react'
+import { getProductRouteById, type ProductRouteId } from '../product/routeRegistry'
 
 const THREAD_DND_MIME = 'application/open-cowork-thread-id'
 const POINTER_DRAG_THRESHOLD = 5
@@ -125,6 +126,7 @@ export default function LeftSidebar() {
   const [chatsCollapsed, setChatsCollapsed] = useState(false)
   const [tasksCollapsed, setTasksCollapsed] = useState(false)
   const [sessionsCollapsed, setSessionsCollapsed] = useState(false)
+  const [workspaceStatusOpen, setWorkspaceStatusOpen] = useState(Boolean(activeTaskId))
   const [dropProjectId, setDropProjectId] = useState<string | null>(null)
   const [chatsDropActive, setChatsDropActive] = useState(false)
   const [pointerDrag, setPointerDrag] = useState<PointerThreadDrag | null>(null)
@@ -147,6 +149,14 @@ export default function LeftSidebar() {
     [activeProvider, activeThread?.providerSettings, availableModels, defaultLlmProfileIds, llmProfileModels, llmProfiles, ollama],
   )
   const activeTask = tasks.find((task) => task.id === activeTaskId)
+
+  const navigateToProductRoute = (routeId: ProductRouteId) => {
+    const route = getProductRouteById(routeId)
+    if (route.activeMode) {
+      setActiveMode(route.activeMode)
+    }
+    navigate(route.path)
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -253,27 +263,26 @@ export default function LeftSidebar() {
       attachThread(projectId, threadId)
       setActiveProject(projectId)
     }
-    setActiveMode('work')
     setActiveThread(threadId)
-    navigate('/')
+    navigateToProductRoute('cowork')
   }
 
   const handleNewProject = () => {
     const projectId = addProject(`Project ${projects.length + 1}`)
     setActiveProject(projectId)
-    navigate('/projects')
+    navigateToProductRoute('projects')
   }
 
   const handleOpenProjects = () => {
     if (!activeProjectId && projects[0]) {
       setActiveProject(projects[0].id)
     }
-    navigate('/projects')
+    navigateToProductRoute('projects')
   }
 
   const handleOpenProject = (projectId: string) => {
     setActiveProject(projectId)
-    navigate('/projects')
+    navigateToProductRoute('projects')
   }
 
   const handleOpenThread = (threadId: string) => {
@@ -281,9 +290,8 @@ export default function LeftSidebar() {
       suppressThreadClickRef.current = null
       return
     }
-    setActiveMode('work')
     setActiveThread(threadId)
-    navigate('/')
+    navigateToProductRoute('cowork')
   }
 
   const handleOpenTaskThread = (task: WorkTask) => {
@@ -305,9 +313,8 @@ export default function LeftSidebar() {
 
     const workDir = task.workDir.trim()
     setWorkingFolder(workDir && isAbsolutePath(workDir) ? workDir : null)
-    setActiveMode('work')
     setActiveThread(threadId)
-    navigate('/')
+    navigateToProductRoute('cowork')
   }
 
   const handleOpenSession = async (sessionId: string) => {
@@ -316,8 +323,7 @@ export default function LeftSidebar() {
     if (session.threadId && threadIds.has(session.threadId)) {
       setActiveThread(session.threadId)
     }
-    setActiveMode('work')
-    navigate('/')
+    navigateToProductRoute('cowork')
   }
 
   const toggleProjectCollapsed = (projectId: string) => {
@@ -417,18 +423,41 @@ export default function LeftSidebar() {
   }
 
   return (
-    <aside className="left-sidebar" aria-label={tr("Workspace sidebar")}>
-      <button type="button" className="btn-new-task" onClick={() => handleNewChat()}>{tr("+ New chat")}</button>
-      <button type="button" className="btn-new-task" onClick={handleNewProject}>{tr("+ New project")}</button>
-      <button type="button" className="btn-sm sidebar-utility-button" onClick={handleOpenProjects}>{tr("Manage projects")}</button>
-      <button type="button" className="btn-sm sidebar-utility-button last" onClick={() => navigate('/crew')}>{tr("Crew Studio")}</button>
+    <aside className="left-sidebar" data-doc-id="element:/app/left-sidebar" aria-label={tr("Workspace sidebar")}>
+      <div className="sidebar-primary-actions">
+        <button type="button" className="sidebar-primary-action" aria-label={tr("+ New chat")} data-doc-id="button:/app/left-sidebar/new-chat" onClick={() => handleNewChat()}>
+          <MessageSquarePlus size={17} aria-hidden="true" />
+          <span>{tr("New chat")}</span>
+        </button>
+        <button type="button" className="sidebar-primary-action" aria-label={tr("+ New project")} data-doc-id="button:/app/left-sidebar/new-project" onClick={handleNewProject}>
+          <FolderPlus size={17} aria-hidden="true" />
+          <span>{tr("New project")}</span>
+        </button>
+      </div>
+      <div className="sidebar-utility-actions">
+        <button type="button" className="sidebar-utility-link" data-doc-id="button:/app/left-sidebar/manage-projects" onClick={handleOpenProjects}>{tr("Manage projects")}</button>
+        <button type="button" className="sidebar-utility-link" data-doc-id="button:/app/left-sidebar/open-crew" onClick={() => navigateToProductRoute('crew')}>{tr("Crew Studio")}</button>
+      </div>
 
-      <div className="sidebar-status-panels">
-        <ProgressPanel task={activeTask} />
-        <DocumentWorkspacePanel />
-        <WorkingFolderPanel />
-        <OutputsPanel task={activeTask} />
-        <ContextPanel />
+      <div className={`sidebar-status-group${workspaceStatusOpen ? ' open' : ''}`}>
+        <button
+          type="button"
+          className="sidebar-status-toggle"
+          aria-expanded={workspaceStatusOpen}
+          onClick={() => setWorkspaceStatusOpen((open) => !open)}
+        >
+          <span><Activity size={15} aria-hidden="true" />{tr("Workspace status")}</span>
+          {workspaceStatusOpen ? <ChevronDown size={15} aria-hidden="true" /> : <ChevronRight size={15} aria-hidden="true" />}
+        </button>
+        {workspaceStatusOpen && (
+          <div className="sidebar-status-panels">
+            <ProgressPanel task={activeTask} />
+            <DocumentWorkspacePanel />
+            <WorkingFolderPanel />
+            <OutputsPanel task={activeTask} />
+            <ContextPanel />
+          </div>
+        )}
       </div>
 
       <div className="sidebar-section">
@@ -494,7 +523,7 @@ export default function LeftSidebar() {
                         </button>
                       </div>
                     ))}
-                    {projectThreads.length === 0 && <p className="hint-text">{tr("No Chats")}</p>}
+                    {projectThreads.length === 0 && <p className="hint-text">{tr("No chats in this project")}</p>}
                   </div>
                 )}
               </div>
@@ -563,7 +592,7 @@ export default function LeftSidebar() {
             <div className="sidebar-thread-list">
               {workTasks.map((task) => (
                 <div key={task.id} className={`sidebar-thread-row${task.threadId === activeThreadId ? ' active' : ''}`}>
-                  <button type="button" className="sidebar-row-main sidebar-task-row-main" onClick={() => handleOpenTaskThread(task)}>
+                  <button type="button" className="sidebar-row-main sidebar-task-row-main" data-doc-id="button:/app/left-sidebar/open-task-chat" onClick={() => handleOpenTaskThread(task)}>
                     <span className="sidebar-task-title">{getTaskSidebarTitle(task)}</span>
                     <span className={`task-pill task-status task-status-${task.status}`}>{formatWorkTaskStatus(task.status)}</span>
                   </button>
@@ -596,7 +625,7 @@ export default function LeftSidebar() {
                 </div>
               ))}
               {loadingSessions && <p className="hint-text">{tr("Loading sessions...")}</p>}
-              {!loadingSessions && persistedSessions.length === 0 && <p className="hint-text">{tr("No Sessions")}</p>}
+              {!loadingSessions && persistedSessions.length === 0 && <p className="hint-text">{tr("No persisted sessions")}</p>}
             </div>
           )}
         </div>

@@ -5,8 +5,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { invoke } from '@tauri-apps/api/core'
-import type { EngineBackend, EngineConfig, QueryEngine } from '../engine/core/queryEngine'
-import type { EngineEvent } from '../engine/core/queryEngine'
+import { QueryEngine, type EngineBackend, type EngineConfig, type EngineEvent } from '../engine/core/queryEngine'
 import { getAllCommands, registerBuiltinCommands } from '../engine/commands/registry'
 import { listOllamaModels, checkOllamaConnection } from '../engine/api/ollamaClient'
 import { DEFAULT_AGENTS } from '../engine/coordinator/agentCoordinator'
@@ -42,6 +41,8 @@ import { parsePersistedSessionMessage } from '../utils/sessionThreads'
 import { getChatProviderState, normalizeChatProvider, type ChatProviderKind, type ChatProviderSelection } from '../utils/chatProvider'
 import type { PermissionMode } from '../engine/types/tool'
 import { useCoworkStore } from './coworkStore'
+import { setCredential } from '../security/credentialVault'
+import { sanitizeEngineConfigForPersistence } from '../security/credentialPersistence'
 
 const DEFAULT_SYSTEM_PROMPT = `You are a helpful AI assistant in the Open Cowork desktop app. You have access to tools for reading, writing, and searching files, running shell commands, and more.
 
@@ -197,8 +198,8 @@ export type EngineStoreState = {
 
   // ── Configuration ──────────────────────────────────────────────────────
   config: EngineStoreConfig
-  setConfig: (patch: Partial<EngineStoreConfig>) => void
-  setApiKey: (apiKey: string) => void
+  setConfig: (patch: Partial<Omit<EngineStoreConfig, 'apiKey'>>) => void
+  setApiKey: (apiKey: string) => Promise<void>
 
   // ── Engine Actions ─────────────────────────────────────────────────────
   sendMessage: (
@@ -441,13 +442,14 @@ export const useEngineStore = create<EngineStoreState>()(
       // ── Config ───────────────────────────────────────────────────────────
       setActiveProvider: (provider) => set({ activeProvider: normalizeChatProvider(provider) }),
       setConfig: (patch) => set((s) => ({ config: { ...s.config, ...patch } })),
-      setApiKey: (apiKey) => set((s) => ({ config: { ...s.config, apiKey } })),
+      setApiKey: async (apiKey) => {
+        await setCredential({ scope: 'engine', ownerId: 'legacy-engine', field: 'api_key' }, apiKey)
+        set((state) => ({ config: { ...state.config, apiKey } }))
+      },
 
       // ── Init Engine ──────────────────────────────────────────────────────
       _initEngine: async (cwd: string, providerSelection?: ChatProviderSelection, permissionConfig?: { mode: PermissionMode; allowedDirectories: string[] }): Promise<QueryEngine> => {
         ensureCommandsRegistered()
-
-        const { QueryEngine } = await import('../engine/core/queryEngine')
 
         const { config, activeProvider, currentRunId, currentSessionId } = get()
         const providerState = getChatProviderState(useConfigStore.getState(), activeProvider, providerSelection)
@@ -984,7 +986,7 @@ export const useEngineStore = create<EngineStoreState>()(
       // Only persist config and provider, not runtime state
       partialize: (state) => ({
         activeProvider: state.activeProvider,
-        config: state.config,
+        config: sanitizeEngineConfigForPersistence(state.config),
         currentSessionId: state.currentSessionId,
         currentRunId: state.currentRunId,
       }),

@@ -1,11 +1,28 @@
-﻿import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { beforeEach } from 'vitest'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { beforeEach, vi } from 'vitest'
 import App from './App'
+import i18n from './i18n'
+import { PRODUCT_ROUTES } from './product/routeRegistry'
 import { useChatStore } from './stores/chatStore'
+import { useConfigStore } from './stores/configStore'
 import { useUiStore } from './stores/uiStore'
 
 describe('App', () => {
   beforeEach(() => {
+    Object.defineProperty(window, 'matchMedia', {
+      configurable: true,
+      writable: true,
+      value: vi.fn().mockImplementation((query: string) => ({
+        matches: false,
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    })
     window.history.pushState({}, '', '/')
 
     useChatStore.setState({
@@ -22,6 +39,14 @@ describe('App', () => {
       commandPaletteOpen: false,
       shortcutsOverlayOpen: false,
     })
+
+    useConfigStore.setState((state) => ({
+      preferences: {
+        ...state.preferences,
+        shortcutOverlayEnabled: true,
+        syncThemeWithSystem: false,
+      },
+    }))
   })
 
   it('starts directly in an empty chat', async () => {
@@ -32,16 +57,17 @@ describe('App', () => {
 
   it('shows top navigation links', async () => {
     render(<App />)
-    expect(await screen.findByRole('link', { name: 'Cowork' })).toBeInTheDocument()
-    expect(await screen.findByRole('link', { name: 'Tasks' })).toBeInTheDocument()
-    expect(await screen.findByRole('link', { name: 'Features' })).toBeInTheDocument()
-    expect(await screen.findByRole('link', { name: 'Settings' })).toBeInTheDocument()
+    for (const route of PRODUCT_ROUTES) {
+      const link = await screen.findByRole('link', { name: i18n.t(route.navLabelKey) })
+      expect(link).toHaveAttribute('href', route.path)
+      expect(link).toHaveAttribute('data-doc-id', route.navButtonDocId)
+    }
   })
 
   it('loads direct feature URLs', async () => {
     window.history.pushState({}, '', '/features')
     render(<App />)
-    expect(await screen.findByRole('heading', { name: 'Features' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Tools and knowledge' })).toBeInTheDocument()
   })
 
   it('loads the tasks page without crashing', async () => {
@@ -49,6 +75,39 @@ describe('App', () => {
     fireEvent.click(await screen.findByRole('link', { name: 'Tasks' }))
     expect(await screen.findByRole('heading', { name: 'Tasks' })).toBeInTheDocument()
     expect(await screen.findByRole('heading', { name: 'New task' })).toBeInTheDocument()
+  })
+
+  it('maps number shortcuts to the top navigation order', async () => {
+    render(<App />)
+    await screen.findByRole('link', { name: 'Cowork' })
+
+    for (const route of PRODUCT_ROUTES.slice(1)) {
+      fireEvent.keyDown(window, { key: route.shortcutKey, ctrlKey: true })
+      await waitFor(() => expect(window.location.pathname).toBe(route.path), { timeout: 3000 })
+    }
+  })
+
+  it('uses route registry labels in shortcuts and command palette navigation', async () => {
+    render(<App />)
+    await screen.findByRole('link', { name: 'Cowork' })
+
+    fireEvent.keyDown(window, { key: '?', ctrlKey: true, shiftKey: true })
+    const shortcutDialog = await screen.findByRole('dialog', { name: 'Shortcuts' })
+    expect(shortcutDialog).toHaveAttribute('data-doc-id', 'element:/app/shortcut-overlay')
+    for (const route of PRODUCT_ROUTES) {
+      expect(within(shortcutDialog).getByText(i18n.t(route.shortcutLabelKey))).toBeInTheDocument()
+      expect(within(shortcutDialog).getByText(route.shortcut)).toBeInTheDocument()
+    }
+    fireEvent.click(within(shortcutDialog).getByRole('button', { name: 'Esc' }))
+
+    fireEvent.keyDown(window, { key: 'k', ctrlKey: true })
+    const input = await screen.findByPlaceholderText('Search command or / for commands...')
+    for (const route of PRODUCT_ROUTES) {
+      fireEvent.change(input, { target: { value: route.commandLabel } })
+      await waitFor(() => {
+        expect(screen.getAllByText(route.commandLabel).length).toBeGreaterThan(0)
+      })
+    }
   })
 
   it('resizes the left sidebar from the separator', async () => {
@@ -63,5 +122,34 @@ describe('App', () => {
     fireEvent.pointerUp(window, { pointerId: 7, clientX: 430 })
 
     expect(useUiStore.getState().leftSidebarWidth).toBe(430)
+  })
+
+  it('uses an accessible drawer instead of a clipped sidebar on compact desktop windows', async () => {
+    vi.mocked(window.matchMedia).mockImplementation((query: string) => ({
+      matches: query === '(max-width: 900px)',
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }))
+
+    render(<App />)
+
+    const toggle = await screen.findByRole('button', { name: 'Toggle sidebar' })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByRole('complementary', { name: 'Workspace sidebar' })).not.toBeInTheDocument()
+
+    fireEvent.click(toggle)
+    expect(await screen.findByRole('complementary', { name: 'Workspace sidebar' })).toBeInTheDocument()
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByRole('button', { name: 'Close sidebar' })).toBeInTheDocument()
+
+    fireEvent.keyDown(window, { key: 'Escape' })
+    await waitFor(() => {
+      expect(screen.queryByRole('complementary', { name: 'Workspace sidebar' })).not.toBeInTheDocument()
+    })
   })
 })

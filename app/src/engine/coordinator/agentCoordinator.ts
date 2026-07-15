@@ -74,7 +74,7 @@ export class AgentCoordinator {
     const childRunId = generateUUID()
     const sandboxId = generateUUID()
 
-    void safeInvokeVoid('engine_run_create', {
+    await safeInvokeVoid('engine_run_create', {
       request: {
         id: childRunId,
         parentRunId: this.baseConfig.runId,

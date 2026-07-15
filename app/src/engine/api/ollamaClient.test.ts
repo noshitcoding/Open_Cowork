@@ -41,6 +41,41 @@ describe('sampleOllamaMessage', () => {
     })
   })
 
+  it('omits the thinking flag for known models that do not support it', async () => {
+    const { buildOllamaChatRequest } = await import('./ollamaClient')
+
+    const request = buildOllamaChatRequest(
+      {
+        baseUrl: 'http://localhost:11434',
+        model: 'llama3.1:8b',
+        timeoutMs: 200000,
+        thinkingEnabled: true,
+      },
+      [{ role: 'user', content: 'Hello' }],
+      'System prompt',
+    )
+
+    expect(request.body).not.toHaveProperty('think')
+    expect(JSON.parse(request.debugPreview).think).toBeUndefined()
+  })
+
+  it('keeps thinking enabled for a compatible model family', async () => {
+    const { buildOllamaChatRequest } = await import('./ollamaClient')
+
+    const request = buildOllamaChatRequest(
+      {
+        baseUrl: 'http://localhost:11434',
+        model: 'qwen3.6:35b',
+        timeoutMs: 200000,
+        thinkingEnabled: true,
+      },
+      [{ role: 'user', content: 'Hello' }],
+      'System prompt',
+    )
+
+    expect(request.body).toHaveProperty('think', true)
+  })
+
   it('forwards image attachments alongside tool results to Ollama chat requests', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(
