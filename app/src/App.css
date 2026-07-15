@@ -8764,7 +8764,7 @@ button.compact-send-btn {
   display: flex;
   align-items: center;
   gap: 10px;
-  flex: 1 1 360px;
+  flex: 1 1 300px;
   min-width: min(100%, 320px);
 }
 
@@ -8772,8 +8772,8 @@ button.compact-send-btn {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 10px;
-  flex: 999 1 440px;
+  gap: 8px;
+  flex: 2 1 400px;
   flex-wrap: wrap;
 }
 
@@ -8810,7 +8810,7 @@ button.compact-send-btn {
   align-items: center;
   gap: 6px;
   min-height: 44px;
-  padding: 10px 16px;
+  padding: 10px 13px;
   border: none;
   border-radius: 16px;
   background: var(--accent);
