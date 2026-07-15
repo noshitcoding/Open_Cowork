@@ -56,6 +56,13 @@ const CREW_BOX_CHARS = /[\s\u2500-\u257F]+/u
 const CREW_BOX_EDGE_START = /^[\s\u2500-\u257F]+/u
 const CREW_BOX_EDGE_END = /[\s\u2500-\u257F]+$/u
 const FRESH_NEWS_TASK_PATTERN = /\b(news|nachrichten|latest|last\s+\d+\s+hours?|last\s+24\s+hours|today|heute|aktuell|tagesbericht|daily\s+news|breaking)\b/i
+const RESEARCH_TASK_PATTERN = /\b(research|recherche|recherchier\w*|sources?|quellen?|literature\s+review|literatur(?:recherche|uebersicht)|market\s+research|marktanalyse|fact\s*check|faktencheck)\b/i
+const CODING_TASK_PATTERN = /\b(code|coding|program\w*|programmier\w*|implement\w*|refactor\w*|debug\w*|bug(?:fix)?|fix\w*|tests?|typescript|javascript|python|rust|repository|repo|codebase|source\s*code|quellcode)\b/i
+const PRESENTATION_TASK_PATTERN = /\b(power\s*point|presentation|praesentation|präsentation|pptx?|slides?|folien?|slide\s+deck|pitch\s+deck|ppp)\b/i
+
+function getTaskSearchText(task: Pick<WorkTask, 'title' | 'prompt' | 'expectedOutput'>): string {
+  return [task.title, task.prompt, task.expectedOutput].join('\n')
+}
 
 function getLocalTimezone(): string {
   try {
@@ -74,11 +81,19 @@ function buildCurrentRunContext(now = new Date()): string {
 }
 
 export function isFreshNewsTask(task: Pick<WorkTask, 'title' | 'prompt' | 'expectedOutput'>): boolean {
-  return FRESH_NEWS_TASK_PATTERN.test([
-    task.title,
-    task.prompt,
-    task.expectedOutput,
-  ].join('\n'))
+  return FRESH_NEWS_TASK_PATTERN.test(getTaskSearchText(task))
+}
+
+export function isResearchTask(task: Pick<WorkTask, 'title' | 'prompt' | 'expectedOutput'>): boolean {
+  return isFreshNewsTask(task) || RESEARCH_TASK_PATTERN.test(getTaskSearchText(task))
+}
+
+export function isCodingTask(task: Pick<WorkTask, 'title' | 'prompt' | 'expectedOutput'>): boolean {
+  return CODING_TASK_PATTERN.test(getTaskSearchText(task))
+}
+
+export function isPresentationTask(task: Pick<WorkTask, 'title' | 'prompt' | 'expectedOutput'>): boolean {
+  return PRESENTATION_TASK_PATTERN.test(getTaskSearchText(task))
 }
 
 function buildFreshNewsGuidelines(task: WorkTask): string {
@@ -95,8 +110,17 @@ function buildFreshNewsGuidelines(task: WorkTask): string {
 }
 
 export function augmentCrewToolsForTask(tools: string[], task: WorkTask): string[] {
-  if (!isFreshNewsTask(task)) return tools
-  return Array.from(new Set([...tools, 'web_search', 'web_fetch']))
+  const augmented = [...tools]
+  if (isResearchTask(task)) {
+    augmented.push('web_search', 'web_fetch')
+  }
+  if (isCodingTask(task)) {
+    augmented.push('read_file', 'glob', 'grep', 'edit_file', 'create_directory', 'bash')
+  }
+  if (isPresentationTask(task)) {
+    augmented.push('read_file', 'create_directory', 'office_workflow')
+  }
+  return Array.from(new Set(augmented))
 }
 
 function resolveDefaultAgentId(crew: Crew): string | null {
@@ -218,14 +242,16 @@ export function buildCrewRuntimeTasks(crew: Crew, task: WorkTask, enabledAgentId
 
   if (runnableCrewTasks.length > 0) {
     const runnableTaskIds = new Set(runnableCrewTasks.map((crewTask) => crewTask.id))
-    return runnableCrewTasks.map((crewTask) => ({
+    return runnableCrewTasks.map((crewTask, index) => ({
       id: crewTask.id,
       description: crewTask.description,
       expectedOutput: crewTask.expectedOutput || task.expectedOutput || 'Create a complete result.',
       agentId: crewTask.agentId,
       context: crewTask.context.filter((contextId) => runnableTaskIds.has(contextId)),
       dependencies: crewTask.dependencies.filter((dependencyId) => runnableTaskIds.has(dependencyId)),
-      asyncExecution: crew.process === 'parallel' ? true : crewTask.asyncExecution,
+      asyncExecution: crew.process === 'parallel'
+        ? index < runnableCrewTasks.length - 1
+        : crewTask.asyncExecution,
     }))
   }
 
@@ -242,7 +268,7 @@ export function buildCrewRuntimeTasks(crew: Crew, task: WorkTask, enabledAgentId
       agentId,
       context: [],
       dependencies: [],
-      asyncExecution: crew.process === 'parallel',
+      asyncExecution: false,
     },
   ]
 }

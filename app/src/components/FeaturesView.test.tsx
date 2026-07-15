@@ -30,4 +30,17 @@ describe('FeaturesView', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'Skills' }))
     expect(screen.getByText('Skills workbench content')).toBeInTheDocument()
   })
+
+  it('supports arrow-key navigation across capability tabs', () => {
+    render(
+      <MemoryRouter initialEntries={['/features?tab=mcp']}>
+        <FeaturesView />
+      </MemoryRouter>,
+    )
+
+    fireEvent.keyDown(screen.getByRole('tab', { name: 'MCP Server' }), { key: 'ArrowRight' })
+
+    expect(screen.getByRole('tab', { name: 'Knowledge base' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByText('Knowledge workbench content')).toBeInTheDocument()
+  })
 })

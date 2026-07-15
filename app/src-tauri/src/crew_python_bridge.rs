@@ -51,6 +51,10 @@ pub struct CrewRuntimeStatusResponse {
     pub venv_python_path: Option<String>,
     pub python_version: Option<String>,
     pub crewai_version: Option<String>,
+    pub expected_crewai_version: Option<String>,
+    pub tool_dependencies_installed: bool,
+    pub runtime_compatible: bool,
+    pub runtime_schema_version: Option<u64>,
     pub last_bootstrap_at: Option<String>,
     pub message: String,
 }
@@ -906,7 +910,32 @@ fn build_status_from_json<R: Runtime>(
         .and_then(|value| value.get("crewaiInstalled"))
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let ready = venv_exists && crewai_installed;
+    let expected_crewai_version = json
+        .as_ref()
+        .and_then(|value| value.get("expectedCrewaiVersion"))
+        .and_then(Value::as_str)
+        .map(ToString::to_string);
+    let tool_dependencies_installed = json
+        .as_ref()
+        .and_then(|value| value.get("toolDependenciesInstalled"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let runtime_compatible = json
+        .as_ref()
+        .and_then(|value| value.get("runtimeCompatible"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let runtime_schema_version = json
+        .as_ref()
+        .and_then(|value| value.get("runtimeSchemaVersion"))
+        .and_then(Value::as_u64);
+    let runtime_message = json
+        .as_ref()
+        .and_then(|value| value.get("runtimeMessage"))
+        .and_then(Value::as_str)
+        .map(ToString::to_string)
+        .unwrap_or(message);
+    let ready = venv_exists && crewai_installed && runtime_compatible;
 
     CrewRuntimeStatusResponse {
         ready,
@@ -925,8 +954,12 @@ fn build_status_from_json<R: Runtime>(
         },
         python_version,
         crewai_version,
+        expected_crewai_version,
+        tool_dependencies_installed,
+        runtime_compatible,
+        runtime_schema_version,
         last_bootstrap_at: bridge.read_last_bootstrap_at(),
-        message,
+        message: runtime_message,
     }
 }
 

@@ -60,6 +60,11 @@ export default function CrewRuntimePanel() {
           <div className="crew-stat-card">
             <div className="crew-stat-label">{tr("CrewAI")}</div>
             <div className="crew-stat-value">{status.crewaiInstalled ? `${tr('Installed')}${status.crewaiVersion ? ` (${status.crewaiVersion})` : ''}` : tr('Not installed')}</div>
+            <div className="crew-stat-meta">
+              {status.runtimeCompatible
+                ? tr('Runtime dependencies verified')
+                : `${tr('Required CrewAI version')}: ${status.expectedCrewaiVersion ?? '-'}`}
+            </div>
             <div className="crew-stat-meta">{tr("Letztes Bootstrap:")}{formatTimestamp(status.lastBootstrapAt)}</div>
           </div>
           <div className="crew-stat-card">

@@ -102,4 +102,15 @@ describe('ProjectView', () => {
     expect(useProjectStore.getState().projects).toEqual([])
     expect(useChatStore.getState().threads).toEqual([])
   })
+
+  it('guides an empty workspace into a first project', () => {
+    useProjectStore.setState({ projects: [], activeProjectId: null })
+    renderProjectView()
+
+    expect(screen.getByRole('heading', { name: 'Give focused work a permanent home' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Create first project' }))
+
+    expect(useProjectStore.getState().projects).toHaveLength(1)
+    expect(screen.getByLabelText('Project name')).toHaveValue('Project 1')
+  })
 })

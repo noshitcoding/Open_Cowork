@@ -10,7 +10,15 @@ import sys
 import time
 import traceback
 import uuid
+import warnings
 from pathlib import Path
+
+
+EXPECTED_CREWAI_VERSION = "1.15.2"
+RUNTIME_SCHEMA_VERSION = 2
+os.environ.setdefault("CREWAI_TRACING_ENABLED", "false")
+os.environ.setdefault("OTEL_SDK_DISABLED", "true")
+warnings.filterwarnings("ignore", category=DeprecationWarning, module=r"crewai(?:\.|$)")
 
 
 def read_payload() -> dict:
@@ -26,6 +34,7 @@ def read_payload() -> dict:
 def runtime_status() -> dict:
     crewai_installed = False
     crewai_version = None
+    tool_dependencies_installed = False
 
     try:
         import crewai  # type: ignore
@@ -35,10 +44,40 @@ def runtime_status() -> dict:
     except Exception:
         crewai_installed = False
 
+    try:
+        import docx  # type: ignore  # noqa: F401
+        import pptx  # type: ignore  # noqa: F401
+
+        tool_dependencies_installed = True
+    except Exception:
+        tool_dependencies_installed = False
+
+    runtime_compatible = (
+        crewai_installed
+        and crewai_version == EXPECTED_CREWAI_VERSION
+        and tool_dependencies_installed
+    )
+    if runtime_compatible:
+        runtime_message = "Crew runtime and tool dependencies are ready."
+    elif not crewai_installed:
+        runtime_message = "CrewAI is not installed. Initialize the runtime."
+    elif crewai_version != EXPECTED_CREWAI_VERSION:
+        runtime_message = (
+            f"CrewAI {crewai_version or 'unknown'} is installed, but this app requires "
+            f"{EXPECTED_CREWAI_VERSION}. Reinitialize the runtime."
+        )
+    else:
+        runtime_message = "Crew tool dependencies are incomplete. Reinitialize the runtime."
+
     return {
         "pythonVersion": sys.version.split()[0],
         "crewaiInstalled": crewai_installed,
         "crewaiVersion": crewai_version,
+        "expectedCrewaiVersion": EXPECTED_CREWAI_VERSION,
+        "toolDependenciesInstalled": tool_dependencies_installed,
+        "runtimeCompatible": runtime_compatible,
+        "runtimeSchemaVersion": RUNTIME_SCHEMA_VERSION,
+        "runtimeMessage": runtime_message,
         "cwd": str(Path.cwd()),
     }
 
@@ -538,6 +577,27 @@ def classify_runtime_error(exc: Exception) -> str:
             f"Original: {raw}"
         )
 
+    if "authentication" in lowered or "unauthorized" in lowered or "401" in lowered:
+        return (
+            "AuthenticationError: The configured provider rejected the credentials. "
+            "Check the selected Crew provider profile and API key. "
+            f"Original: {raw}"
+        )
+
+    if "connection" in lowered or "connecterror" in lowered or "connection refused" in lowered:
+        return (
+            "ConnectionError: The configured model provider is unreachable. "
+            "Check its base URL and whether the local/provider service is running. "
+            f"Original: {raw}"
+        )
+
+    if "timeout" in lowered or "timed out" in lowered:
+        return (
+            "TimeoutError: The provider or a Crew tool exceeded its time limit. "
+            "Retry the task or increase the configured runtime timeout. "
+            f"Original: {raw}"
+        )
+
     if "utf-8" in lowered or "unicode" in lowered:
         return (
             "EncodingError: The runtime received non-UTF-8 output. "
@@ -585,10 +645,13 @@ def build_llm(request: dict, agent: dict):
         config = provider_configs.get("openAICompatible") or {}
         configure_litellm_tls_verification(config.get("verifyTlsCertificates"))
         model = normalize_model_name(provider, model_override or str(config.get("model") or ""))
+        timeout_seconds = max(1, parse_int(config.get("timeoutMs"), parse_int(request_config.get("timeoutMs"), 600_000)) // 1000)
         llm_kwargs = {
             "model": model,
             "base_url": str(config.get("baseUrl") or request_config.get("baseUrl") or "https://api.openai.com/v1"),
             "api_key": str(config.get("apiKey") or "open-cowork"),
+            "timeout": timeout_seconds,
+            "max_tokens": 4096,
         }
         return LLM(**llm_kwargs)
 
@@ -596,22 +659,29 @@ def build_llm(request: dict, agent: dict):
         config = provider_configs.get("openRouter") or {}
         configure_litellm_tls_verification(config.get("verifyTlsCertificates"))
         model = normalize_model_name(provider, model_override or str(config.get("model") or ""))
+        timeout_seconds = max(1, parse_int(config.get("timeoutMs"), parse_int(request_config.get("timeoutMs"), 600_000)) // 1000)
         llm_kwargs = {
             "model": model,
             "base_url": str(config.get("baseUrl") or "https://openrouter.ai/api/v1"),
             "api_key": str(config.get("apiKey") or "open-cowork"),
+            "timeout": timeout_seconds,
+            "max_tokens": 4096,
         }
         return LLM(**llm_kwargs)
 
     model = normalize_model_name(provider, model_override or str(request_config.get("model") or ""))
+    timeout_seconds = max(1, parse_int(request_config.get("timeoutMs"), 600_000) // 1000)
     return LLM(
         model=model,
         base_url=str(request_config.get("baseUrl") or "http://localhost:11434"),
+        timeout=timeout_seconds,
+        max_tokens=4096,
     )
 
 
 def build_agent(request: dict, agent_payload: dict):
     from crewai import Agent  # type: ignore
+    from crew_tools import build_runtime_tools, unavailable_runtime_tools
 
     skills_markdown = str(agent_payload.get("skillsMarkdown") or "").strip()
     backstory = str(agent_payload.get("backstory") or "").strip()
@@ -622,16 +692,37 @@ def build_agent(request: dict, agent_payload: dict):
     if governance_note:
         backstory = f"{backstory}\n\nGovernance:\n{governance_note}".strip()
 
-    return Agent(
-        role=str(agent_payload.get("role") or agent_payload.get("name") or "Crew Agent"),
-        goal=str(agent_payload.get("goal") or "Complete tasks successfully in the crew."),
-        backstory=backstory or "A specialized crew agent for Open_Cowork.",
-        llm=build_llm(request, agent_payload),
-        verbose=bool(agent_payload.get("verbose")),
-        allow_delegation=bool(agent_payload.get("allowDelegation")),
-        max_iter=max(1, int(agent_payload.get("maxIterations") or 20)),
-        max_rpm=int(agent_payload.get("maxRpm") or request.get("_effectiveAgentMaxRpm") or 0) or None,
-    )
+    runtime_tools = build_runtime_tools(request, agent_payload)
+    unavailable_tools = unavailable_runtime_tools(request, agent_payload)
+    if unavailable_tools:
+        backstory = (
+            f"{backstory}\n\nUnavailable runtime integrations: {', '.join(unavailable_tools)}. "
+            "Do not claim to have used them."
+        ).strip()
+
+    max_rpm = int(agent_payload.get("maxRpm") or request.get("_effectiveAgentMaxRpm") or 0)
+    retry_count = max(0, min(5, parse_int(request.get("retryCount"), 0)))
+    request_config = request.get("config") or {}
+    timeout_ms = max(1_000, parse_int(request_config.get("timeoutMs"), 600_000))
+
+    agent_kwargs = {
+        "role": str(agent_payload.get("role") or agent_payload.get("name") or "Crew Agent"),
+        "goal": str(agent_payload.get("goal") or "Complete tasks successfully in the crew."),
+        "backstory": backstory or "A specialized crew agent for Open_Cowork.",
+        "llm": build_llm(request, agent_payload),
+        "tools": runtime_tools,
+        "verbose": bool(agent_payload.get("verbose")),
+        "allow_delegation": bool(agent_payload.get("allowDelegation")),
+        "max_iter": max(1, int(agent_payload.get("maxIterations") or 20)),
+        "max_retry_limit": retry_count,
+        "max_execution_time": max(1, timeout_ms // 1000),
+        "respect_context_window": True,
+        "cache": True,
+    }
+    if max_rpm > 0:
+        agent_kwargs["max_rpm"] = max_rpm
+
+    return Agent(**agent_kwargs)
 
 
 def build_task_description(request: dict, task_payload: dict, agent_payload: dict) -> str:
@@ -654,6 +745,21 @@ def build_task_description(request: dict, task_payload: dict, agent_payload: dic
     if memory_note:
         additions.append(f"Crew memory and knowledge:\n{memory_note}")
 
+    output_mode = str(request.get("outputMode") or "standard").strip().lower()
+    if output_mode == "bullet-report":
+        additions.append("Output contract: return a concise bullet report with explicit evidence and artifact paths.")
+    elif output_mode == "json":
+        additions.append("Output contract: return valid JSON only, without Markdown fences or commentary outside the JSON value.")
+
+    additions.append(
+        "Execution contract:\n"
+        "- Use the provided runtime tools for facts, files, commands, and artifacts; never pretend a tool was called.\n"
+        "- For research, include the source URLs returned by web_search/web_fetch.\n"
+        "- For coding, inspect existing files first, make the smallest complete change, and run relevant verification.\n"
+        "- For PPTX/DOCX work, call office_workflow and report the exact created path.\n"
+        "- If a required tool returns ERROR, explain the concrete blocker instead of fabricating a result."
+    )
+
     if additions:
         return f"{description}\n\n" + "\n\n".join(additions)
     return description
@@ -668,6 +774,78 @@ def dedupe_task_refs(values: list[str]) -> list[str]:
         seen.add(value)
         ordered.append(value)
     return ordered
+
+
+def order_task_payloads(task_payloads: list[dict]) -> list[dict]:
+    """Stable topological order so CrewAI never executes a dependent task first."""
+    by_id = {
+        str(task.get("id") or "").strip(): task
+        for task in task_payloads
+        if isinstance(task, dict) and str(task.get("id") or "").strip()
+    }
+    ordered: list[dict] = []
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def visit(task_id: str) -> None:
+        if task_id in visited:
+            return
+        if task_id in visiting:
+            raise ValueError(f"Crew task dependency cycle detected at {task_id}.")
+        visiting.add(task_id)
+        task = by_id[task_id]
+        refs = dedupe_task_refs([
+            str(value).strip()
+            for value in [*(task.get("context") or []), *(task.get("dependencies") or [])]
+            if str(value).strip()
+        ])
+        for ref in refs:
+            if ref not in by_id:
+                raise ValueError(f"Task {task_id} references unknown context/dependency {ref}.")
+            visit(ref)
+        visiting.remove(task_id)
+        visited.add(task_id)
+        ordered.append(task)
+
+    for task in task_payloads:
+        if isinstance(task, dict):
+            task_id = str(task.get("id") or "").strip()
+            if task_id:
+                visit(task_id)
+    return ordered
+
+
+def normalize_task_concurrency(
+    task_payloads: list[dict],
+    process_name: str,
+    max_parallel_tasks: int,
+) -> tuple[str, list[dict]]:
+    limit = max(1, max_parallel_tasks)
+    if limit <= 1:
+        return "sequential", [
+            {**task_payload, "asyncExecution": False}
+            for task_payload in task_payloads
+        ]
+    if process_name.lower() == "parallel":
+        # CrewAI models parallel work as async tasks in a sequential process and
+        # rejects a run ending in multiple async tasks. Sync boundaries also cap
+        # concurrent work to maxParallelTasks.
+        return process_name, [
+            {
+                **task_payload,
+                "asyncExecution": (
+                    index < len(task_payloads) - 1
+                    and (index + 1) % limit != 0
+                ),
+            }
+            for index, task_payload in enumerate(task_payloads)
+        ]
+    normalized = [dict(task_payload) for task_payload in task_payloads]
+    if normalized:
+        # Defensive compatibility for imported definitions: the final task must
+        # be synchronous or CrewAI validation fails before kickoff.
+        normalized[-1]["asyncExecution"] = False
+    return process_name, normalized
 
 
 def extract_task_output(task_obj) -> str | None:
@@ -704,23 +882,19 @@ def execute_definition(payload: dict) -> dict:
     if not isinstance(task_payloads, list):
         task_payloads = []
 
+    task_payloads = order_task_payloads(task_payloads)
+
     validate_runtime_provider_models(payload, agent_payloads)
     openrouter_free = has_openrouter_free_agent(payload, agent_payloads)
     payload["_effectiveAgentMaxRpm"] = effective_max_rpm(payload, len(agent_payloads), openrouter_free)
     max_parallel_tasks = max(1, parse_int(payload.get("maxParallelTasks"), 1))
     if openrouter_free:
         max_parallel_tasks = 1
-    if max_parallel_tasks <= 1:
-        process_name = "sequential"
-        task_payloads = [
-            {
-                **task_payload,
-                "asyncExecution": False,
-            }
-            if isinstance(task_payload, dict)
-            else task_payload
-            for task_payload in task_payloads
-        ]
+    process_name, task_payloads = normalize_task_concurrency(
+        task_payloads,
+        process_name,
+        max_parallel_tasks,
+    )
 
     from crewai import Crew, Task  # type: ignore
 

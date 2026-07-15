@@ -189,6 +189,7 @@ const CLAUDE_TOOL_CAPABILITIES: ClaudeToolCapability[] = [
   { id: 'grep', label: 'Text search', description: 'Regex/string search across files' },
   { id: 'web_fetch', label: 'Web Fetch', description: 'load the contents of a URL' },
   { id: 'web_search', label: 'Web Search', description: 'Web search over search queries' },
+  { id: 'office_workflow', label: 'Office / PowerPoint', description: 'Create PPTX and DOCX artifacts' },
   { id: 'todo', label: 'Task/Todo', description: 'Maintain todo list and work plan' },
   { id: 'delegate_task', label: 'Delegate task', description: 'Delegate tasks to other crew members' },
   { id: 'ask_user', label: 'Ask questions', description: 'Gezielte Ask questions for Klarheit' },
@@ -225,7 +226,7 @@ const DEFAULT_TOOLSET_POLICIES: ToolsetPolicy[] = [
     label: 'Code edit',
     description: 'Local development profile with filesystem edits and shell, without web, MCP, or delegation.',
     riskLevel: 'medium',
-    toolIds: ['bash', 'read_file', 'edit_file', 'create_directory', 'move_path', 'copy_path', 'glob', 'grep', 'todo', 'ask_user'],
+    toolIds: ['bash', 'read_file', 'edit_file', 'create_directory', 'move_path', 'copy_path', 'glob', 'grep', 'office_workflow', 'todo', 'ask_user'],
   },
   {
     id: 'remote_mcp',
