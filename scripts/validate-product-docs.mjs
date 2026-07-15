@@ -4,7 +4,22 @@ import path from "node:path";
 
 const DEFAULT_DOCS_DIR = "docs/product";
 const DEFAULT_APP_ROUTES_FILE = "app/src/App.tsx";
+const DEFAULT_ROUTE_REGISTRY_FILE = "app/src/product/routeRegistry.ts";
 const INDEX_FILE = "INDEX.md";
+const CATALOG_DIR = "catalog";
+const GENERATED_DIR = "generated";
+const SCHEMA_DIR = "schema";
+const CATALOG_INDEX_FILE = "catalog.md";
+
+const CATALOG_KIND_CONFIG = {
+  views: { kind: "view", wrapper: "views", schema: "view.schema.json" },
+  elements: { kind: "element", wrapper: "elements", schema: "element.schema.json" },
+  buttons: { kind: "button", wrapper: "buttons", schema: "button.schema.json" },
+  infos: { kind: "info", wrapper: "infos", schema: "info.schema.json" },
+  flows: { kind: "flow", wrapper: "flows", schema: "flow.schema.json" },
+  domain: { kind: "domain", wrapper: "domain", schema: "domain.schema.json" },
+  "design-system": { kind: "design-system", wrapper: "design_system", schema: "design-system.schema.json" },
+};
 
 const TYPE_ALIASES = new Map([
   ["route", "route"],
@@ -49,13 +64,20 @@ if (args.help) {
 const root = process.cwd();
 const docsDir = path.resolve(root, args.docsDir || DEFAULT_DOCS_DIR);
 const appRoutesFile = path.resolve(root, args.appRoutes || DEFAULT_APP_ROUTES_FILE);
+const routeRegistryFile = path.resolve(root, args.routeRegistry || DEFAULT_ROUTE_REGISTRY_FILE);
 const indexPath = path.join(docsDir, INDEX_FILE);
+const catalogDir = path.join(docsDir, CATALOG_DIR);
+const generatedDir = path.join(docsDir, GENERATED_DIR);
+const schemaDir = path.join(docsDir, SCHEMA_DIR);
+const catalogIndexPath = path.join(generatedDir, CATALOG_INDEX_FILE);
 
 fs.mkdirSync(docsDir, { recursive: true });
+fs.mkdirSync(generatedDir, { recursive: true });
 
 const schemaErrors = [];
 const markdownFiles = listMarkdownFiles(docsDir)
   .filter((filePath) => path.basename(filePath).toLowerCase() !== INDEX_FILE.toLowerCase())
+  .filter((filePath) => !toPosix(path.relative(docsDir, filePath)).startsWith(`${GENERATED_DIR}/`))
   .sort(comparePaths);
 
 const docs = [];
@@ -80,8 +102,15 @@ for (const filePath of markdownFiles) {
   schemaErrors.push(...validateProductDoc(doc));
 }
 
-const appRoutes = readAppRoutes(appRoutesFile);
+const routeRegistry = readRouteRegistry(routeRegistryFile);
+schemaErrors.push(...routeRegistry.errors);
+const appRoutes = mergeRoutes(readAppRoutes(appRoutesFile), routeRegistry.routes.map((route) => route.path));
+const catalog = readProductCatalog({ catalogDir, schemaDir, appRoutes });
+schemaErrors.push(...catalog.errors);
+schemaErrors.push(...validateRouteRegistryCatalog(routeRegistry, catalog));
+
 const indexMarkdown = generateIndex({ docs, appRoutes, schemaErrors, docsDir });
+const catalogMarkdown = generateCatalogMarkdown(catalog);
 
 if (args.check) {
   const current = fs.existsSync(indexPath) ? fs.readFileSync(indexPath, "utf8") : "";
@@ -90,9 +119,18 @@ if (args.check) {
     console.error("Run: node scripts/validate-product-docs.mjs");
     process.exit(1);
   }
+
+  const currentCatalog = fs.existsSync(catalogIndexPath) ? fs.readFileSync(catalogIndexPath, "utf8") : "";
+  if (currentCatalog !== catalogMarkdown) {
+    console.error(`${toPosix(path.relative(root, catalogIndexPath))} is out of date.`);
+    console.error("Run: node scripts/validate-product-docs.mjs");
+    process.exit(1);
+  }
 } else {
   fs.writeFileSync(indexPath, indexMarkdown, "utf8");
   console.log(`Wrote ${toPosix(path.relative(root, indexPath))}`);
+  fs.writeFileSync(catalogIndexPath, catalogMarkdown, "utf8");
+  console.log(`Wrote ${toPosix(path.relative(root, catalogIndexPath))}`);
 }
 
 if (schemaErrors.length > 0) {
@@ -102,6 +140,7 @@ if (schemaErrors.length > 0) {
 }
 
 console.log(`Validated ${docs.length} product doc(s).`);
+console.log(`Validated ${catalog.records.length} product catalog record(s).`);
 console.log("Product docs validation passed.");
 
 function parseArgs(argv) {
@@ -110,6 +149,8 @@ function parseArgs(argv) {
     check: false,
     docsDir: DEFAULT_DOCS_DIR,
     help: false,
+    routeRegistry: DEFAULT_ROUTE_REGISTRY_FILE,
+    routeRegistryCheck: false,
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -118,11 +159,18 @@ function parseArgs(argv) {
       parsed.help = true;
     } else if (arg === "--check") {
       parsed.check = true;
+    } else if (arg === "check") {
+      parsed.check = true;
+    } else if (arg === "route-registry") {
+      parsed.routeRegistryCheck = true;
     } else if (arg === "--docs-dir") {
       parsed.docsDir = requireValue(argv, index, arg);
       index += 1;
     } else if (arg === "--app-routes") {
       parsed.appRoutes = requireValue(argv, index, arg);
+      index += 1;
+    } else if (arg === "--route-registry") {
+      parsed.routeRegistry = requireValue(argv, index, arg);
       index += 1;
     } else {
       throw new Error(`Unknown argument: ${arg}`);
@@ -146,6 +194,8 @@ function printUsage() {
 Options:
   --docs-dir <path>    Product docs directory. Default: ${DEFAULT_DOCS_DIR}
   --app-routes <path>  React route source for missing-doc hints. Default: ${DEFAULT_APP_ROUTES_FILE}
+  --route-registry <path>
+                       Route registry source. Default: ${DEFAULT_ROUTE_REGISTRY_FILE}
   --check             Validate that ${DEFAULT_DOCS_DIR}/${INDEX_FILE} is up to date without writing
   --help              Show this help
 `);
@@ -650,6 +700,631 @@ function countDocs(docs) {
     },
     { api: 0, compatibility: 0, currentState: 0, decision: 0, element: 0, feature: 0, flow: 0, overview: 0, route: 0 },
   );
+}
+
+function readRouteRegistry(filePath) {
+  const relPath = toPosix(path.relative(root, filePath));
+  const errors = [];
+  const routes = [];
+
+  if (!fs.existsSync(filePath)) {
+    errors.push(`${relPath}: route registry file not found`);
+    return { errors, filePath, routes };
+  }
+
+  const text = fs.readFileSync(filePath, "utf8");
+  const registryMatch = text.match(/export const PRODUCT_ROUTES\s*=\s*\[([\s\S]*?)\]\s+as const/);
+  if (!registryMatch) {
+    errors.push(`${relPath}: PRODUCT_ROUTES export not found`);
+  }
+  const registryText = registryMatch ? registryMatch[1] : "";
+  const routeBlocks = registryText.match(/\{\s*[\s\S]*?\n\s*\}/g) ?? [];
+
+  for (const block of routeBlocks) {
+    const id = extractStringProperty(block, "id");
+    const rawPath = extractStringProperty(block, "path");
+    const viewId = extractStringProperty(block, "viewId");
+    const navButtonDocId = extractStringProperty(block, "navButtonDocId");
+    const shortcut = extractStringProperty(block, "shortcut");
+    const shortcutKey = extractStringProperty(block, "shortcutKey");
+
+    if (!rawPath && !viewId) continue;
+
+    const routePath = normalizeRoute(rawPath);
+    const label = id || routePath || "(missing route id)";
+    if (!id) errors.push(`${relPath}: ${label}: missing route id`);
+    if (!routePath) errors.push(`${relPath}: ${label}: missing route path`);
+    if (!viewId || !viewId.startsWith("view:")) {
+      errors.push(`${relPath}: ${label}: route registry entry requires view:* id`);
+    }
+    if (routePath && viewId && viewId !== `view:${routePath}`) {
+      errors.push(`${relPath}: ${label}: viewId "${viewId}" does not match route path "${routePath}"`);
+    }
+    if (!navButtonDocId || !navButtonDocId.startsWith("button:/app/top-navigation/")) {
+      errors.push(`${relPath}: ${label}: route registry entry requires top-navigation button id`);
+    }
+    if (!shortcut || !shortcutKey) {
+      errors.push(`${relPath}: ${label}: route registry entry requires shortcut and shortcutKey`);
+    }
+
+    if (id && routePath && viewId) {
+      routes.push({ id, navButtonDocId, path: routePath, shortcut, shortcutKey, viewId });
+    }
+  }
+
+  if (routes.length === 0) {
+    errors.push(`${relPath}: no route registry entries found`);
+  }
+
+  errors.push(...duplicateRouteRegistryValues(relPath, routes, "id"));
+  errors.push(...duplicateRouteRegistryValues(relPath, routes, "path"));
+  errors.push(...duplicateRouteRegistryValues(relPath, routes, "viewId"));
+  errors.push(...duplicateRouteRegistryValues(relPath, routes, "shortcutKey"));
+
+  return { errors, filePath, routes };
+}
+
+function extractStringProperty(block, name) {
+  const pattern = new RegExp(`\\b${name}:\\s*(['"\`])([^'"\`]+)\\1`);
+  const match = block.match(pattern);
+  return match ? match[2].trim() : "";
+}
+
+function duplicateRouteRegistryValues(relPath, routes, field) {
+  const errors = [];
+  const seen = new Map();
+
+  for (const route of routes) {
+    const value = asString(route[field]);
+    if (!value) continue;
+    if (seen.has(value)) {
+      errors.push(`${relPath}: duplicate route registry ${field} "${value}" in ${seen.get(value)} and ${route.id}`);
+    } else {
+      seen.set(value, route.id);
+    }
+  }
+
+  return errors;
+}
+
+function validateRouteRegistryCatalog(routeRegistry, catalog) {
+  const errors = [];
+  const views = catalog.byKind.get("view") ?? [];
+  const buttons = catalog.byKind.get("button") ?? [];
+  const viewsById = new Map(views.map((record) => [asString(record.id), record]));
+  const buttonIds = new Set(buttons.map((record) => asString(record.id)).filter(Boolean));
+  const relPath = toPosix(path.relative(root, routeRegistry.filePath));
+
+  for (const route of routeRegistry.routes) {
+    const view = viewsById.get(route.viewId);
+    if (!view) {
+      errors.push(`${relPath}: ${route.id}: registry viewId missing from catalog: ${route.viewId}`);
+    } else if (normalizeRoute(view.route) !== route.path) {
+      errors.push(`${view.__relPath}: ${route.viewId}: catalog route "${asString(view.route)}" does not match registry path "${route.path}"`);
+    }
+
+    if (!buttonIds.has(route.navButtonDocId)) {
+      errors.push(`${relPath}: ${route.id}: registry top-navigation button missing from catalog: ${route.navButtonDocId}`);
+    }
+  }
+
+  return errors;
+}
+
+function mergeRoutes(...routeLists) {
+  return uniqueStrings(routeLists.flat())
+    .map(normalizeRoute)
+    .filter(Boolean)
+    .sort(compareRoutes);
+}
+
+function readProductCatalog({ catalogDir, schemaDir, appRoutes }) {
+  const errors = [];
+  const records = [];
+  const schemas = loadCatalogSchemas(schemaDir, errors);
+
+  if (!fs.existsSync(catalogDir)) {
+    return { byId: new Map(), byKind: new Map(), errors, records };
+  }
+
+  const yamlFiles = listYamlFiles(catalogDir).sort(comparePaths);
+  for (const filePath of yamlFiles) {
+    const relPath = toPosix(path.relative(root, filePath));
+    const relCatalogPath = toPosix(path.relative(catalogDir, filePath));
+    const collectionName = relCatalogPath.split("/")[0];
+    const config = CATALOG_KIND_CONFIG[collectionName];
+
+    if (!config) {
+      errors.push(`${relPath}: unsupported catalog collection "${collectionName}"`);
+      continue;
+    }
+
+    let parsed;
+    try {
+      parsed = parseYamlFile(filePath);
+    } catch (error) {
+      errors.push(`${relPath}: ${error.message}`);
+      continue;
+    }
+
+    const extracted = extractCatalogRecords(parsed, config);
+    if (extracted.length === 0) {
+      errors.push(`${relPath}: no catalog records found`);
+      continue;
+    }
+
+    for (const item of extracted) {
+      if (!item || typeof item !== "object" || Array.isArray(item)) {
+        errors.push(`${relPath}: catalog item must be an object`);
+        continue;
+      }
+
+      const record = {
+        ...item,
+        __absPath: filePath,
+        __kind: config.kind,
+        __relPath: relPath,
+      };
+      records.push(record);
+
+      const schema = schemas.get(config.schema);
+      if (schema) {
+        errors.push(...validateCatalogRecordAgainstSchema(record, schema));
+      }
+      errors.push(...validateCatalogRecordPaths(record));
+      errors.push(...validateCatalogRoute(record, appRoutes));
+    }
+  }
+
+  const byId = new Map();
+  const byKind = new Map();
+  for (const record of records) {
+    if (!byKind.has(record.__kind)) byKind.set(record.__kind, []);
+    byKind.get(record.__kind).push(record);
+
+    const id = asString(record.id);
+    if (!id) continue;
+    if (byId.has(id)) {
+      errors.push(`${record.__relPath}: duplicate catalog id "${id}" also declared in ${byId.get(id).__relPath}`);
+    } else {
+      byId.set(id, record);
+    }
+  }
+
+  errors.push(...validateCatalogReferences(records, byId));
+  errors.push(...validateCatalogSelectors(records));
+
+  return { byId, byKind, errors, records };
+}
+
+function listYamlFiles(dirPath) {
+  if (!fs.existsSync(dirPath)) return [];
+
+  const files = [];
+  for (const entry of fs.readdirSync(dirPath, { withFileTypes: true })) {
+    const entryPath = path.join(dirPath, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...listYamlFiles(entryPath));
+    } else if (entry.isFile() && /\.(ya?ml)$/i.test(entry.name)) {
+      files.push(entryPath);
+    }
+  }
+  return files;
+}
+
+function loadCatalogSchemas(schemaDir, errors) {
+  const schemas = new Map();
+  if (!fs.existsSync(schemaDir)) return schemas;
+
+  for (const config of Object.values(CATALOG_KIND_CONFIG)) {
+    const schemaPath = path.join(schemaDir, config.schema);
+    if (!fs.existsSync(schemaPath)) {
+      errors.push(`${toPosix(path.relative(root, schemaPath))}: missing catalog schema`);
+      continue;
+    }
+
+    try {
+      schemas.set(config.schema, JSON.parse(fs.readFileSync(schemaPath, "utf8")));
+    } catch (error) {
+      errors.push(`${toPosix(path.relative(root, schemaPath))}: invalid JSON schema: ${error.message}`);
+    }
+  }
+
+  return schemas;
+}
+
+function parseYamlFile(filePath) {
+  const text = fs.readFileSync(filePath, "utf8");
+  const parser = createYamlParser(text, toPosix(path.relative(root, filePath)));
+  return parser.parse();
+}
+
+function createYamlParser(text, relPath) {
+  const lines = text.replace(/\r\n/g, "\n").split("\n")
+    .map((raw, index) => ({ raw, number: index + 1 }))
+    .filter(({ raw }) => {
+      const trimmed = raw.trim();
+      return trimmed !== "" && !trimmed.startsWith("#");
+    })
+    .map(({ raw, number }) => {
+      if (raw.includes("\t")) {
+        throw new Error(`line ${number}: tabs are not supported in catalog YAML`);
+      }
+      const indent = raw.match(/^ */)[0].length;
+      return { indent, number, text: raw.slice(indent).replace(/\s+$/, "") };
+    });
+
+  let cursor = 0;
+
+  return {
+    parse() {
+      if (lines.length === 0) return {};
+      const document = parseNode(lines[0].indent);
+      if (cursor < lines.length) {
+        throw new Error(`line ${lines[cursor].number}: unexpected content`);
+      }
+      return document;
+    },
+  };
+
+  function parseNode(indent) {
+    if (cursor >= lines.length) return null;
+    const line = lines[cursor];
+    if (line.indent < indent) return null;
+    if (line.indent > indent) {
+      throw new Error(`line ${line.number}: unexpected indent in ${relPath}`);
+    }
+    return line.text.startsWith("- ") ? parseSequence(indent) : parseMapping(indent);
+  }
+
+  function parseMapping(indent) {
+    const object = {};
+
+    while (cursor < lines.length) {
+      const line = lines[cursor];
+      if (line.indent < indent) break;
+      if (line.indent > indent) {
+        throw new Error(`line ${line.number}: unexpected nested mapping content`);
+      }
+      if (line.text.startsWith("- ")) break;
+
+      const { key, value } = parseYamlKeyValue(line);
+      if (Object.prototype.hasOwnProperty.call(object, key)) {
+        throw new Error(`line ${line.number}: duplicate key "${key}"`);
+      }
+
+      cursor += 1;
+      if (value === "") {
+        object[key] = cursor < lines.length && lines[cursor].indent > indent
+          ? parseNode(lines[cursor].indent)
+          : "";
+      } else {
+        object[key] = parseYamlScalar(value);
+      }
+    }
+
+    return object;
+  }
+
+  function parseSequence(indent) {
+    const items = [];
+
+    while (cursor < lines.length) {
+      const line = lines[cursor];
+      if (line.indent < indent) break;
+      if (line.indent > indent) {
+        throw new Error(`line ${line.number}: unexpected nested sequence content`);
+      }
+      if (!line.text.startsWith("- ")) break;
+
+      const itemText = line.text.slice(2).trim();
+      cursor += 1;
+
+      if (itemText === "") {
+        items.push(cursor < lines.length && lines[cursor].indent > indent ? parseNode(lines[cursor].indent) : null);
+        continue;
+      }
+
+      if (isYamlInlineObjectStart(itemText)) {
+        const object = {};
+        const first = parseYamlKeyValue({ text: itemText, number: line.number });
+        object[first.key] = first.value === ""
+          ? (cursor < lines.length && lines[cursor].indent > indent ? parseNode(lines[cursor].indent) : "")
+          : parseYamlScalar(first.value);
+
+        if (cursor < lines.length && lines[cursor].indent > indent) {
+          const nested = parseNode(lines[cursor].indent);
+          if (!nested || typeof nested !== "object" || Array.isArray(nested)) {
+            throw new Error(`line ${line.number}: object list item has non-object nested content`);
+          }
+          Object.assign(object, nested);
+        }
+        items.push(object);
+      } else {
+        items.push(parseYamlScalar(itemText));
+      }
+    }
+
+    return items;
+  }
+}
+
+function parseYamlKeyValue(line) {
+  const match = line.text.match(/^([A-Za-z0-9_.-]+):(?:\s*(.*))?$/);
+  if (!match) {
+    throw new Error(`line ${line.number}: unsupported YAML line "${line.text}"`);
+  }
+  return { key: match[1], value: match[2] ?? "" };
+}
+
+function isYamlInlineObjectStart(value) {
+  return /^[A-Za-z0-9_.-]+:(?:\s+|$)/.test(value);
+}
+
+function parseYamlScalar(value) {
+  const trimmed = stripInlineComment(value.trim());
+
+  if (trimmed === "[]") return [];
+  if (trimmed === "{}") return {};
+  if (trimmed === "true") return true;
+  if (trimmed === "false") return false;
+  if (trimmed === "null") return null;
+
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1);
+  }
+
+  return trimmed;
+}
+
+function extractCatalogRecords(parsed, config) {
+  if (Array.isArray(parsed)) return parsed;
+  if (!parsed || typeof parsed !== "object") return [];
+  if (Array.isArray(parsed[config.wrapper])) return parsed[config.wrapper];
+  if (asString(parsed.id)) return [parsed];
+  return [];
+}
+
+function validateCatalogRecordAgainstSchema(record, schema) {
+  const errors = [];
+  const relPath = record.__relPath;
+  const idForMessage = asString(record.id) || "(missing id)";
+
+  for (const field of schema.required ?? []) {
+    if (!Object.prototype.hasOwnProperty.call(record, field)) {
+      errors.push(`${relPath}: ${idForMessage}: missing required catalog field "${field}"`);
+    }
+  }
+
+  for (const [field, definition] of Object.entries(schema.properties ?? {})) {
+    if (!Object.prototype.hasOwnProperty.call(record, field)) continue;
+    const value = record[field];
+    errors.push(...validateSchemaValue(value, definition, `${relPath}: ${idForMessage}: ${field}`));
+  }
+
+  return errors;
+}
+
+function validateSchemaValue(value, definition, label) {
+  const errors = [];
+  if (!definition || !definition.type) return errors;
+
+  if (!matchesJsonSchemaType(value, definition.type)) {
+    errors.push(`${label} must be ${definition.type}`);
+    return errors;
+  }
+
+  if (definition.pattern && typeof value === "string" && !(new RegExp(definition.pattern).test(value))) {
+    errors.push(`${label} does not match pattern ${definition.pattern}`);
+  }
+
+  if (definition.type === "array" && definition.items) {
+    value.forEach((item, index) => {
+      errors.push(...validateSchemaValue(item, definition.items, `${label}[${index}]`));
+    });
+  }
+
+  return errors;
+}
+
+function matchesJsonSchemaType(value, expectedType) {
+  if (expectedType === "array") return Array.isArray(value);
+  if (expectedType === "boolean") return typeof value === "boolean";
+  if (expectedType === "object") return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+  if (expectedType === "string") return typeof value === "string" && value.trim() !== "";
+  return true;
+}
+
+function validateCatalogRecordPaths(record) {
+  const errors = [];
+  for (const field of ["source_files", "tests"]) {
+    const values = Array.isArray(record[field]) ? record[field] : [];
+    for (const value of values) {
+      const relValue = asString(value);
+      if (!relValue) continue;
+      const absPath = path.resolve(root, relValue);
+      if (!fs.existsSync(absPath)) {
+        errors.push(`${record.__relPath}: ${asString(record.id)}: ${field} path does not exist: ${relValue}`);
+      }
+    }
+  }
+  return errors;
+}
+
+function validateCatalogRoute(record, appRoutes) {
+  const route = asString(record.route);
+  if (!route || !route.startsWith("/")) return [];
+  if (!["view", "element", "button", "flow"].includes(record.__kind)) return [];
+  if (!appRoutes.includes(normalizeRoute(route))) {
+    return [`${record.__relPath}: ${asString(record.id)}: route "${route}" is not found in ${DEFAULT_APP_ROUTES_FILE}`];
+  }
+  return [];
+}
+
+function validateCatalogReferences(records, byId) {
+  const errors = [];
+  const byKind = new Map();
+  for (const record of records) {
+    if (!byKind.has(record.__kind)) byKind.set(record.__kind, []);
+    byKind.get(record.__kind).push(record);
+  }
+
+  const elementIds = new Set((byKind.get("element") ?? []).map((record) => asString(record.id)).filter(Boolean));
+  const buttonIds = new Set((byKind.get("button") ?? []).map((record) => asString(record.id)).filter(Boolean));
+  const infoIds = new Set((byKind.get("info") ?? []).map((record) => asString(record.id)).filter(Boolean));
+  const viewIds = new Set((byKind.get("view") ?? []).map((record) => asString(record.id)).filter(Boolean));
+  const domainIds = new Set((byKind.get("domain") ?? []).map((record) => asString(record.id)).filter(Boolean));
+
+  for (const record of records) {
+    const id = asString(record.id);
+    if (!id) continue;
+
+    if (!id.startsWith(`${record.__kind}:`) && !(record.__kind === "design-system" && id.startsWith("design-system:"))) {
+      errors.push(`${record.__relPath}: ${id}: id prefix does not match catalog kind ${record.__kind}`);
+    }
+
+    if (record.__kind === "view") {
+      errors.push(...missingReferences(record, "owned_elements", elementIds));
+      errors.push(...missingReferences(record, "primary_actions", buttonIds));
+    }
+
+    if (record.__kind === "element") {
+      if (!viewIds.has(asString(record.parent_view))) {
+        errors.push(`${record.__relPath}: ${id}: parent_view not found: ${asString(record.parent_view)}`);
+      }
+      errors.push(...missingReferences(record, "buttons", buttonIds));
+      errors.push(...missingReferences(record, "infos", infoIds));
+    }
+
+    if (record.__kind === "button" && !elementIds.has(asString(record.owner_element))) {
+      errors.push(`${record.__relPath}: ${id}: owner_element not found: ${asString(record.owner_element)}`);
+    }
+
+    if (record.__kind === "info" && !elementIds.has(asString(record.owner_element))) {
+      errors.push(`${record.__relPath}: ${id}: owner_element not found: ${asString(record.owner_element)}`);
+    }
+
+    if (record.__kind === "flow") {
+      errors.push(...missingReferences(record, "domain_objects", domainIds));
+    }
+
+    if (!byId.has(id)) {
+      errors.push(`${record.__relPath}: ${id}: internal id map error`);
+    }
+  }
+
+  return errors;
+}
+
+function missingReferences(record, field, knownIds) {
+  const errors = [];
+  const values = Array.isArray(record[field]) ? record[field] : [];
+  for (const value of values) {
+    const ref = asString(value);
+    if (ref && !knownIds.has(ref)) {
+      errors.push(`${record.__relPath}: ${asString(record.id)}: ${field} reference not found: ${ref}`);
+    }
+  }
+  return errors;
+}
+
+function validateCatalogSelectors(records) {
+  const errors = [];
+  for (const record of records) {
+    if (record.__kind !== "button") continue;
+    const selector = asString(record.selector);
+    const docIdMatch = selector.match(/^\[data-doc-id=["']([^"']+)["']\]$/);
+    if (!docIdMatch) continue;
+
+    const docId = docIdMatch[1];
+    const sourceFiles = Array.isArray(record.source_files) ? record.source_files : [];
+    const sourceTexts = sourceFiles
+      .map((sourceFile) => path.resolve(root, asString(sourceFile)))
+      .filter((sourceFile) => fs.existsSync(sourceFile) && /\.(tsx?|jsx?)$/i.test(sourceFile))
+      .map((sourceFile) => fs.readFileSync(sourceFile, "utf8"));
+
+    if (sourceTexts.length === 0) continue;
+    const needleDouble = `data-doc-id="${docId}"`;
+    const needleSingle = `data-doc-id='${docId}'`;
+    const hasLiteralSelector = sourceTexts.some((text) => text.includes(needleDouble) || text.includes(needleSingle));
+    const hasDynamicSelector = sourceTexts.some((text) => text.includes("data-doc-id={"))
+      && sourceTexts.some((text) => text.includes(`'${docId}'`) || text.includes(`"${docId}"`) || text.includes(`\`${docId}\``));
+
+    if (!hasLiteralSelector && !hasDynamicSelector) {
+      errors.push(`${record.__relPath}: ${asString(record.id)}: selector data-doc-id is not present in source_files`);
+    }
+  }
+  return errors;
+}
+
+function generateCatalogMarkdown(catalog) {
+  const counts = {};
+  for (const record of catalog.records) {
+    counts[record.__kind] = (counts[record.__kind] ?? 0) + 1;
+  }
+
+  const lines = [];
+  lines.push("# Product Catalog");
+  lines.push("");
+  lines.push("This file is generated by `node scripts/validate-product-docs.mjs` from `docs/product/catalog/**/*.yaml`.");
+  lines.push("");
+  lines.push("## Summary");
+  lines.push("");
+  lines.push(`- Catalog records: ${catalog.records.length}`);
+  for (const kind of ["view", "element", "button", "info", "flow", "domain", "design-system"]) {
+    lines.push(`- ${kind}: ${counts[kind] ?? 0}`);
+  }
+  lines.push(`- Catalog errors: ${catalog.errors.length}`);
+  lines.push("");
+
+  for (const kind of ["view", "element", "button", "info", "flow", "domain", "design-system"]) {
+    const records = (catalog.byKind.get(kind) ?? []).sort((left, right) => asString(left.id).localeCompare(asString(right.id)));
+    lines.push(`## ${catalogKindTitle(kind)}`);
+    lines.push("");
+    if (records.length === 0) {
+      lines.push("_No records._");
+      lines.push("");
+      continue;
+    }
+
+    lines.push("| ID | Title / Component | Route | Source |");
+    lines.push("| --- | --- | --- | --- |");
+    for (const record of records) {
+      const title = asString(record.title) || asString(record.component) || asString(record.type) || "-";
+      const route = asString(record.route) || "-";
+      const source = makeCatalogSourceLink(record);
+      lines.push(`| ${tableCell(asString(record.id))} | ${tableCell(title)} | ${tableCell(route)} | ${tableCell(source)} |`);
+    }
+    lines.push("");
+  }
+
+  lines.push("## Catalog Errors");
+  lines.push("");
+  if (catalog.errors.length === 0) {
+    lines.push("None.");
+  } else {
+    for (const error of catalog.errors) {
+      lines.push(`- ${error}`);
+    }
+  }
+  lines.push("");
+
+  return `${lines.join("\n")}\n`;
+}
+
+function catalogKindTitle(kind) {
+  return kind
+    .split("-")
+    .map((part) => part.slice(0, 1).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function makeCatalogSourceLink(record) {
+  const rel = toPosix(path.relative(path.join(docsDir, GENERATED_DIR), record.__absPath));
+  return `[${record.__relPath}](${encodeURI(rel).replace(/#/g, "%23")})`;
 }
 
 function readAppRoutes(filePath) {

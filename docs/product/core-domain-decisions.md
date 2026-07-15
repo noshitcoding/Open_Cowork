@@ -34,7 +34,7 @@ Open Cowork is a Windows-first, local-first desktop workspace for AI-assisted wo
 | --- | --- | --- |
 | Chat thread | Conversation history with provider settings, permission config, attachments, live tool state, and optional crew/model runner metadata | `chatStore`, SQLite |
 | Project | Lightweight grouping of chats plus reusable instructions and enabled file/folder/link resources | `projectStore`, SQLite |
-| Work task | User-facing task request with runner, prompt, expected output, working folder, schedule metadata, output, and status | `workTasksStore`, localStorage |
+| Work task | User-facing task request with runner, prompt, expected output, working folder, linked chat, schedule metadata, output, and status | `workTasksStore`, SQLite `work_tasks`, LocalStorage fallback |
 | Scheduled task | Backend schedule entry for prompt or crew execution, including snapshots and run history | `coworkStore`, SQLite |
 | Crew | Multi-agent configuration with agents, providers, governance, runtime config, output mode, process type, and access controls | `crewStore`, localStorage plus backend run/definition tables |
 | Memory | Persisted entries, snapshots, hints, user profile data, and optional provider metadata | SQLite |
@@ -69,7 +69,7 @@ The engine evaluates permission mode, tool risk, allow/deny rules, and toolset p
 
 ### CD-007: Persistence is intentionally mixed today
 
-Current behavior uses SQLite for backend-owned records and localStorage for UI/config/editor state. Do not document future centralization as implemented until the code changes.
+Current behavior uses SQLite for backend-owned records, projects, chats, scheduled work, and WorkTasks. LocalStorage remains for UI/config/editor state and as browser fallback or one-time migration backup where documented. Do not document future centralization as implemented until the code changes.
 
 ### CD-008: File, desktop, Office, PDF, shell, and MCP capabilities cross the Tauri boundary
 
