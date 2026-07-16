@@ -295,7 +295,7 @@ const DEFAULT_PREFERENCES: AppPreferences = {
   maxToolCallsPerLoop: 12,
   fallbackToHumanOnRepeatedFailure: true,
   confirmOnCloseWithRunningTasks: true,
-  telemetryEnabled: true,
+  telemetryEnabled: false,
   notificationsEnabled: true,
   soundsEnabled: false,
   launchAtStartup: false,

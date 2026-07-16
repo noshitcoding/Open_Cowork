@@ -1,0 +1,17 @@
+{
+  "name": "Open Cowork",
+  "short_name": "Open Cowork",
+  "description": "Local-first AI agent workspace for Windows with Ollama, MCP tools, tasks, files, and approval controls.",
+  "start_url": "/Open_Cowork/",
+  "display": "standalone",
+  "background_color": "#11100e",
+  "theme_color": "#f47a38",
+  "icons": [
+    {
+      "src": "assets/logo.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
