@@ -14,6 +14,10 @@ import { resolveWorkTaskChatProviderSettings } from '../engine/tasks/workTaskExe
 import { createChatProviderSelection, getChatProviderState } from '../utils/chatProvider'
 import { ContextPanel, DocumentWorkspacePanel, OutputsPanel, ProgressPanel, WorkingFolderPanel } from './RightSidebar'
 import { tr } from '../i18n'
+
+function getThreadDisplayTitle(title: string): string {
+  return title === 'New chat' ? tr('New chat') : title
+}
 import { Activity, ChevronDown, ChevronRight, FolderPlus, MessageSquarePlus, Plus, Trash2 } from 'lucide-react'
 import { getProductRouteById, type ProductRouteId } from '../product/routeRegistry'
 
@@ -530,7 +534,7 @@ export default function LeftSidebar() {
                         className={`sidebar-thread-row thread-draggable${thread.id === activeThreadId ? ' active' : ''}`}
                         onDragStart={(event) => handleThreadDragStart(event, thread.id)}
                         onDragEnd={clearThreadDropState}
-                        onPointerDown={(event) => handleThreadPointerDown(event, thread.id, thread.title)}
+                        onPointerDown={(event) => handleThreadPointerDown(event, thread.id, getThreadDisplayTitle(thread.title))}
                         title={tr("Move chat to another project")}
                       >
                         <button
@@ -540,7 +544,7 @@ export default function LeftSidebar() {
                           onDragEnd={clearThreadDropState}
                           onClick={() => handleOpenThread(thread.id)}
                         >
-                          {thread.title}
+                          {getThreadDisplayTitle(thread.title)}
                         </button>
                       </div>
                     ))}
@@ -577,7 +581,7 @@ export default function LeftSidebar() {
                   className={`sidebar-thread-row thread-draggable${thread.id === activeThreadId ? ' active' : ''}`}
                   onDragStart={(event) => handleThreadDragStart(event, thread.id)}
                   onDragEnd={clearThreadDropState}
-                  onPointerDown={(event) => handleThreadPointerDown(event, thread.id, thread.title)}
+                  onPointerDown={(event) => handleThreadPointerDown(event, thread.id, getThreadDisplayTitle(thread.title))}
                   title={tr("Move chat to a project")}
                 >
                   <button
@@ -587,7 +591,7 @@ export default function LeftSidebar() {
                     onDragEnd={clearThreadDropState}
                     onClick={() => handleOpenThread(thread.id)}
                   >
-                    {thread.title}
+                    {getThreadDisplayTitle(thread.title)}
                   </button>
                   <button
                     type="button"

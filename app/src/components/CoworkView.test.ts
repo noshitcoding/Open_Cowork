@@ -2,9 +2,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   buildProjectInstructionsPromptContext,
   buildProjectLinkPromptContext,
+  formatAssistantFailureContent,
   isAssistantFailureContent,
 } from './CoworkView'
 import type { ProjectResource } from '../stores/projectStore'
+import i18n from '../i18n'
 
 const safeInvokeMock = vi.hoisted(() => vi.fn())
 
@@ -15,7 +17,8 @@ vi.mock('../utils/safeInvoke', () => ({
 }))
 
 describe('CoworkView project context helpers', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    await i18n.changeLanguage('en')
     safeInvokeMock.mockReset()
   })
 
@@ -35,6 +38,16 @@ describe('CoworkView project context helpers', () => {
     expect(isAssistantFailureContent('LLM request failed: timeout')).toBe(true)
     expect(isAssistantFailureContent('ConnectionError: provider unreachable')).toBe(true)
     expect(isAssistantFailureContent('Here is the completed launch checklist.')).toBe(false)
+  })
+
+  it('presents provider failures as localized, actionable chat copy', async () => {
+    await i18n.changeLanguage('de')
+
+    expect(formatAssistantFailureContent(
+      'LLM request failed: OpenRouter API-Key fehlt.\n\nCheck the OpenRouter profile, endpoint, API key, and model in Settings.',
+    )).toBe(
+      'Anfrage fehlgeschlagen: Für OpenRouter fehlt der API-Schlüssel.\n\nÜberprüfe in den Einstellungen das OpenRouter-Profil, den Endpunkt, den API-Schlüssel und das Modell.',
+    )
   })
 
   it('fetches project links manually and reports non-blocking failures', async () => {

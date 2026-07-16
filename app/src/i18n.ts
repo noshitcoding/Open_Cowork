@@ -1479,8 +1479,14 @@ const resources = {
       "Name a custom crew": "Name a custom crew",
       "Search settings": "Search settings",
       "No settings sections match your search": "No settings sections match your search",
-      "Response needs attention": "Response needs attention",
-      "Open settings": "Open settings"
+      "Response needs attention": "Response could not be created",
+      "Open settings": "Open settings",
+      "Request failed": "Request failed",
+      "API key is missing for {{provider}}.": "API key is missing for {{provider}}.",
+      "Model is missing for {{provider}}.": "Model is missing for {{provider}}.",
+      "Check the OpenAI-compatible profile, endpoint, API key, and model in Settings.": "Check the OpenAI-compatible profile, endpoint, API key, and model in Settings.",
+      "Check the OpenRouter profile, endpoint, API key, and model in Settings.": "Check the OpenRouter profile, endpoint, API key, and model in Settings.",
+      "Check the Ollama endpoint, model, and timeout in Settings.": "Check the Ollama endpoint, model, and timeout in Settings."
     }
   },
   "de": {
@@ -1833,7 +1839,7 @@ const resources = {
       "File/Image": "Datei/Bild",
       "Send message or /command...": "Nachricht oder /Befehl senden...",
       "Answer the question here...": "Antwort hier eingeben...",
-      "Next instruction...": "Naechste Anweisung...",
+      "Next instruction...": "Nächste Anweisung...",
       "Message input": "Nachrichteneingabe",
       "⏹ Stopp": "⏹ Stopp",
       "Send": "Senden",
@@ -2424,11 +2430,11 @@ const resources = {
       "layout.toggleSidebar": "Seitenleiste umschalten",
       "layout.backToCowork": "Zurück zu Cowork",
       "layout.closeSidebar": "Seitenleiste schliessen",
-      "layout.resizeSidebar": "Seitenleiste vergroessern oder verkleinern",
+      "layout.resizeSidebar": "Seitenleiste vergrößern oder verkleinern",
       "layout.themeShortcut": "Theme (Ctrl+Shift+L)",
       "layout.toggleTheme": "Theme wechseln",
       "layout.commandPaletteShortcut": "Befehlspalette (Ctrl+K)",
-      "layout.openCommandPalette": "Befehlspalette oeffnen",
+      "layout.openCommandPalette": "Befehlspalette öffnen",
       "shortcuts.title": "Tastenkuerzel",
       "shortcuts.commandPalette": "Befehlspalette",
       "shortcuts.workspace": "Arbeitsbereich",
@@ -2800,7 +2806,7 @@ const resources = {
       "Enable light theme": "Helles Design aktivieren",
       "Expand project": "Projekt aufklappen",
       "Collapse project": "Projekt einklappen",
-      "Delete chat": "Chat loeschen",
+      "Delete chat": "Chat löschen",
       "Delete session": "Session loeschen",
       "Delete crew": "Crew loeschen",
       "Remove source": "Quelle entfernen",
@@ -2908,7 +2914,7 @@ const resources = {
       "Crew setup steps": "Schritte zur Crew-Einrichtung",
       "Current workspace setup": "Aktuelle Einrichtung des Arbeitsbereichs",
       "Define the outcome once, then run it now or schedule it for later.": "Definiere das Ergebnis einmal und starte die Aufgabe sofort oder plane sie für später.",
-      "Describe the outcome below. Open_Cowork will keep the plan, tool activity, approvals, and outputs together.": "Beschreibe unten das gewuenschte Ergebnis. Open_Cowork haelt Plan, Tool-Aktivitaet, Freigaben und Ergebnisse zusammen.",
+      "Describe the outcome below. Open_Cowork will keep the plan, tool activity, approvals, and outputs together.": "Beschreibe unten das gewünschte Ergebnis. Open_Cowork hält Plan, Tool-Aktivität, Freigaben und Ergebnisse zusammen.",
       "Hide list": "Liste ausblenden",
       "Name the crew": "Crew benennen",
       "New chat": "Neuer Chat",
@@ -2918,7 +2924,7 @@ const resources = {
       "Task overview": "Aufgabenübersicht",
       "Task workspace": "Aufgabenbereich",
       "Total": "Gesamt",
-      "What do you want to accomplish?": "Was moechtest du erreichen?",
+      "What do you want to accomplish?": "Was möchtest du erreichen?",
       "Workspace preferences": "Arbeitsbereichseinstellungen",
       "Workspace ready": "Arbeitsbereich bereit",
       "Workspace status": "Arbeitsbereichsstatus",
@@ -2935,8 +2941,14 @@ const resources = {
       "Name a custom crew": "Eigene Crew benennen",
       "Search settings": "Einstellungen durchsuchen",
       "No settings sections match your search": "Keine Einstellungsbereiche passen zu deiner Suche",
-      "Response needs attention": "Antwort benoetigt Aufmerksamkeit",
-      "Open settings": "Einstellungen oeffnen"
+      "Response needs attention": "Antwort konnte nicht erstellt werden",
+      "Open settings": "Einstellungen öffnen",
+      "Request failed": "Anfrage fehlgeschlagen",
+      "API key is missing for {{provider}}.": "Für {{provider}} fehlt der API-Schlüssel.",
+      "Model is missing for {{provider}}.": "Für {{provider}} fehlt das Modell.",
+      "Check the OpenAI-compatible profile, endpoint, API key, and model in Settings.": "Überprüfe in den Einstellungen das OpenAI-kompatible Profil, den Endpunkt, den API-Schlüssel und das Modell.",
+      "Check the OpenRouter profile, endpoint, API key, and model in Settings.": "Überprüfe in den Einstellungen das OpenRouter-Profil, den Endpunkt, den API-Schlüssel und das Modell.",
+      "Check the Ollama endpoint, model, and timeout in Settings.": "Überprüfe in den Einstellungen den Ollama-Endpunkt, das Modell und das Zeitlimit."
     }
   }
 } as const

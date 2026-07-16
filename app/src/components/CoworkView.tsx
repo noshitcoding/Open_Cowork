@@ -142,6 +142,26 @@ export function isAssistantFailureContent(content: string): boolean {
     || normalized.startsWith('timeouterror:')
 }
 
+export function formatAssistantFailureContent(content: string): string {
+  const paragraphs = content.trim().split(/\n\s*\n/)
+  const firstParagraph = paragraphs[0] ?? ''
+  if (!firstParagraph.toLocaleLowerCase().startsWith('llm request failed:')) return content
+
+  const rawDetail = firstParagraph.slice(firstParagraph.indexOf(':') + 1).trim()
+  const missingApiKey = rawDetail.match(/^(.+?) API-Key fehlt\.$/i)
+  const missingModel = rawDetail.match(/^(.+?) Model fehlt\.$/i)
+  const localizedDetail = missingApiKey
+    ? tr('API key is missing for {{provider}}.', { provider: missingApiKey[1] })
+    : missingModel
+      ? tr('Model is missing for {{provider}}.', { provider: missingModel[1] })
+      : rawDetail
+
+  return [
+    `${tr('Request failed')}: ${localizedDetail}`,
+    ...paragraphs.slice(1).map((paragraph) => tr(paragraph)),
+  ].filter(Boolean).join('\n\n')
+}
+
 type McpCallResponse = {
   serverName: string
   toolName: string
@@ -3396,9 +3416,10 @@ export default function CoworkView() {
                   preferLive: liveThinkingBelongsToThread && msg.streaming && msg.id === visibleMessages[visibleMessages.length - 1]?.id,
                 },
               )
-              const displayedContent = resolveDisplayedAssistantContent(content, displayedThinkingContent)
+              const rawDisplayedContent = resolveDisplayedAssistantContent(content, displayedThinkingContent)
               const canRegenerate = msg.role === 'assistant' && findPreviousUserMessage(msg.id) !== null
-              const assistantFailure = msg.role === 'assistant' && isAssistantFailureContent(displayedContent)
+              const assistantFailure = msg.role === 'assistant' && isAssistantFailureContent(rawDisplayedContent)
+              const displayedContent = assistantFailure ? formatAssistantFailureContent(rawDisplayedContent) : rawDisplayedContent
 
               // Check if this assistant message should be collapsed
               const isCollapsed = msg.role === 'assistant' && (() => {

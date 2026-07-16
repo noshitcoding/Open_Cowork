@@ -8,6 +8,7 @@ import { useCoworkStore } from '../stores/coworkStore'
 import { useEngineStore } from '../stores/engineStore'
 import { useProjectStore } from '../stores/projectStore'
 import { getProductRouteById } from '../product/routeRegistry'
+import i18n from '../i18n'
 
 const navigateMock = vi.fn()
 
@@ -40,7 +41,8 @@ function createMockDataTransfer(): DataTransfer {
 }
 
 describe('LeftSidebar', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    await i18n.changeLanguage('en')
     navigateMock.mockReset()
 
     useChatStore.setState({
@@ -161,6 +163,30 @@ describe('LeftSidebar', () => {
     navigateMock.mockClear()
     fireEvent.click(screen.getByRole('button', { name: 'Crew Studio' }))
     expect(navigateMock).toHaveBeenLastCalledWith(getProductRouteById('crew').path)
+  })
+
+  it('localizes the canonical empty chat title without changing stored data', async () => {
+    await i18n.changeLanguage('de')
+    useChatStore.setState({
+      threads: [{
+        id: 'thread-empty',
+        title: 'New chat',
+        messages: [],
+        createdAt: 10,
+        updatedAt: 10,
+      }],
+      activeThreadId: 'thread-empty',
+    })
+
+    render(
+      <MemoryRouter>
+        <LeftSidebar />
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByRole('button', { name: /^Neuer Chat$/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Chat löschen' })).toBeInTheDocument()
+    expect(useChatStore.getState().threads[0]?.title).toBe('New chat')
   })
 
   it('moves a chat into a project via drag and drop', () => {
