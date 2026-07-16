@@ -83,13 +83,29 @@ fn suppress_command_window(command: &mut Command) {
 #[cfg(not(target_os = "windows"))]
 fn suppress_command_window(_command: &mut Command) {}
 
-const LOCAL_DOCS_MCP_COMMAND: &str = "open-cowork-docs-mcp";
-const LOCAL_SCREENSHOT_MCP_COMMAND: &str = "open-cowork-screenshot-mcp";
+const LOCAL_DOCS_MCP_COMMAND: &str = "localai-cowork-docs-mcp";
+const LEGACY_LOCAL_DOCS_MCP_COMMAND: &str = "open-cowork-docs-mcp";
+const LOCAL_SCREENSHOT_MCP_COMMAND: &str = "localai-cowork-screenshot-mcp";
+const LEGACY_LOCAL_SCREENSHOT_MCP_COMMAND: &str = "open-cowork-screenshot-mcp";
 const SCREENSHOT_DATA_URL_PREFIX: &str = "data:image/png;base64,";
 const SCREENSHOT_REUSE_WINDOW_MS: i64 = 20_000;
 const POLICY_FLAG_STRICT: &str = "strictPolicyEnforcement";
 const POLICY_FLAG_TOOL_DISPATCHER: &str = "allowToolDispatcher";
 const POLICY_FLAG_MCP: &str = "allowMcpToolCalls";
+
+fn is_local_docs_mcp_command(command: &str) -> bool {
+    matches!(
+        command.trim(),
+        LOCAL_DOCS_MCP_COMMAND | LEGACY_LOCAL_DOCS_MCP_COMMAND
+    )
+}
+
+fn is_local_screenshot_mcp_command(command: &str) -> bool {
+    matches!(
+        command.trim(),
+        LOCAL_SCREENSHOT_MCP_COMMAND | LEGACY_LOCAL_SCREENSHOT_MCP_COMMAND
+    )
+}
 const POLICY_FLAG_WEB_FETCH: &str = "allowWebFetch";
 const POLICY_FLAG_FILE_READ: &str = "allowFileReadExtraction";
 const POLICY_FLAG_AUTO_COMPACT: &str = "autoCompactLongContext";
@@ -3133,7 +3149,7 @@ fn local_docs_mcp_probe(name: String) -> mcp::McpProbeResponse {
     mcp::McpProbeResponse {
         server_name: name,
         protocol_version: Some("2024-11-05".to_string()),
-        server_info: Some("Open_Cowork Local Docs MCP 0.1.0".to_string()),
+        server_info: Some("LocalAI Cowork Local Docs MCP 0.1.0".to_string()),
         tools: vec![
             mcp::McpTool {
                 name: "extract_full_text".to_string(),
@@ -3159,7 +3175,7 @@ fn local_screenshot_mcp_probe(name: String) -> mcp::McpProbeResponse {
     mcp::McpProbeResponse {
     server_name: name,
     protocol_version: Some("2024-11-05".to_string()),
-    server_info: Some("Open_Cowork Screenshot MCP 0.1.0".to_string()),
+    server_info: Some("LocalAI Cowork Screenshot MCP 0.1.0".to_string()),
     tools: vec![
       mcp::McpTool {
         name: "list_screens".to_string(),
@@ -3182,9 +3198,16 @@ fn escape_powershell_single_quoted(value: &str) -> String {
 }
 
 fn run_powershell_script(script: &str) -> Result<String, String> {
-    let allow_bypass = std::env::var("OPEN_COWORK_ALLOW_POWERSHELL_BYPASS")
-        .map(|value| value == "1")
-        .unwrap_or(false);
+    let allow_bypass = [
+        "LOCALAI_COWORK_ALLOW_POWERSHELL_BYPASS",
+        "OPEN_COWORK_ALLOW_POWERSHELL_BYPASS",
+    ]
+    .iter()
+    .any(|name| {
+        std::env::var(name)
+            .map(|value| value == "1")
+            .unwrap_or(false)
+    });
     let policies: Vec<&str> = if allow_bypass {
         vec!["RemoteSigned", "Bypass"]
     } else {
@@ -3243,7 +3266,7 @@ Add-Type @"
 using System;
 using System.Text;
 using System.Runtime.InteropServices;
-public static class OpenCoworkDesktop {
+public static class LocalAICoworkDesktop {
   public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
   [StructLayout(LayoutKind.Sequential)]
   public struct RECT {
@@ -3289,31 +3312,31 @@ public static class OpenCoworkDesktop {
 "@
 
 try {
-  [void][OpenCoworkDesktop]::SetProcessDpiAwarenessContext([IntPtr]::new(-4))
+  [void][LocalAICoworkDesktop]::SetProcessDpiAwarenessContext([IntPtr]::new(-4))
 } catch {
   try {
-    [void][OpenCoworkDesktop]::SetProcessDPIAware()
+    [void][LocalAICoworkDesktop]::SetProcessDPIAware()
   } catch {
     # Best effort only. Desktop automation can continue without this on older systems.
   }
 }
 
-function ConvertTo-OpenCoworkWindow {
+function ConvertTo-LocalAICoworkWindow {
   param([IntPtr]$Handle)
 
-  if (-not [OpenCoworkDesktop]::IsWindowVisible($Handle)) { return $null }
+  if (-not [LocalAICoworkDesktop]::IsWindowVisible($Handle)) { return $null }
 
-  $title = [OpenCoworkDesktop]::ReadWindowText($Handle)
+  $title = [LocalAICoworkDesktop]::ReadWindowText($Handle)
   if ([string]::IsNullOrWhiteSpace($title)) { return $null }
 
-  $rect = New-Object OpenCoworkDesktop+RECT
-  [void][OpenCoworkDesktop]::GetWindowRect($Handle, [ref]$rect)
+  $rect = New-Object LocalAICoworkDesktop+RECT
+  [void][LocalAICoworkDesktop]::GetWindowRect($Handle, [ref]$rect)
   $width = $rect.Right - $rect.Left
   $height = $rect.Bottom - $rect.Top
   if ($width -le 0 -or $height -le 0) { return $null }
 
   $processId = 0
-  [void][OpenCoworkDesktop]::GetWindowThreadProcessId($Handle, [ref]$processId)
+  [void][LocalAICoworkDesktop]::GetWindowThreadProcessId($Handle, [ref]$processId)
   if ($processId -le 0) { return $null }
 
   try {
@@ -3332,25 +3355,25 @@ function ConvertTo-OpenCoworkWindow {
     y = $rect.Top
     width = $width
     height = $height
-    isForeground = ($Handle -eq [OpenCoworkDesktop]::GetForegroundWindow())
+    isForeground = ($Handle -eq [LocalAICoworkDesktop]::GetForegroundWindow())
   }
 }
 
-function Get-OpenCoworkWindows {
+function Get-LocalAICoworkWindows {
   $items = New-Object System.Collections.Generic.List[object]
-  $callback = [OpenCoworkDesktop+EnumWindowsProc]{
+  $callback = [LocalAICoworkDesktop+EnumWindowsProc]{
     param([IntPtr]$hWnd, [IntPtr]$lParam)
-    $window = ConvertTo-OpenCoworkWindow -Handle $hWnd
+    $window = ConvertTo-LocalAICoworkWindow -Handle $hWnd
     if ($null -ne $window) {
       [void]$items.Add($window)
     }
     return $true
   }
-  [void][OpenCoworkDesktop]::EnumWindows($callback, [IntPtr]::Zero)
+  [void][LocalAICoworkDesktop]::EnumWindows($callback, [IntPtr]::Zero)
   return $items
 }
 
-function Test-OpenCoworkWindowMatch {
+function Test-LocalAICoworkWindowMatch {
   param(
     $Window,
     [string]$Title,
@@ -3490,7 +3513,7 @@ fn desktop_list_windows_internal() -> Result<Vec<DesktopWindowInfo>, String> {
     let script = format!(
         r#"
 {}
-Get-OpenCoworkWindows | Select-Object title, processId, processName, handle, x, y, width, height, isForeground | ConvertTo-Json -Compress
+Get-LocalAICoworkWindows | Select-Object title, processId, processName, handle, x, y, width, height, isForeground | ConvertTo-Json -Compress
 "#,
         desktop_powershell_prelude()
     );
@@ -3519,8 +3542,8 @@ $title = '{title}'
 $processName = '{process_name}'
 $processId = {process_id}
 $exactMatch = {exact_match}
-$match = Get-OpenCoworkWindows |
-  Where-Object {{ Test-OpenCoworkWindowMatch $_ $title $processName $processId $exactMatch }} |
+$match = Get-LocalAICoworkWindows |
+  Where-Object {{ Test-LocalAICoworkWindowMatch $_ $title $processName $processId $exactMatch }} |
   Select-Object -First 1
 if ($null -eq $match) {{
   throw 'desktop window not found'
@@ -3984,13 +4007,13 @@ async fn desktop_focus_window(request: DesktopWindowRequest) -> Result<DesktopWi
         r#"
 {}
 $handle = [IntPtr]::new([Int64]::Parse('{handle_value}', [System.Globalization.NumberStyles]::HexNumber))
-[void][OpenCoworkDesktop]::ShowWindow($handle, 5)
+[void][LocalAICoworkDesktop]::ShowWindow($handle, 5)
 Start-Sleep -Milliseconds 120
 [void][Microsoft.VisualBasic.Interaction]::AppActivate({process_id})
 Start-Sleep -Milliseconds 120
-[void][OpenCoworkDesktop]::SetForegroundWindow($handle)
+[void][LocalAICoworkDesktop]::SetForegroundWindow($handle)
 Start-Sleep -Milliseconds 150
-$window = ConvertTo-OpenCoworkWindow -Handle $handle
+$window = ConvertTo-LocalAICoworkWindow -Handle $handle
 if ($null -eq $window) {{
   throw 'desktop window disappeared after focus'
 }}
@@ -4057,12 +4080,12 @@ async fn desktop_click(request: DesktopClickRequest) -> Result<DesktopActionResp
     let script = format!(
         r#"
 {}
-[void][OpenCoworkDesktop]::SetCursorPos({x}, {y})
+[void][LocalAICoworkDesktop]::SetCursorPos({x}, {y})
 Start-Sleep -Milliseconds 60
 for ($i = 0; $i -lt {iterations}; $i++) {{
-  [OpenCoworkDesktop]::mouse_event({down_flag}, 0, 0, 0, [UIntPtr]::Zero)
+  [LocalAICoworkDesktop]::mouse_event({down_flag}, 0, 0, 0, [UIntPtr]::Zero)
   Start-Sleep -Milliseconds 25
-  [OpenCoworkDesktop]::mouse_event({up_flag}, 0, 0, 0, [UIntPtr]::Zero)
+  [LocalAICoworkDesktop]::mouse_event({up_flag}, 0, 0, 0, [UIntPtr]::Zero)
   Start-Sleep -Milliseconds 90
 }}
 [PSCustomObject]@{{ ok = $true; action = 'click' }} | ConvertTo-Json -Compress
@@ -4086,7 +4109,7 @@ async fn desktop_move_mouse(
     let script = format!(
         r#"
 {}
-[void][OpenCoworkDesktop]::SetCursorPos({x}, {y})
+[void][LocalAICoworkDesktop]::SetCursorPos({x}, {y})
 [PSCustomObject]@{{ ok = $true; action = 'move_mouse' }} | ConvertTo-Json -Compress
 "#,
         desktop_powershell_prelude(),
@@ -4199,7 +4222,7 @@ foreach ($entry in $resolved) {{
 async fn desktop_scroll(request: DesktopScrollRequest) -> Result<DesktopActionResponse, String> {
     ensure_windows_desktop_support()?;
     let maybe_move = match (request.x, request.y) {
-        (Some(x), Some(y)) => format!("[void][OpenCoworkDesktop]::SetCursorPos({}, {})", x, y),
+        (Some(x), Some(y)) => format!("[void][LocalAICoworkDesktop]::SetCursorPos({}, {})", x, y),
         _ => String::new(),
     };
     let script = format!(
@@ -4207,7 +4230,7 @@ async fn desktop_scroll(request: DesktopScrollRequest) -> Result<DesktopActionRe
 {}
 {maybe_move}
 Start-Sleep -Milliseconds 60
-[OpenCoworkDesktop]::mouse_event(0x0800, 0, 0, [uint32]([int]{scroll_y}), [UIntPtr]::Zero)
+[LocalAICoworkDesktop]::mouse_event(0x0800, 0, 0, [uint32]([int]{scroll_y}), [UIntPtr]::Zero)
 [PSCustomObject]@{{ ok = $true; action = 'scroll' }} | ConvertTo-Json -Compress
 "#,
         desktop_powershell_prelude(),
@@ -4327,11 +4350,11 @@ async fn mcp_runtime_list() -> Result<Vec<McpRuntimeServerStatus>, String> {
 
 #[tauri::command]
 async fn mcp_probe(request: McpServerRequest) -> Result<mcp::McpProbeResponse, String> {
-    if request.command.trim() == LOCAL_DOCS_MCP_COMMAND {
+    if is_local_docs_mcp_command(&request.command) {
         return Ok(local_docs_mcp_probe(request.name));
     }
 
-    if request.command.trim() == LOCAL_SCREENSHOT_MCP_COMMAND {
+    if is_local_screenshot_mcp_command(&request.command) {
         return Ok(local_screenshot_mcp_probe(request.name));
     }
 
@@ -4360,11 +4383,11 @@ async fn mcp_call_tool(
         enforce_worker_sandbox_flag(&sandbox, sandbox.allow_mcp, "mcp-aufrufe")?;
     }
 
-    if request.command.trim() == LOCAL_DOCS_MCP_COMMAND {
+    if is_local_docs_mcp_command(&request.command) {
         return local_docs_mcp_call(request, state);
     }
 
-    if request.command.trim() == LOCAL_SCREENSHOT_MCP_COMMAND {
+    if is_local_screenshot_mcp_command(&request.command) {
         return local_screenshot_mcp_call(request, &app);
     }
 
@@ -7099,7 +7122,7 @@ async fn probe_connector_method(
 ) -> Result<StatusCode, String> {
     let mut request = client
         .request(method, url)
-        .header("User-Agent", "Open-Cowork/1.0");
+        .header("User-Agent", "LocalAI-Cowork/1.0");
 
     if let Some(key) = api_key.filter(|value| !value.trim().is_empty()) {
         request = request.header("Authorization", format!("Bearer {}", key.trim()));
@@ -7245,14 +7268,14 @@ fn apply_provider_headers(
     provider_kind: &str,
     api_key: Option<&str>,
 ) -> reqwest::RequestBuilder {
-    request = request.header("User-Agent", "Open-Cowork/1.0");
+    request = request.header("User-Agent", "LocalAI-Cowork/1.0");
     if let Some(key) = api_key.filter(|value| !value.trim().is_empty()) {
         request = request.header("Authorization", format!("Bearer {}", key.trim()));
     }
     if provider_kind.eq_ignore_ascii_case("openrouter") {
         request = request
-            .header("HTTP-Referer", "https://open-cowork.local")
-            .header("X-Title", "Open Cowork");
+            .header("HTTP-Referer", "https://localai-cowork.local")
+            .header("X-Title", "LocalAI Cowork");
     }
     request
 }
@@ -8018,7 +8041,7 @@ async fn openai_compatible_chat_completion(
 
     let mut call = client
         .post(endpoint)
-        .header("User-Agent", "Open-Cowork/1.0")
+        .header("User-Agent", "LocalAI-Cowork/1.0")
         .body(request.body);
 
     for (name, value) in request.headers {
@@ -9806,17 +9829,17 @@ fn emit_exec_chunk(app: &tauri::AppHandle, stream_id: Option<&str>, channel: &st
     }
 }
 
-const EXEC_CURRENT_CWD_MARKER: &str = "__OPEN_COWORK_CURRENT_CWD__=";
+const EXEC_CURRENT_CWD_MARKER: &str = "__LOCALAI_COWORK_CURRENT_CWD__=";
 
 fn build_exec_command_text(command_text: &str, force_posix_shell: bool) -> String {
     if cfg!(target_os = "windows") && !force_posix_shell {
         format!(
-            "{command_text}; $openCoworkExit = if ($null -ne $LASTEXITCODE) {{ $LASTEXITCODE }} elseif ($?) {{ 0 }} else {{ 1 }}; Write-Output ('{marker}' + (Get-Location).Path); exit $openCoworkExit",
+            "{command_text}; $localAiCoworkExit = if ($null -ne $LASTEXITCODE) {{ $LASTEXITCODE }} elseif ($?) {{ 0 }} else {{ 1 }}; Write-Output ('{marker}' + (Get-Location).Path); exit $localAiCoworkExit",
             marker = EXEC_CURRENT_CWD_MARKER,
         )
     } else {
         format!(
-            "{command_text}; open_cowork_exit=$?; printf '%s%s\\n' '{marker}' \"$PWD\"; exit $open_cowork_exit",
+            "{command_text}; localai_cowork_exit=$?; printf '%s%s\\n' '{marker}' \"$PWD\"; exit $localai_cowork_exit",
             marker = EXEC_CURRENT_CWD_MARKER,
         )
     }
@@ -9894,6 +9917,9 @@ fn resolve_exec_runtime(
                 })
                 .transpose()?;
             env_vars.extend(parse_env_vars_json(resolved_env.as_deref())?);
+            env_vars.insert("LOCALAI_COWORK_SANDBOX_ID".to_string(), sandbox.id.clone());
+            env_vars.insert("LOCALAI_COWORK_RUN_ID".to_string(), sandbox.run_id.clone());
+            // Legacy aliases keep existing user scripts working after the product rename.
             env_vars.insert("OPEN_COWORK_SANDBOX_ID".to_string(), sandbox.id.clone());
             env_vars.insert("OPEN_COWORK_RUN_ID".to_string(), sandbox.run_id.clone());
             runtime_mode = Some(sandbox.mode.clone());
@@ -10969,7 +10995,7 @@ mod tests {
 
     fn security_test_root(label: &str) -> PathBuf {
         let root = std::env::temp_dir().join(format!(
-            "open-cowork-security-{}-{}",
+            "localai-cowork-security-{}-{}",
             label,
             uuid::Uuid::new_v4()
         ));

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Open Cowork Design System Reference",
+  "title": "LocalAI Cowork Design System Reference",
   "type": "object",
   "required": [
     "id",

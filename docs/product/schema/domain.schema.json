@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Open Cowork Domain Object",
+  "title": "LocalAI Cowork Domain Object",
   "type": "object",
   "required": [
     "id",

@@ -8,7 +8,7 @@ last_updated: 2026-07-10
 last_verified: 2026-07-10
 endpoint: Tauri IPC credential_set, credential_get, credential_delete, and secure_config_migrate; protected backend upsert and runtime commands
 purpose: Keep provider, connector, crew, engine, MCP, terminal, memory-provider, tool-gateway, and sandbox secrets out of browser persistence, SQLite, exports, logs, and audit files.
-userStory: As a user I can restart Open Cowork without re-entering credentials or exposing them in ordinary application data.
+userStory: As a user I can restart LocalAI Cowork without re-entering credentials or exposing them in ordinary application data.
 visibleText: secure-storage startup failure and field-level save failure
 sizeToken: none
 states: initializing, ready, unavailable, migrating, saved, deleted, save-failed
@@ -50,4 +50,4 @@ Backend list and get commands return only reference markers. Terminal and sandbo
 
 Application log details and frontend audit payloads pass through recursive redaction before persistence or IPC. The Rust audit writer repeats redaction so direct backend events have the same boundary. Sensitive key families, complete environment/header objects, bearer credentials, and credential-like query parameters are replaced with `[REDACTED]`; circular or excessively deep frontend structures are truncated. Redaction preserves operational values such as status, duration, counts, and non-sensitive endpoint origins.
 
-Deleting a profile, connector-owned value, MCP server, or crew credential deletes the corresponding OS entry before removing its metadata where the product exposes a delete action. An unavailable credential store is a release-blocking startup condition for the Windows desktop build. Recovery consists of unlocking or repairing Windows Credential Manager and retrying; Open Cowork never falls back to writing the value into localStorage or SQLite.
+Deleting a profile, connector-owned value, MCP server, or crew credential deletes the corresponding OS entry before removing its metadata where the product exposes a delete action. An unavailable credential store is a release-blocking startup condition for the Windows desktop build. Recovery consists of unlocking or repairing Windows Credential Manager and retrying; LocalAI Cowork never falls back to writing the value into localStorage or SQLite.

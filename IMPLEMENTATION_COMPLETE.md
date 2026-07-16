@@ -1,7 +1,7 @@
 # Implementation Complete: Per-Chat/Per-Task Permission Mode and Allowed Directories
 
 ## Summary
-Successfully implemented per-chat and per-task permission configuration for the Open_Cowork application. Users can now set different permission modes (default, plan, bypass, strict) and allowed directories for each chat thread independently.
+Successfully implemented per-chat and per-task permission configuration for the LocalAI Cowork application. Users can now set different permission modes (default, plan, bypass, strict) and allowed directories for each chat thread independently.
 
 ## Changes Made
 
@@ -28,7 +28,7 @@ Successfully implemented per-chat and per-task permission configuration for the 
    - Mode selector (default/plan/bypass/strict)
    - Allowed directories list (add/remove)
    - Save/cancel buttons
-   
+
 7. **CoworkView.tsx** - Updated to pass thread's permission config to engine
 8. **WelcomeScreen.tsx** - Updated to pass thread's permission config to engine
 

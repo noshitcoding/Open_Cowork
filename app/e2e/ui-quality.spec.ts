@@ -103,7 +103,7 @@ test('guided onboarding stays discoverable and prepares a safe first task', asyn
   await page.setViewportSize({ width: 900, height: 650 })
   await openStableSurface(page, PRODUCT_SURFACES[0])
 
-  await expect(page.getByRole('heading', { name: 'Set up Open_Cowork' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Set up LocalAI Cowork' })).toBeVisible()
   await page.getByRole('button', { name: 'Run context' }).click()
   await expect(page.getByRole('complementary', { name: 'Run context' })).toBeVisible()
   await page.getByRole('button', { name: 'Close run context' }).click()

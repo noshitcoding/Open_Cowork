@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://noshitcoding.github.io/Open_Cowork/sitemap.xml
+Sitemap: https://noshitcoding.github.io/LocalAI-Cowork/sitemap.xml

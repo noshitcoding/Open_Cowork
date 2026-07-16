@@ -4,7 +4,7 @@ Status: implemented and covered by automated tests as of 2026-07-16.
 
 ## Scope
 
-OpenCowork adopts the durable-memory behavior that matters for local agent work while keeping its SQLite and Tauri architecture. This is behavioral compatibility, not a byte-for-byte copy of Hermes Agent.
+LocalAI Cowork adopts the durable-memory behavior that matters for local agent work while keeping its SQLite and Tauri architecture. This is behavioral compatibility, not a byte-for-byte copy of Hermes Agent.
 
 ## Memory lifecycle
 
@@ -17,7 +17,7 @@ OpenCowork adopts the durable-memory behavior that matters for local agent work 
 
 ## Compatibility matrix
 
-| Capability | OpenCowork implementation | Verification |
+| Capability | LocalAI Cowork implementation | Verification |
 | --- | --- | --- |
 | Bounded curated agent memory | 2,200 Unicode characters | Rust capacity tests |
 | Bounded user profile | 1,375 Unicode characters | Shared mutation implementation and usage response |
@@ -40,6 +40,6 @@ The registry test invokes every registered command without arguments, verifies u
 
 ## Intentional differences
 
-- OpenCowork stores curated memory in SQLite and renders a session snapshot; `MEMORY.md` and `USER.md` remain supported project-context files.
+- LocalAI Cowork stores curated memory in SQLite and renders a session snapshot; `MEMORY.md` and `USER.md` remain supported project-context files.
 - Automatic capture writes only to a draft knowledge base. Promotion to curated memory remains explicit or model-driven so a heuristic cannot silently rewrite canonical long-term memory.
-- OpenCowork keeps its existing memory panel, shared-knowledge categories, runtime instructions, and provider records alongside the Hermes-style core.
+- LocalAI Cowork keeps its existing memory panel, shared-knowledge categories, runtime instructions, and provider records alongside the Hermes-style core.

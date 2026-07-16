@@ -1,6 +1,6 @@
 # Security Policy
 
-Open Cowork can access local files, terminals, model providers, MCP servers, and other tools selected by the user. Please report security problems privately so a fix can be prepared before public disclosure.
+LocalAI Cowork can access local files, terminals, model providers, MCP servers, and other tools selected by the user. Please report security problems privately so a fix can be prepared before public disclosure.
 
 ## Supported Versions
 
@@ -12,7 +12,7 @@ Target-specific exceptions are published as OpenVEX documents under `.vex/` and 
 
 ## Report A Vulnerability
 
-Use [GitHub private vulnerability reporting](https://github.com/noshitcoding/Open_Cowork/security/advisories/new).
+Use [GitHub private vulnerability reporting](https://github.com/noshitcoding/LocalAI-Cowork/security/advisories/new).
 
 Please include:
 

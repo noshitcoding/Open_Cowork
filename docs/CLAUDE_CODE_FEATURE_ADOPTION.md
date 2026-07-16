@@ -1,4 +1,4 @@
-# Claude-Code Feature Adoption (Open_Cowork)
+# Claude-Code Feature Adoption (LocalAI Cowork)
 
 Stand: 2026-04-16
 Quelle: `andere_ai_agenten_beispiele/claude-code-main/claude-code-main/README.md` + Einstieg in `src/main.tsx`, `src/tools.ts`.
@@ -43,7 +43,7 @@ Quelle: `andere_ai_agenten_beispiele/claude-code-main/claude-code-main/README.md
 - Command-like interactions
 - Modal workflows and operational status feedback
 
-## 2) Jetzt in Open_Cowork integriert (dieser Slice)
+## 2) Jetzt in LocalAI Cowork integriert (dieser Slice)
 
 1. Claude-Kompatibilitaetsprofil im Produkt-Store
 - Plan mode toggle

@@ -37,4 +37,4 @@ When an existing non-empty database is older than schema version `23`, the SQLit
 
 All required schema versions run inside one `BEGIN IMMEDIATE` transaction. Any failed DDL, data update, index creation, or version write rolls back the entire upgrade. The database is checked again after commit. Tests inject a failure after a successful index creation and prove that neither the partial index nor a new schema version survives.
 
-These backups contain the same sensitive local content as the primary database and inherit the app-data directory trust boundary. Automated restoration and user-facing recovery selection are separate release work; operators must not overwrite the primary database while Open Cowork is running.
+These backups contain the same sensitive local content as the primary database and inherit the app-data directory trust boundary. Automated restoration and user-facing recovery selection are separate release work; operators must not overwrite the primary database while LocalAI Cowork is running.

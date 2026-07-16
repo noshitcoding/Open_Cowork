@@ -1,4 +1,4 @@
-title = "Open Cowork secret scanning"
+title = "LocalAI Cowork secret scanning"
 
 [extend]
 useDefault = true

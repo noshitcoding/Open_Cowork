@@ -65,7 +65,7 @@ export default function GuidedOnboarding({
         <div className="cowork-empty-start-mark" aria-hidden="true"><Sparkles size={22} /></div>
         <span className="onboarding-kicker">{modelReady ? tr('Ready') : tr('Needs setup')}</span>
         <h1 id="cowork-empty-start-title">{tr('What do you want to accomplish?')}</h1>
-        <p>{tr('Describe the outcome below. Open_Cowork will keep the plan, tool activity, approvals, and outputs together.')}</p>
+        <p>{tr('Describe the outcome below. LocalAI Cowork will keep the plan, tool activity, approvals, and outputs together.')}</p>
         <div className="cowork-empty-start-status" aria-label={tr('Current workspace setup')}>
           <span><strong>{providerLabel}</strong>{model || tr('No model selected')}</span>
           <span><strong>{tr('Context')}</strong>{folderReady ? tr('Folder connected') : tr('No folder connected')}</span>
@@ -104,7 +104,7 @@ export default function GuidedOnboarding({
         <div className="onboarding-brand-mark" aria-hidden="true"><Sparkles size={21} /></div>
         <div className="onboarding-heading">
           <span className="onboarding-kicker">{tr('Getting started')}</span>
-          <h1 id="guided-onboarding-title">{tr('Set up Open_Cowork')}</h1>
+          <h1 id="guided-onboarding-title">{tr('Set up LocalAI Cowork')}</h1>
           <p>{tr('Start confidently in four short steps.')}</p>
         </div>
         <button type="button" className="onboarding-dismiss" onClick={() => collapse('dismissed')} aria-label={tr('Dismiss onboarding')}>
@@ -192,7 +192,7 @@ export default function GuidedOnboarding({
               <div className="onboarding-stage-icon" aria-hidden="true"><ShieldCheck size={23} /></div>
               <div>
                 <h2>{tr('Stay in control of every action')}</h2>
-                <p>{tr('Open_Cowork can pause before sensitive actions. You can approve, reject, or stop a run at any time.')}</p>
+                <p>{tr('LocalAI Cowork can pause before sensitive actions. You can approve, reject, or stop a run at any time.')}</p>
                 <div className="onboarding-permission-value">
                   <span>{tr('Current permission mode')}</span>
                   <strong>{permissionLabel}</strong>

@@ -4,7 +4,7 @@
 
 ## Uebersicht
 
-Open_Cowork verwendet eine lokale Desktop-Architektur mit klarer Trennung zwischen UI und privilegierten Operationen.
+LocalAI Cowork verwendet eine lokale Desktop-Architektur mit klarer Trennung zwischen UI und privilegierten Operationen.
 
 ```text
 [React UI (Zustand Stores)]

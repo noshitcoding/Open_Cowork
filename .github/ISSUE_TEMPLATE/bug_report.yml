@@ -1,5 +1,5 @@
 name: Bug report
-description: Report a reproducible problem in Open Cowork
+description: Report a reproducible problem in LocalAI Cowork
 title: "[Bug]: "
 labels:
   - bug
@@ -8,12 +8,12 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for helping improve Open Cowork. Search existing issues first and never paste API keys, tokens, private file contents, or personal data.
+        Thanks for helping improve LocalAI Cowork. Search existing issues first and never paste API keys, tokens, private file contents, or personal data.
 
   - type: input
     id: version
     attributes:
-      label: Open Cowork version
+      label: LocalAI Cowork version
       description: Find the version in Settings or the release name.
       placeholder: v0.1.7
     validations:

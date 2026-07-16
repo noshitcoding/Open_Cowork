@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "C:\\Users\\Riege\\.local\\bin\\graphify.EXE hook-check"
+            "command": "uv tool run --from graphifyy graphify hook-check"
           }
         ]
       }

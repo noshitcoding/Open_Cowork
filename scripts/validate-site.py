@@ -13,7 +13,7 @@ from urllib.parse import unquote, urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 SITE = ROOT / "site"
-PROJECT_PREFIX = "/Open_Cowork/"
+PROJECT_PREFIX = "/LocalAI-Cowork/"
 PRIVATE_IPV4 = re.compile(
     r"\b(?:10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2})\b"
 )
@@ -104,7 +104,7 @@ def validate_html(path: Path, errors: list[str]) -> None:
     if 'name="robots" content="noindex"' not in text:
         if not parser.description:
             errors.append(f"{relative}: missing meta description")
-        if not parser.canonical.startswith("https://noshitcoding.github.io/Open_Cowork/"):
+        if not parser.canonical.startswith("https://noshitcoding.github.io/LocalAI-Cowork/"):
             errors.append(f"{relative}: missing or unexpected canonical URL")
 
     lowered = text.lower()
@@ -131,6 +131,13 @@ def main() -> int:
     required = (
         SITE / "index.html",
         SITE / "de" / "index.html",
+        SITE / "claude-cowork-alternative" / "index.html",
+        SITE / "copilot-cowork-alternative" / "index.html",
+        SITE / "open-source-ai-cowork" / "index.html",
+        SITE / "local-ai-agent-windows" / "index.html",
+        SITE / "ollama-ai-agent" / "index.html",
+        SITE / "private-ai-workspace" / "index.html",
+        SITE / "ai-coworker-desktop" / "index.html",
         SITE / "privacy.html",
         SITE / "de" / "datenschutz.html",
         SITE / "robots.txt",
@@ -145,14 +152,21 @@ def main() -> int:
         validate_html(path, errors)
 
     robots = (SITE / "robots.txt").read_text(encoding="utf-8")
-    if "Sitemap: https://noshitcoding.github.io/Open_Cowork/sitemap.xml" not in robots:
+    if "Sitemap: https://noshitcoding.github.io/LocalAI-Cowork/sitemap.xml" not in robots:
         errors.append("site/robots.txt: sitemap URL is missing")
 
     sitemap = (SITE / "sitemap.xml").read_text(encoding="utf-8")
     for url in (
-        "https://noshitcoding.github.io/Open_Cowork/",
-        "https://noshitcoding.github.io/Open_Cowork/de/",
-        "https://noshitcoding.github.io/Open_Cowork/privacy.html",
+        "https://noshitcoding.github.io/LocalAI-Cowork/",
+        "https://noshitcoding.github.io/LocalAI-Cowork/de/",
+        "https://noshitcoding.github.io/LocalAI-Cowork/claude-cowork-alternative/",
+        "https://noshitcoding.github.io/LocalAI-Cowork/copilot-cowork-alternative/",
+        "https://noshitcoding.github.io/LocalAI-Cowork/open-source-ai-cowork/",
+        "https://noshitcoding.github.io/LocalAI-Cowork/local-ai-agent-windows/",
+        "https://noshitcoding.github.io/LocalAI-Cowork/ollama-ai-agent/",
+        "https://noshitcoding.github.io/LocalAI-Cowork/private-ai-workspace/",
+        "https://noshitcoding.github.io/LocalAI-Cowork/ai-coworker-desktop/",
+        "https://noshitcoding.github.io/LocalAI-Cowork/privacy.html",
     ):
         if url not in sitemap:
             errors.append(f"site/sitemap.xml: missing {url}")

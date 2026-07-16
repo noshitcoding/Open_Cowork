@@ -26,7 +26,7 @@ related_docs:
 
 ## Product Positioning
 
-Open Cowork is a Windows-first, local-first desktop workspace for AI-assisted work. The product centers on chat, tasks, projects, tools, model/provider configuration, MCP, local file context, scheduled work, and multi-agent crew runs.
+LocalAI Cowork is a Windows-first, local-first desktop workspace for AI-assisted work. The product centers on chat, tasks, projects, tools, model/provider configuration, MCP, local file context, scheduled work, and multi-agent crew runs.
 
 ## Current Domain Objects
 

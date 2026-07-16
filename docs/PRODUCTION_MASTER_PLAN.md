@@ -1,10 +1,10 @@
-# Open Cowork: Production Master Plan
+# LocalAI Cowork: Production Master Plan
 
 Stand: 2026-07-10
 
 ## 1. Zielbild
 
-Open Cowork wird eine Windows-first, local-first Desktop-Arbeitsumgebung fuer anspruchsvolle KI-Arbeit. Der Produktvorteil soll nicht aus einer moeglichst langen Featureliste entstehen, sondern aus fuenf nachweisbaren Staerken:
+LocalAI Cowork wird eine Windows-first, local-first Desktop-Arbeitsumgebung fuer anspruchsvolle KI-Arbeit. Der Produktvorteil soll nicht aus einer moeglichst langen Featureliste entstehen, sondern aus fuenf nachweisbaren Staerken:
 
 1. Transparente Ausfuehrung: Jeder Plan, Tool-Aufruf, Agentenlauf, Kostenpunkt und jedes Artefakt ist nachvollziehbar.
 2. Kontrollierbare Autonomie: Nutzer koennen Rechte, Modelle, Budgets, Freigaben und Arbeitsordner exakt steuern.

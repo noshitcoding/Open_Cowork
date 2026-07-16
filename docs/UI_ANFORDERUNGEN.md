@@ -1,8 +1,8 @@
-# UI-Anforderungsliste fuer Open_Cowork
+# UI-Anforderungsliste fuer LocalAI Cowork
 
 ## 1. Zweck und Scope
 
-Dieses Dokument beschreibt ausschliesslich die Anforderungen an die Benutzeroberflaeche von Open_Cowork als Windows-Desktop-App. Backend-, Sicherheits-, Persistenz- und Integrationsanforderungen sind nur dann enthalten, wenn sie direkt in der UI sichtbar oder bedienbar sein muessen.
+Dieses Dokument beschreibt ausschliesslich die Anforderungen an die Benutzeroberflaeche von LocalAI Cowork als Windows-Desktop-App. Backend-, Sicherheits-, Persistenz- und Integrationsanforderungen sind nur dann enthalten, wenn sie direkt in der UI sichtbar oder bedienbar sein muessen.
 
 Die Anforderungen sind auf die bestehende Produktstruktur ausgerichtet:
 
@@ -80,7 +80,7 @@ Die Anforderungen sind auf die bestehende Produktstruktur ausgerichtet:
 #### UI-020 Einstieg und Orientierung
 
 - Der Welcome Screen muss fuer Erstnutzung und Rueckkehrer verstaendlich sein.
-- Er muss erklaeren, was Open_Cowork kann, wie ein erster Task gestartet wird und welche naechsten Schritte sinnvoll sind.
+- Er muss erklaeren, was LocalAI Cowork kann, wie ein erster Task gestartet wird und welche naechsten Schritte sinnvoll sind.
 - Er muss mindestens eine primaere Call-to-Action fuer den ersten Task enthalten.
 
 #### UI-021 Guided Onboarding
@@ -273,7 +273,7 @@ Die Anforderungen sind auf die bestehende Produktstruktur ausgerichtet:
 - Die Kernflows sind vollstaendig per Tastatur nutzbar.
 - Die App bleibt bei langen Verlaeufen, mehreren Threads und parallelen Statusaenderungen visuell stabil.
 
-## 11. Priorisierung fuer Open_Cowork
+## 11. Priorisierung fuer LocalAI Cowork
 
 ### Muss fuer den naechsten UI-Ausbau
 
@@ -301,4 +301,4 @@ Dieses Dokument konkretisiert den UI-Teil aus folgenden bestehenden Unterlagen:
 - FEHLENDE_FEATURES_IM_CODE.md
 - docs/ARCHITECTURE.md
 
-Es dient als fokussierte Arbeitsgrundlage fuer UI-, UX- und Frontend-Umsetzung innerhalb des aktuellen Open_Cowork-Repositories.
+Es dient als fokussierte Arbeitsgrundlage fuer UI-, UX- und Frontend-Umsetzung innerhalb des aktuellen LocalAI Cowork-Repositories.

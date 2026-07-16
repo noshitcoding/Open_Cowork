@@ -2,7 +2,7 @@
 
 ## Ziel
 
-Diese Checkliste validiert den lokalen Windows-Desktop-Pfad fuer Open_Cowork reproduzierbar nach UI-, Engine- oder Tauri-Aenderungen.
+Diese Checkliste validiert den lokalen Windows-Desktop-Pfad fuer LocalAI Cowork reproduzierbar nach UI-, Engine- oder Tauri-Aenderungen.
 
 ## Voraussetzungen
 
@@ -47,7 +47,7 @@ npm run smoke:desktop
 Erwartung:
 - Rust kompiliert ohne Fehler
 - das Release-Binary wird unter `src-tauri/target/release/app.exe` erzeugt
-- das Binary bleibt beim Start stabil und stellt innerhalb von 20 Sekunden ein Fenster mit dem Titel `Open Cowork` bereit
+- das Binary bleibt beim Start stabil und stellt innerhalb von 20 Sekunden ein Fenster mit dem Titel `LocalAI Cowork` bereit
 - der automatisierte Smoke-Prozess wird nach erfolgreicher Pruefung wieder beendet
 
 ## Durchklickrunde
@@ -120,7 +120,7 @@ Erwartung:
 
 2. Fenster fokussieren
 Beispielprompt:
-- "Liste sichtbare Fenster und fokussiere das Open_Cowork-Fenster."
+- "Liste sichtbare Fenster und fokussiere das LocalAI Cowork-Fenster."
 
 Erwartung:
 - `DesktopListWindows` liefert Fenstertitel, Prozess und Bounds.
@@ -129,7 +129,7 @@ Erwartung:
 
 3. Unkritischen Klick testen
 Beispielprompt:
-- "Nutze den Screenshot, waehle einen sicheren leeren Bereich in Open_Cowork und bewege die Maus dorthin, ohne zu klicken."
+- "Nutze den Screenshot, waehle einen sicheren leeren Bereich in LocalAI Cowork und bewege die Maus dorthin, ohne zu klicken."
 
 Erwartung:
 - Das Modell nutzt `DesktopMoveMouse`.
@@ -146,12 +146,12 @@ Voraussetzungen:
 - Ziel-App oder Ziel-Fenster ist lokal sichtbar
 
 Beispielprompt:
-- "Fuehre mit ComputerUseAppTest einen kurzen UI-Test aus: fokussiere Open_Cowork und pruefe, ob die Settings erreichbar sind. Maximal 3 Schritte."
+- "Fuehre mit ComputerUseAppTest einen kurzen UI-Test aus: fokussiere LocalAI Cowork und pruefe, ob die Settings erreichbar sind. Maximal 3 Schritte."
 
 Erwartung:
-- Open_Cowork sendet Screenshots an die OpenAI Responses API.
+- LocalAI Cowork sendet Screenshots an die OpenAI Responses API.
 - OpenAI liefert Computer-Aktionen zurueck.
-- Open_Cowork fuehrt die Aktionen lokal aus.
+- LocalAI Cowork fuehrt die Aktionen lokal aus.
 - Das Ergebnis enthaelt Status, ausgefuehrte Schritte und einen kurzen Testbericht.
 
 Details:

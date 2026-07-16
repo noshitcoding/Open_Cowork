@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Open Cowork Product Element",
+  "title": "LocalAI Cowork Product Element",
   "type": "object",
   "required": [
     "id",

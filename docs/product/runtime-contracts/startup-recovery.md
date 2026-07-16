@@ -8,7 +8,7 @@ last_updated: 2026-07-10
 last_verified: 2026-07-10
 endpoint: Database recover_after_unclean_shutdown and begin_scheduled_run; Tauri IPC startup_recovery_status
 purpose: Reconcile persisted executions after an unclean shutdown before any scheduler or runtime worker can start new work.
-userStory: As a user I can restart Open Cowork after a crash and see honest terminal states instead of stale running work or silently missing runs.
+userStory: As a user I can restart LocalAI Cowork after a crash and see honest terminal states instead of stale running work or silently missing runs.
 visibleText: recovered startup state count in System gateway diagnostics
 sizeToken: none
 states: active, interrupted, failed, disconnected, retained, recovered

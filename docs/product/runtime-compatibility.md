@@ -24,7 +24,19 @@ related_docs:
 
 ## Current Target
 
-Open Cowork is currently Windows-first. The Tauri stack can support more platforms later, but current installer, bundled resources, desktop-control assumptions, smoke docs, and public README target Windows 10/11.
+LocalAI Cowork is currently Windows-first. The Tauri stack can support more platforms later, but current installer, bundled resources, desktop-control assumptions, smoke docs, and public README target Windows 10/11.
+
+## Brand Rename Compatibility
+
+The public product and repository name changed from Open Cowork to LocalAI Cowork. Existing installations intentionally retain compatibility identifiers so an update continues to find user data and credentials:
+
+- Tauri application identifier: `io.noshitcoding.opencowork`
+- SQLite filename: `open_cowork.db`
+- credential and audit vault service identifiers under `com.open-cowork.desktop.*`
+- persisted browser storage keys beginning with `open-cowork`
+- legacy MCP command aliases and `OPEN_COWORK_*` environment variables
+
+New documentation and runtime configuration prefer `LOCALAI_COWORK_*` variables and `localai-cowork-*` MCP command names. The legacy aliases remain accepted during the rename transition. Changing the application identifier, database filename, vault service, or storage keys without a tested migration would strand existing user data, so those values are not branding surfaces.
 
 ## Development Runtime
 
@@ -69,7 +81,7 @@ npm run build
 The packaged app uses Tauri NSIS output. `npm run installer` copies the expected installer to:
 
 ```text
-dist-installers/Open-Cowork-Setup.exe
+dist-installers/LocalAI-Cowork-Setup.exe
 ```
 
 Bundled desktop resources include PDFium, the Python crew runtime, crew runtime requirements, and WebView2 loader resources.

@@ -336,7 +336,7 @@ describe('SettingsView', () => {
     expect(screen.getByText('llama3.1:8b')).toBeInTheDocument()
     expect(screen.getByText('Creator')).toBeInTheDocument()
     expect(screen.getByText('noshitcoding')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'github.com/noshitcoding/Open_Cowork' })).toHaveAttribute('href', 'https://github.com/noshitcoding/Open_Cowork')
+    expect(screen.getByRole('link', { name: 'github.com/noshitcoding/LocalAI Cowork' })).toHaveAttribute('href', 'https://github.com/noshitcoding/LocalAI-Cowork')
     expect(screen.getByText('Disclaimer')).toBeInTheDocument()
     expect(screen.getByText(/Use it at your own risk/)).toBeInTheDocument()
   })
@@ -520,11 +520,11 @@ describe('SettingsView', () => {
 
   it('creates a support bundle from system settings', async () => {
     ;(window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {}
-    saveDialogMock.mockResolvedValue('C:\\Temp\\open-cowork-support.zip')
+    saveDialogMock.mockResolvedValue('C:\\Temp\\localai-cowork-support.zip')
     invokeMock.mockImplementation((cmd: string) => {
       if (cmd === 'support_bundle_create') {
         return Promise.resolve({
-          path: 'C:\\Temp\\open-cowork-support.zip',
+          path: 'C:\\Temp\\localai-cowork-support.zip',
           sizeBytes: 2048,
           createdAt: '2026-07-10T12:00:00Z',
           fileCount: 5,
@@ -538,7 +538,7 @@ describe('SettingsView', () => {
 
     await waitFor(() => {
       expect(invokeMock).toHaveBeenCalledWith('support_bundle_create', {
-        path: 'C:\\Temp\\open-cowork-support.zip',
+        path: 'C:\\Temp\\localai-cowork-support.zip',
       })
     })
     expect(await screen.findByRole('status')).toHaveTextContent('Support bundle saved.')

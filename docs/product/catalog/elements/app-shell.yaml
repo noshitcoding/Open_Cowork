@@ -4,7 +4,7 @@ parent_view: view:/
 component: Layout
 purpose: Provide persistent desktop shell, top navigation, sidebar frame, route outlet, command palette, and shortcuts overlay.
 visible_text:
-  - Open Cowork
+  - LocalAI Cowork
   - Cowork
   - Tasks
   - Crew

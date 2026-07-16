@@ -1,10 +1,10 @@
 [package]
 name = "app"
 version = "0.1.8"
-description = "Local-first desktop workspace for agentic work with Ollama, MCP, tasks, and tools."
+description = "Open-source, local-first AI coworker for Windows with Ollama, MCP, tasks, approvals, and tools."
 authors = ["noshitcoding"]
 license = "Apache-2.0"
-repository = "https://github.com/noshitcoding/Open_Cowork"
+repository = "https://github.com/noshitcoding/LocalAI-Cowork"
 edition = "2021"
 rust-version = "1.89"
 

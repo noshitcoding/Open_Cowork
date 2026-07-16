@@ -31,7 +31,7 @@ related_docs:
 
 # Current Architecture
 
-Open Cowork is a local-first Tauri desktop app. The implemented product is a React workspace shell backed by Zustand state, Tauri IPC commands, Rust services, SQLite, bundled desktop resources, and optional local or remote model/tool providers.
+LocalAI Cowork is a local-first Tauri desktop app. The implemented product is a React workspace shell backed by Zustand state, Tauri IPC commands, Rust services, SQLite, bundled desktop resources, and optional local or remote model/tool providers.
 
 ## System Shape
 

@@ -1,4 +1,4 @@
-/* === Open_Cowork — Cowork-Style Theme === */
+/* === LocalAI Cowork — Cowork-Style Theme === */
 :root {
   --bg-primary: #faf8f5;
   --bg-secondary: #f5f1ec;
@@ -4987,36 +4987,36 @@ button.compact-send-btn {
   min-width: 32px;
 }
 
-.about-open-cowork-card {
+.about-cowork-card {
   display: flex;
   flex-direction: column;
   gap: 14px;
 }
 
-.about-open-cowork-intro {
+.about-cowork-intro {
   display: flex;
   flex-direction: column;
   gap: 4px;
   color: var(--text-secondary);
 }
 
-.about-open-cowork-intro strong {
+.about-cowork-intro strong {
   color: var(--text-primary);
   font-size: 15px;
 }
 
-.about-open-cowork-details {
+.about-cowork-details {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 10px;
   margin: 0;
 }
 
-.about-open-cowork-details div {
+.about-cowork-details div {
   min-width: 0;
 }
 
-.about-open-cowork-details dt {
+.about-cowork-details dt {
   color: var(--text-muted);
   font-size: 11px;
   font-weight: 600;
@@ -5025,7 +5025,7 @@ button.compact-send-btn {
   text-transform: uppercase;
 }
 
-.about-open-cowork-details dd {
+.about-cowork-details dd {
   color: var(--text-primary);
   font-family: var(--font-mono, "SFMono-Regular", Consolas, "Liberation Mono", monospace);
   line-height: 1.35;
@@ -5033,24 +5033,24 @@ button.compact-send-btn {
   overflow-wrap: anywhere;
 }
 
-.about-open-cowork-details a {
+.about-cowork-details a {
   color: var(--accent);
 }
 
-.about-open-cowork-disclaimer {
+.about-cowork-disclaimer {
   border-top: 1px solid var(--border-color);
   color: var(--text-secondary);
   padding-top: 12px;
 }
 
-.about-open-cowork-disclaimer strong {
+.about-cowork-disclaimer strong {
   color: var(--text-primary);
   display: block;
   font-size: 13px;
   margin-bottom: 4px;
 }
 
-.about-open-cowork-disclaimer p {
+.about-cowork-disclaimer p {
   line-height: 1.45;
   margin: 0;
 }

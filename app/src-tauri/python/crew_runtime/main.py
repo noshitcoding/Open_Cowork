@@ -203,7 +203,7 @@ def emit_protocol_log(log: dict, stream_id: str | None, run_id: str | None) -> N
         return
 
     envelope = {
-        "openCoworkEvent": "crew_log",
+        "localAiCoworkEvent": "crew_log",
         "payload": log,
     }
     if stream_id:
@@ -887,7 +887,7 @@ def bridge_textual_tool_call(result: Any, tools: list[dict] | None) -> Any:
         return result
     name, arguments = parsed
     return [{
-        "id": f"open_cowork_text_call_{uuid.uuid4().hex}",
+        "id": f"localai_cowork_text_call_{uuid.uuid4().hex}",
         "type": "function",
         "function": {"name": name, "arguments": json.dumps(arguments)},
     }]
@@ -905,7 +905,7 @@ def runtime_llm_class():
 
     class RuntimeToolCompatibleLLM(LLM):
         def supports_function_calling(self) -> bool:
-            if getattr(self, "_open_cowork_force_native_tools", False):
+            if getattr(self, "_localai_cowork_force_native_tools", False):
                 return True
             return super().supports_function_calling()
 
@@ -1068,7 +1068,7 @@ def bridge_textual_tool_call(result: Any, tools: list[dict] | None) -> Any:
         return result
     name, arguments = parsed
     return [{
-        "id": f"open_cowork_text_call_{uuid.uuid4().hex}",
+        "id": f"localai_cowork_text_call_{uuid.uuid4().hex}",
         "type": "function",
         "function": {"name": name, "arguments": json.dumps(arguments)},
     }]
@@ -1086,7 +1086,7 @@ def runtime_llm_class():
 
     class RuntimeToolCompatibleLLM(LLM):
         def supports_function_calling(self) -> bool:
-            if getattr(self, "_open_cowork_force_native_tools", False):
+            if getattr(self, "_localai_cowork_force_native_tools", False):
                 return True
             return super().supports_function_calling()
 
@@ -1121,7 +1121,7 @@ def build_llm(request: dict, agent: dict):
         llm_kwargs = {
             "model": model,
             "base_url": str(config.get("baseUrl") or request_config.get("baseUrl") or "https://api.openai.com/v1"),
-            "api_key": str(config.get("apiKey") or "open-cowork"),
+            "api_key": str(config.get("apiKey") or "localai-cowork"),
             "timeout": timeout_seconds,
             "max_retries": resolve_llm_max_retries(request, model),
             "max_tokens": 4096,
@@ -1153,7 +1153,7 @@ def build_llm(request: dict, agent: dict):
         # OpenRouter models may support the OpenAI tools request while LiteLLM's
         # static capability registry still reports False (notably Nemotron).
         # The runtime bridge safely handles models that put the call in content.
-        setattr(llm, "_open_cowork_force_native_tools", True)
+        setattr(llm, "_localai_cowork_force_native_tools", True)
         return llm
 
     model = normalize_model_name(provider, model_override or str(request_config.get("model") or ""))
@@ -1195,7 +1195,7 @@ def build_agent(request: dict, agent_payload: dict):
     agent_kwargs = {
         "role": str(agent_payload.get("role") or agent_payload.get("name") or "Crew Agent"),
         "goal": str(agent_payload.get("goal") or "Complete tasks successfully in the crew."),
-        "backstory": backstory or "A specialized crew agent for Open_Cowork.",
+        "backstory": backstory or "A specialized crew agent for LocalAI Cowork.",
         "llm": build_llm(request, agent_payload),
         "tools": runtime_tools,
         "verbose": bool(agent_payload.get("verbose")),
@@ -1218,7 +1218,7 @@ def build_agent(request: dict, agent_payload: dict):
     agent_kwargs = {
         "role": str(agent_payload.get("role") or agent_payload.get("name") or "Crew Agent"),
         "goal": str(agent_payload.get("goal") or "Complete tasks successfully in the crew."),
-        "backstory": backstory or "A specialized crew agent for Open_Cowork.",
+        "backstory": backstory or "A specialized crew agent for LocalAI Cowork.",
         "llm": build_llm(request, agent_payload),
         "tools": runtime_tools,
         "verbose": bool(agent_payload.get("verbose")),

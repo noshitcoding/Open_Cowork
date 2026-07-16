@@ -7,7 +7,7 @@ elements:
     visible_text:
       - Copy
       - Als Prompt nutzen
-      - Open_Cowork
+      - LocalAI Cowork
     states:
       - empty
       - streaming

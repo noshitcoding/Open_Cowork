@@ -178,7 +178,7 @@ Testschritte:
 - Recovery erfolgt ueber Checkout eines stabilen Commits/Tags
 - Die lokale Laufzeitdatenbank liegt als `open_cowork.db` im Tauri-App-Data-Verzeichnis.
 - Vor jedem Schema-Upgrade einer bestehenden Datenbank wird mit der SQLite-Online-Backup-API eine verifizierte Kopie unter `database-backups/pre-migration-*.db` angelegt; maximal drei Kopien bleiben erhalten.
-- Open Cowork muss vor einer manuellen Wiederherstellung vollstaendig beendet sein. Die aktuelle Datenbank sowie zugehoerige `-wal`- und `-shm`-Dateien werden zuerst separat gesichert und aus dem aktiven Verzeichnis entfernt; erst danach wird eine gepruefte Backup-Datei als `open_cowork.db` eingesetzt.
+- LocalAI Cowork muss vor einer manuellen Wiederherstellung vollstaendig beendet sein. Die aktuelle Datenbank sowie zugehoerige `-wal`- und `-shm`-Dateien werden zuerst separat gesichert und aus dem aktiven Verzeichnis entfernt; erst danach wird eine gepruefte Backup-Datei als `open_cowork.db` eingesetzt.
 - Ein Integritaets-, Foreign-Key- oder Versionsfehler ist ein Stop-Zustand. Die App darf auf dieser Datenbank weder weiter migrieren noch neue Daten schreiben.
 
 ## Empfohlene Betriebsgrenzen (vorlaeufig)

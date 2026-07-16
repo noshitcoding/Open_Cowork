@@ -53,23 +53,23 @@ The separate blocking security job runs `npm audit --audit-level=high` over prod
 
 The release workflow reruns the complete product verification and both network vulnerability audits before building. It produces:
 
-- `Open-Cowork-Setup-x64.exe`
-- `open-cowork.cdx.json`, a deterministic CycloneDX 1.6 inventory
+- `LocalAI-Cowork-Setup-x64.exe`
+- `localai-cowork.cdx.json`, a deterministic CycloneDX 1.6 inventory
 - `THIRD_PARTY_NOTICES.json`, the evaluated npm and Cargo license inventory
 - `release-provenance.json`, containing subject hashes, source commit, target, tool versions, and material hashes
 - `SHA256SUMS`, covering every published local release file except itself
 
 The SBOM serial number derives from both lockfiles and its timestamp derives from the source commit or `SOURCE_DATE_EPOCH`, so identical locked source and context produce identical metadata. npm SHA-512 integrity values and Cargo SHA-256 registry checksums are represented in CycloneDX hexadecimal form. The checked baseline contains 527 release components and passes the official CycloneDX 1.6 JSON schema with zero errors.
 
-GitHub Actions additionally creates Sigstore-backed build-provenance attestations for all release assets and an SBOM attestation binding the installer to `open-cowork.cdx.json`. These attestations complement the downloadable offline provenance; they do not replace Windows Authenticode signing.
+GitHub Actions additionally creates Sigstore-backed build-provenance attestations for all release assets and an SBOM attestation binding the installer to `localai-cowork.cdx.json`. These attestations complement the downloadable offline provenance; they do not replace Windows Authenticode signing.
 
 ## Windows Authenticode
 
-The release job signs `Open-Cowork-Setup-x64.exe` before generating provenance, checksums, attestations, or release assets. `OPEN_COWORK_CODESIGN_PFX_BASE64`, `OPEN_COWORK_CODESIGN_PASSWORD`, and `OPEN_COWORK_CODESIGN_THUMBPRINT` are GitHub secrets and are never command-line arguments. The signer imports the PFX only into the ephemeral runner's current-user certificate store, requires exactly one valid private-key certificate with the code-signing EKU, compares its normalized thumbprint with the pinned secret, signs with SHA-256, and removes imported key material in a bounded cleanup process.
+The release job signs `LocalAI-Cowork-Setup-x64.exe` before generating provenance, checksums, attestations, or release assets. `LOCALAI_COWORK_CODESIGN_PFX_BASE64`, `LOCALAI_COWORK_CODESIGN_PASSWORD`, and `LOCALAI_COWORK_CODESIGN_THUMBPRINT` are GitHub secrets and are never command-line arguments. The workflow temporarily accepts the legacy `OPEN_COWORK_*` names as fallbacks so the rename does not require secret disclosure. The signer imports the PFX only into the ephemeral runner's current-user certificate store, requires exactly one valid private-key certificate with the code-signing EKU, compares its normalized thumbprint with the pinned secret, signs with SHA-256, and removes imported key material in a bounded cleanup process.
 
 RFC 3161 timestamp services are restricted to the Sectigo, DigiCert, and GlobalSign hosts. Each signing and verification process has a hard timeout. Publication fails unless SignTool policy verification returns success, PowerShell reports `Valid`, the signer thumbprint still matches, and a timestamp certificate is present. The workflow policy requires signing before all release evidence and rejects test switches or test-mode environment variables.
 
-`npm run smoke:authenticode -- -InstallerPath ..\dist-installers\Open-Cowork-Setup.exe` exercises the real PE mutation and exact-thumbprint verification with an ephemeral self-signed certificate. Its explicit test gate permits an untrusted, untimestamped certificate only for that local copy; it can never satisfy release verification and is forbidden in the workflow.
+`npm run smoke:authenticode -- -InstallerPath ..\dist-installers\LocalAI-Cowork-Setup.exe` exercises the real PE mutation and exact-thumbprint verification with an ephemeral self-signed certificate. Its explicit test gate permits an untrusted, untimestamped certificate only for that local copy; it can never satisfy release verification and is forbidden in the workflow.
 
 ## Failure and change policy
 

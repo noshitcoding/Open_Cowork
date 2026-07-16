@@ -1,11 +1,11 @@
 # Support
 
-Open Cowork is early-stage open-source software. Community support happens through GitHub.
+LocalAI Cowork is early-stage open-source software. Community support happens through GitHub.
 
 ## Before Opening An Issue
 
-1. Check the [latest release notes](https://github.com/noshitcoding/Open_Cowork/releases/latest).
-2. Search [existing issues](https://github.com/noshitcoding/Open_Cowork/issues).
+1. Check the [latest release notes](https://github.com/noshitcoding/LocalAI-Cowork/releases/latest).
+2. Search [existing issues](https://github.com/noshitcoding/LocalAI-Cowork/issues).
 3. Run the project doctor when using a source build:
 
    ```powershell
@@ -17,10 +17,10 @@ Open Cowork is early-stage open-source software. Community support happens throu
 
 ## Where To Ask
 
-- [Bug report](https://github.com/noshitcoding/Open_Cowork/issues/new?template=bug_report.yml) for reproducible incorrect behavior
-- [Feature request](https://github.com/noshitcoding/Open_Cowork/issues/new?template=feature_request.yml) for a concrete user problem or improvement
-- [Privacy question](https://github.com/noshitcoding/Open_Cowork/issues/new?template=privacy_question.yml) for non-sensitive data-handling questions
-- [Private security report](https://github.com/noshitcoding/Open_Cowork/security/advisories/new) for vulnerabilities or suspected credential exposure
+- [Bug report](https://github.com/noshitcoding/LocalAI-Cowork/issues/new?template=bug_report.yml) for reproducible incorrect behavior
+- [Feature request](https://github.com/noshitcoding/LocalAI-Cowork/issues/new?template=feature_request.yml) for a concrete user problem or improvement
+- [Privacy question](https://github.com/noshitcoding/LocalAI-Cowork/issues/new?template=privacy_question.yml) for non-sensitive data-handling questions
+- [Private security report](https://github.com/noshitcoding/LocalAI-Cowork/security/advisories/new) for vulnerabilities or suspected credential exposure
 
 ## Safe Diagnostic Sharing
 
