@@ -410,8 +410,8 @@
     "semantic_hash": ""
   },
   "app/src/components/TasksView.tsx": {
-    "mtime": 1784137723.6581194,
-    "ast_hash": "59da644a9afa070e8dcb28a99590d2a3",
+    "mtime": 1784187878.1822376,
+    "ast_hash": "4847e81b30b18a06fe26888ab0b5fc90",
     "semantic_hash": ""
   },
   "app/src/components/TerminalDock.test.tsx": {
@@ -1675,8 +1675,8 @@
     "semantic_hash": ""
   },
   "app/src/components/TasksView.flow.test.tsx": {
-    "mtime": 1784137688.2409756,
-    "ast_hash": "8cf788fb3b35fe7fa8dbb980752fcce0",
+    "mtime": 1784187878.1842377,
+    "ast_hash": "8d4fe18d1b65e37ffaecd395ec53d18b",
     "semantic_hash": ""
   },
   "app/src/engine/tasks/workTaskExecutionService.test.ts": {
