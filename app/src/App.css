@@ -7722,23 +7722,25 @@ button.compact-send-btn {
   .top-tabs {
     order: 3;
     width: 100%;
-    display: flex;
-    gap: 6px;
-    overflow-x: auto;
-    scrollbar-width: none;
-    padding-bottom: 2px;
-  }
-
-  .top-tabs::-webkit-scrollbar {
-    display: none;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(48px, 1fr));
+    gap: 4px;
+    padding: 0;
   }
 
   .top-tab {
-    flex: 0 0 auto;
-    width: auto;
-    min-width: 88px;
+    width: 100%;
+    min-width: 0;
+    min-height: 44px;
+    padding: 4px 2px;
+    flex-direction: column;
+    gap: 2px;
+    font-size: clamp(9px, 2.1vw, 11px);
+    line-height: 1.1;
     text-align: center;
   }
+
+  .top-tab span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   .app-body {
     flex-direction: row;
