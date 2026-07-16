@@ -6,6 +6,10 @@ Open Cowork can access local files, terminals, model providers, MCP servers, and
 
 Security fixes target the latest published release and the current `main` branch. Older releases may not receive backports.
 
+## Vulnerability Exceptions
+
+Target-specific exceptions are published as OpenVEX documents under `.vex/` and consumed by Trivy in CI. An exception must name one advisory and package, explain why the vulnerable code is outside the maintained execution path, and be revisited before the supported platform set changes. VEX statements do not disable secret, dependency, Semgrep, or filesystem scanning.
+
 ## Report A Vulnerability
 
 Use [GitHub private vulnerability reporting](https://github.com/noshitcoding/Open_Cowork/security/advisories/new).
@@ -36,4 +40,3 @@ These controls reduce risk but do not make arbitrary tools, prompts, model provi
 ## Public Security Improvements
 
 Hardening changes that do not disclose an exploitable vulnerability can use a normal pull request. If in doubt, report privately first.
-

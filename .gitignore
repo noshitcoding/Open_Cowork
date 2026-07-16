@@ -62,7 +62,8 @@ data/
 storage/
 uploads/
 sessions/
-memory/
+/memory/
+graphify-out/memory/
 chroma/
 chromadb/
 qdrant_storage/
