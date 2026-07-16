@@ -202,5 +202,6 @@
   "200": "resolveShellNavigationTarget",
   "201": "main.rs",
   "202": "normalizeDesktopCoordinateSpace",
+  "203": "CreateDirectoryTool",
   "216": "chatStore.ts"
 }
