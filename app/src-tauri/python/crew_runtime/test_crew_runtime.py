@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -16,7 +17,7 @@ if str(RUNTIME_DIR) not in sys.path:
 import crew_tools
 import main as crew_runtime
 
-TEST_OPENROUTER_NEMOTRON_MODEL = "nvidia/nemotron-3-super-120b-a12b:free"
+TEST_OPENROUTER_NEMOTRON_MODEL = "nvidia/nemotron-3-nano-30b-a3b:free"
 
 
 class CrewRuntimeStatusTests(unittest.TestCase):
@@ -241,6 +242,43 @@ class CrewRuntimeTaskTests(unittest.TestCase):
 
         self.assertEqual(payload["maxParallelTasks"], 1)
 
+    def test_external_provider_timeout_and_free_retry_policy_are_applied(self) -> None:
+        request = {
+            "retryCount": 0,
+            "config": {"timeoutMs": 60_000},
+            "providerConfigs": {
+                "openRouter": {
+                    "model": TEST_OPENROUTER_NEMOTRON_MODEL,
+                    "apiKey": "test-key",
+                    "timeoutMs": 180_000,
+                }
+            },
+        }
+        agent = {
+            "id": "runtime-agent",
+            "name": "Runtime Agent",
+            "role": "executor",
+            "goal": "Verify provider settings.",
+            "providerKind": "openrouter",
+            "tools": [],
+        }
+
+        llm = crew_runtime.build_llm(request, agent)
+        built_agent = crew_runtime.build_agent(request, agent)
+
+        self.assertEqual(crew_runtime.resolve_agent_timeout_ms(request, agent), 180_000)
+        self.assertEqual(llm.timeout, 180)
+        self.assertEqual(llm.max_retries, 4)
+        self.assertEqual(built_agent.max_execution_time, 180)
+
+    def test_configured_retry_count_can_raise_provider_default(self) -> None:
+        request = {"retryCount": 5}
+
+        self.assertEqual(
+            crew_runtime.resolve_llm_max_retries(request, "openrouter/paid-model"),
+            5,
+        )
+
     def test_tasks_are_stably_topologically_ordered(self) -> None:
         tasks = [
             {"id": "review", "context": ["implement"], "dependencies": []},
@@ -418,6 +456,236 @@ class CrewRuntimeIntegrationTests(unittest.TestCase):
             if selected_task in {"all", "research"}:
                 research_output = next(item["output"] for item in response["taskResults"] if item["taskId"] == "research")
                 self.assertGreaterEqual(str(research_output).count("https://"), 2)
+
+
+@unittest.skipUnless(
+    os.environ.get("OPEN_COWORK_RUN_COMPLEX_CREW_INTEGRATION") == "1"
+    and bool(os.environ.get("OPENROUTER_API_KEY", "").strip()),
+    "Set OPEN_COWORK_RUN_COMPLEX_CREW_INTEGRATION=1 and OPENROUTER_API_KEY to run the complex live Crew test.",
+)
+class CrewRuntimeComplexIntegrationTests(unittest.TestCase):
+    def test_live_complex_dependency_workflow(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            agents = [
+                {
+                    "id": "researcher",
+                    "name": "Evidence Researcher",
+                    "role": "researcher",
+                    "goal": "Collect current, verifiable primary sources.",
+                    "backstory": "A careful web researcher who never invents citations.",
+                    "providerKind": "openrouter",
+                    "tools": ["web_search", "web_fetch"],
+                    "allowDelegation": False,
+                    "maxIterations": 5,
+                },
+                {
+                    "id": "coder",
+                    "name": "Implementation Engineer",
+                    "role": "executor",
+                    "goal": "Create and execute a machine-verifiable implementation proof.",
+                    "backstory": "A precise engineer who verifies every generated file.",
+                    "providerKind": "openrouter",
+                    "tools": ["create_directory", "edit_file", "read_file", "bash"],
+                    "allowDelegation": False,
+                    "maxIterations": 6,
+                },
+                {
+                    "id": "analyst",
+                    "name": "Synthesis Analyst",
+                    "role": "analyst",
+                    "goal": "Combine research and implementation evidence into one report.",
+                    "backstory": "A structured analyst who preserves upstream evidence.",
+                    "providerKind": "openrouter",
+                    "tools": ["edit_file", "read_file"],
+                    "allowDelegation": False,
+                    "maxIterations": 5,
+                },
+                {
+                    "id": "verifier",
+                    "name": "Quality Verifier",
+                    "role": "reviewer",
+                    "goal": "Verify files, commands, citations, and required report sections.",
+                    "backstory": "A skeptical reviewer who reports concrete evidence.",
+                    "providerKind": "openrouter",
+                    "tools": ["read_file", "grep", "bash"],
+                    "allowDelegation": False,
+                    "maxIterations": 5,
+                },
+                {
+                    "id": "presenter",
+                    "name": "Presentation Author",
+                    "role": "writer",
+                    "goal": "Turn verified evidence into a real PowerPoint artifact.",
+                    "backstory": "A concise presentation author who uses only verified inputs.",
+                    "providerKind": "openrouter",
+                    "tools": ["read_file", "office_workflow"],
+                    "allowDelegation": False,
+                    "maxIterations": 5,
+                },
+            ]
+            tasks = [
+                {
+                    "id": "research",
+                    "description": (
+                        "Use web_search for 'CrewAI official documentation agents tasks processes' and web_fetch at least "
+                        "one official result. Return a concise evidence brief with at least three real https URLs, source "
+                        "titles, and key facts. Do not answer from memory."
+                    ),
+                    "expectedOutput": "An evidence brief containing at least three real source URLs.",
+                    "agentId": "researcher",
+                    "context": [],
+                    "dependencies": [],
+                    "asyncExecution": True,
+                },
+                {
+                    "id": "code",
+                    "description": (
+                        "Use create_directory and edit_file to create artifacts/metrics.py. The script must print valid "
+                        "JSON with workflow='complex-crew', agents=5, tasks=5, and verified=true. Execute it with bash and "
+                        "return the exact file path plus command output."
+                    ),
+                    "expectedOutput": "The metrics.py path and its successful JSON output.",
+                    "agentId": "coder",
+                    "context": [],
+                    "dependencies": [],
+                    "asyncExecution": True,
+                },
+                {
+                    "id": "synthesis",
+                    "description": (
+                        "Use both upstream task results. Create artifacts/complex-report.md with edit_file. It must contain "
+                        "the headings Evidence, Implementation Proof, Collaboration, and Limitations; at least three URLs "
+                        "from the research result; and the implementation JSON facts. Read the file back and return its path."
+                    ),
+                    "expectedOutput": "The verified path to a complete Markdown synthesis report.",
+                    "agentId": "analyst",
+                    "context": ["research", "code"],
+                    "dependencies": ["research", "code"],
+                    "asyncExecution": False,
+                },
+                {
+                    "id": "verification",
+                    "description": (
+                        "Read artifacts/complex-report.md and artifacts/metrics.py. Execute metrics.py with bash and use grep "
+                        "to verify the report headings and URLs. Return VERIFICATION_OK only with concrete command evidence."
+                    ),
+                    "expectedOutput": "VERIFICATION_OK followed by command and file evidence.",
+                    "agentId": "verifier",
+                    "context": ["synthesis"],
+                    "dependencies": ["synthesis"],
+                    "asyncExecution": False,
+                },
+                {
+                    "id": "presentation",
+                    "description": (
+                        "Read artifacts/complex-report.md, then use office_workflow to create artifacts/complex-crew.pptx "
+                        "with title 'Complex Crew Verification' and at least four content slides covering Evidence, "
+                        "Implementation Proof, Collaboration, and Limitations. Return the exact created path."
+                    ),
+                    "expectedOutput": "The exact path to a valid PowerPoint file with at least five total slides.",
+                    "agentId": "presenter",
+                    "context": ["synthesis", "verification"],
+                    "dependencies": ["synthesis", "verification"],
+                    "asyncExecution": False,
+                },
+            ]
+            allowed_by_agent = {agent["id"]: agent["tools"] for agent in agents}
+            payload = {
+                "id": "complex-integration-smoke",
+                "name": "Complex Integration Crew",
+                "description": "Research, implement, synthesize, verify, and present one evidence-bound result.",
+                "executionGuidelines": (
+                    "Use every required tool, preserve upstream evidence in downstream tasks, and never claim success "
+                    "without reading or executing the created artifact."
+                ),
+                "knowledgeFocus": "CrewAI runtime collaboration verification",
+                "outputMode": "standard",
+                "retryCount": 3,
+                "process": "parallel",
+                "maxParallelTasks": 2,
+                "maxRpm": 0,
+                "verbose": False,
+                "cwd": str(root),
+                "config": {
+                    "baseUrl": "http://127.0.0.1:11434",
+                    "model": "unused-for-openrouter",
+                    "timeoutMs": 60_000,
+                },
+                "providerConfigs": {
+                    "openRouter": {
+                        "baseUrl": "https://openrouter.ai/api/v1",
+                        "model": TEST_OPENROUTER_NEMOTRON_MODEL,
+                        "apiKey": os.environ["OPENROUTER_API_KEY"],
+                        "timeoutMs": 300_000,
+                        "verifyTlsCertificates": True,
+                    }
+                },
+                "agents": agents,
+                "tasks": tasks,
+                "governance": {
+                    "subject": "complex-integration-test",
+                    "subjectRoles": ["owner"],
+                    "pendingApprovalTypes": [],
+                    "agentAccess": [
+                        {
+                            "agentId": agent_id,
+                            "allowedTools": tools,
+                            "blockedTools": [],
+                            "allowedMcpServerNames": [],
+                            "blockedMcpServerNames": [],
+                            "delegationAllowed": False,
+                            "gatewayHints": [],
+                        }
+                        for agent_id, tools in allowed_by_agent.items()
+                    ],
+                },
+                "memoryContext": {},
+            }
+
+            response = crew_runtime.execute_definition(payload)
+
+            self.assertEqual(response["status"], "completed", response.get("error"))
+            self.assertEqual(
+                [result["taskId"] for result in response["taskResults"]],
+                ["research", "code", "synthesis", "verification", "presentation"],
+            )
+            self.assertTrue(all(result["status"] == "completed" for result in response["taskResults"]))
+            self.assertTrue(any(log.get("action") == "rate_limit_policy" for log in response["logs"]))
+            self.assertEqual(
+                {log.get("agentId") for log in response["logs"] if log.get("action") == "task_handoff"},
+                {"researcher", "coder", "analyst", "verifier", "presenter"},
+            )
+
+            metrics_path = root / "artifacts" / "metrics.py"
+            report_path = root / "artifacts" / "complex-report.md"
+            presentation_path = root / "artifacts" / "complex-crew.pptx"
+            self.assertTrue(metrics_path.is_file())
+            metrics_run = subprocess.run(
+                [sys.executable, str(metrics_path)],
+                cwd=root,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=True,
+            )
+            metrics = json.loads(metrics_run.stdout)
+            self.assertEqual(
+                metrics,
+                {"workflow": "complex-crew", "agents": 5, "tasks": 5, "verified": True},
+            )
+
+            report = report_path.read_text(encoding="utf-8")
+            for heading in ("Evidence", "Implementation Proof", "Collaboration", "Limitations"):
+                self.assertIn(heading, report)
+            self.assertGreaterEqual(report.count("https://"), 3)
+
+            self.assertTrue(presentation_path.is_file())
+            self.assertGreater(presentation_path.stat().st_size, 10_000)
+            from pptx import Presentation
+
+            presentation = Presentation(presentation_path)
+            self.assertGreaterEqual(len(presentation.slides), 5)
 
 
 if __name__ == "__main__":

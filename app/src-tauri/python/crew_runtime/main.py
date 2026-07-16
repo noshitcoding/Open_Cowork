@@ -656,6 +656,26 @@ def configure_litellm_tls_verification(verify_tls_certificates: object) -> None:
         pass
 
 
+def resolve_agent_timeout_ms(request: dict, agent: dict) -> int:
+    request_config = request.get("config") or {}
+    provider_configs = request.get("providerConfigs") or {}
+    provider = resolve_agent_provider(agent)
+    provider_config: dict = {}
+    if provider == "openrouter":
+        provider_config = provider_configs.get("openRouter") or {}
+    elif provider == "openai-compatible":
+        provider_config = provider_configs.get("openAICompatible") or {}
+
+    fallback = parse_int(request_config.get("timeoutMs"), 600_000)
+    return max(1_000, parse_int(provider_config.get("timeoutMs"), fallback))
+
+
+def resolve_llm_max_retries(request: dict, model: str) -> int:
+    configured = max(0, min(5, parse_int(request.get("retryCount"), 0)))
+    provider_default = 4 if is_openrouter_free_model(model) else 2
+    return max(provider_default, configured)
+
+
 def build_llm(request: dict, agent: dict):
     from crewai import LLM  # type: ignore
     suppress_runtime_deprecation_warnings()
@@ -669,12 +689,13 @@ def build_llm(request: dict, agent: dict):
         config = provider_configs.get("openAICompatible") or {}
         configure_litellm_tls_verification(config.get("verifyTlsCertificates"))
         model = normalize_model_name(provider, model_override or str(config.get("model") or ""))
-        timeout_seconds = max(1, parse_int(config.get("timeoutMs"), parse_int(request_config.get("timeoutMs"), 600_000)) // 1000)
+        timeout_seconds = resolve_agent_timeout_ms(request, agent) // 1000
         llm_kwargs = {
             "model": model,
             "base_url": str(config.get("baseUrl") or request_config.get("baseUrl") or "https://api.openai.com/v1"),
             "api_key": str(config.get("apiKey") or "open-cowork"),
             "timeout": timeout_seconds,
+            "max_retries": resolve_llm_max_retries(request, model),
             "max_tokens": 4096,
         }
         return LLM(**llm_kwargs)
@@ -688,18 +709,19 @@ def build_llm(request: dict, agent: dict):
             raise ValueError(
                 "OpenRouter API key is missing. Configure the default OpenRouter LLM profile before starting the Crew."
             )
-        timeout_seconds = max(1, parse_int(config.get("timeoutMs"), parse_int(request_config.get("timeoutMs"), 600_000)) // 1000)
+        timeout_seconds = resolve_agent_timeout_ms(request, agent) // 1000
         llm_kwargs = {
             "model": model,
             "base_url": str(config.get("baseUrl") or "https://openrouter.ai/api/v1"),
             "api_key": api_key,
             "timeout": timeout_seconds,
+            "max_retries": resolve_llm_max_retries(request, model),
             "max_tokens": 4096,
         }
         return LLM(**llm_kwargs)
 
     model = normalize_model_name(provider, model_override or str(request_config.get("model") or ""))
-    timeout_seconds = max(1, parse_int(request_config.get("timeoutMs"), 600_000) // 1000)
+    timeout_seconds = resolve_agent_timeout_ms(request, agent) // 1000
     return LLM(
         model=model,
         base_url=str(request_config.get("baseUrl") or "http://localhost:11434"),
@@ -732,8 +754,7 @@ def build_agent(request: dict, agent_payload: dict):
 
     max_rpm = int(agent_payload.get("maxRpm") or request.get("_effectiveAgentMaxRpm") or 0)
     retry_count = max(0, min(5, parse_int(request.get("retryCount"), 0)))
-    request_config = request.get("config") or {}
-    timeout_ms = max(1_000, parse_int(request_config.get("timeoutMs"), 600_000))
+    timeout_ms = resolve_agent_timeout_ms(request, agent_payload)
 
     agent_kwargs = {
         "role": str(agent_payload.get("role") or agent_payload.get("name") or "Crew Agent"),

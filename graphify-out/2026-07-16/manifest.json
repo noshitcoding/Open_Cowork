@@ -65,8 +65,8 @@
     "semantic_hash": ""
   },
   "app/src-tauri/python/crew_runtime/main.py": {
-    "mtime": 1784133856.5128157,
-    "ast_hash": "a41d86421161f45e3ee1c6c4a7292e94",
+    "mtime": 1784188548.636375,
+    "ast_hash": "a35e2629dae485d94a384d9e06b6d337",
     "semantic_hash": ""
   },
   "app/src-tauri/src/artifact_pipeline.rs": {
@@ -1660,8 +1660,8 @@
     "semantic_hash": ""
   },
   "app/src-tauri/python/crew_runtime/test_crew_runtime.py": {
-    "mtime": 1784133856.5151913,
-    "ast_hash": "36a6ecd53572f0d5b396cc826ec6e42e",
+    "mtime": 1784188662.7426097,
+    "ast_hash": "5b0cb4054160940f110bd240dec3f9e1",
     "semantic_hash": ""
   },
   "app/src/engine/crew/workTaskCrewRuntime.test.ts": {

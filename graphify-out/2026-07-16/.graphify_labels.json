@@ -190,9 +190,16 @@
   "188": "playwright.config.ts",
   "189": "Release Supply Chain Contract",
   "190": "8. Accessibility",
+  "191": "chatStore.ts",
   "192": "7. Desktop- und Fensterverhalten",
   "193": "9. Visuelle und textliche Anforderungen",
-  "212": "workTaskCrewRuntime.ts",
+  "194": "load_policy_state",
+  "195": "workTaskScheduleService.ts",
+  "196": "ProjectView.tsx",
+  "197": "agentCoordinator.ts",
+  "198": "LlmProfilesPanel.tsx",
+  "199": "webSearchSources.ts",
+  "200": "SessionSearchPanel.tsx",
   "216": "chatStore.ts",
   "227": "processStore.ts"
 }
