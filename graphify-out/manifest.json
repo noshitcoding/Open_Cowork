@@ -1768,5 +1768,40 @@
     "mtime": 1784214784.2267053,
     "ast_hash": "838394c0f1420144a00a10663e596757",
     "semantic_hash": ""
+  },
+  "scripts/validate-site.py": {
+    "mtime": 1784215021.068621,
+    "ast_hash": "457d416fa78c458e4d107a1fbfc48563",
+    "semantic_hash": ""
+  },
+  ".github/ISSUE_TEMPLATE/bug_report.yml": {
+    "mtime": 1784215105.2366605,
+    "ast_hash": "289e525b0e530663d16c4d03bd78c33d",
+    "semantic_hash": ""
+  },
+  ".github/ISSUE_TEMPLATE/config.yml": {
+    "mtime": 1784215105.247761,
+    "ast_hash": "05513f2fef64be8e47b7b97419494e74",
+    "semantic_hash": ""
+  },
+  ".github/ISSUE_TEMPLATE/feature_request.yml": {
+    "mtime": 1784215105.2400167,
+    "ast_hash": "2556de20fdc43a448b4d119aa9067470",
+    "semantic_hash": ""
+  },
+  ".github/ISSUE_TEMPLATE/privacy_question.yml": {
+    "mtime": 1784215105.243761,
+    "ast_hash": "629ca9e7b403dde5a9408fcf0583f13c",
+    "semantic_hash": ""
+  },
+  ".github/pull_request_template.md": {
+    "mtime": 1784215105.2529643,
+    "ast_hash": "3739944cac04d0a361d07a981196d1e0",
+    "semantic_hash": ""
+  },
+  ".github/workflows/pages.yml": {
+    "mtime": 1784214976.4310377,
+    "ast_hash": "57e822ae79b9b072ea0fe5a69357e985",
+    "semantic_hash": ""
   }
 }
