@@ -4412,6 +4412,11 @@ body.sidebar-resize-active * {
   background: var(--accent-light);
 }
 
+.quick-prompt-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
 /* === Cowork Input / Chat Input === */
 .cowork-input {
   display: flex;
@@ -4434,6 +4439,7 @@ body.sidebar-resize-active * {
   .cowork-empty-start-status { grid-template-columns: 1fr; }
   .cowork-empty-start-status span + span { border-top: 1px solid var(--border); border-left: 0; }
   .cowork-empty-start-actions { flex-direction: column; width: 100%; }
+  .quick-prompts.crew-starter-grid { grid-template-columns: 1fr; }
   .cowork-msg.user .msg-body { max-width: 90%; }
 }
 

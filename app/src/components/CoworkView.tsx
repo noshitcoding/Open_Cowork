@@ -52,6 +52,7 @@ import { appendWebSearchSources, mergeWebSearchSources, parseWebSearchSourcesFro
 import { MessageThinking, MessageVerbose } from './MessageThinking'
 import { HighlightedChatText } from './HighlightedChatText'
 import GuidedOnboarding from './GuidedOnboarding'
+import CoworkQuickPrompts from './CoworkQuickPrompts'
 import CoworkContextRail from './CoworkContextRail'
 import { writeAuditEvent } from '../utils/audit'
 import { persistInvoke } from '../stores/chatStore'
@@ -3694,13 +3695,9 @@ export default function CoworkView() {
 
         {error && <p className="error cowork-error">{error}</p>}
 
-        <div className="quick-prompts">
-          {quickPrompts.map((prompt) => (
-            <button key={prompt} type="button" className="quick-prompt-btn" onClick={() => applyPromptToInput(prompt)}>
-              {prompt}
-            </button>
-          ))}
-        </div>
+        {renderedMessages.length === 0 && !busy && !inputValue.trim() ? (
+          <CoworkQuickPrompts prompts={quickPrompts} onSelect={applyPromptToInput} />
+        ) : null}
 
           <form className="cowork-input" onSubmit={handleSend}>
           <div className="chat-input-main">
