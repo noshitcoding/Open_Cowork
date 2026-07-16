@@ -7861,6 +7861,7 @@ button.compact-send-btn {
     padding: 16px 12px;
     max-width: 100%;
   }
+  .task-create-heading { flex: 1 1 auto; }
   .tasks-layout {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -7875,6 +7876,7 @@ button.compact-send-btn {
   .task-run-toolbar button {
     width: 100%;
   }
+  .task-create-heading-row,
   .work-task-card-header,
   .task-scheduler-header {
     align-items: stretch;
@@ -7910,6 +7912,7 @@ button.compact-send-btn {
     width: 100%;
   }
 
+  .task-create-panel-toggle,
   .chat-compact-select,
   .btn-compact-action,
   button.compact-send-btn {
