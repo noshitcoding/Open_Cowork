@@ -115,7 +115,7 @@ export default function CrewGovernancePanel({ activeCrewId }: Props) {
 
       <div className="crew-stat-card crew-emphasis-card">
         <div className="crew-stat-label">{tr("Active mode")}</div>
-        <div className="crew-stat-value">{activeModeDefinition.title}</div>
+        <div className="crew-stat-value">{tr(activeModeDefinition.title)}</div>
         <div className="crew-stat-meta">{tr(activeModeDefinition.description)}</div>
       </div>
 
@@ -129,7 +129,7 @@ export default function CrewGovernancePanel({ activeCrewId }: Props) {
               className={`crew-choice-card${selected ? ' is-active' : ''}`}
               onClick={() => handleModeSelect(mode.value)}
             >
-              <strong>{mode.title}</strong>
+              <strong>{tr(mode.title)}</strong>
               <span>{tr(mode.description)}</span>
             </button>
           )

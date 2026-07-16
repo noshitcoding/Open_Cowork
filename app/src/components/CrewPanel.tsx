@@ -10,7 +10,7 @@ import CrewHistoryPanel from './crew/CrewHistoryPanel'
 import CrewRuntimePanel from './crew/CrewRuntimePanel'
 import { hasTauriRuntime, safeInvoke } from '../utils/safeInvoke'
 import { tr } from '../i18n'
-import { ArrowRight, ChevronDown, ListCollapse, ListTree, MousePointerClick, Trash2, UsersRound, Workflow } from 'lucide-react'
+import { ArrowRight, ChevronDown, ListCollapse, ListTree, MousePointerClick, Settings2, Trash2, UsersRound, Workflow } from 'lucide-react'
 
 const ROLE_OPTIONS: AgentRole[] = ['researcher', 'writer', 'reviewer', 'planner', 'executor', 'analyst', 'custom']
 const PROCESS_OPTIONS: Array<{ value: CrewProcess; label: string }> = [
@@ -340,7 +340,7 @@ export default function CrewPanel() {
   const [crewName, setCrewName] = useState('')
   const [providerModelOptions, setProviderModelOptions] = useState<Record<string, ProviderModelState>>({})
   const [pendingScrollCrewId, setPendingScrollCrewId] = useState<string | null>(null)
-  const [openSections, setOpenSections] = useState<Record<string, boolean>>({ general: true, execution: false, provider: false, diagnostics: true })
+  const [openSections, setOpenSections] = useState<Record<string, boolean>>({ general: true, execution: false, provider: false, diagnostics: false, members: false })
   const [expandedAgents, setExpandedAgents] = useState<Record<string, boolean>>({})
   const [isCrewListVisible, setIsCrewListVisible] = useState(() => typeof window === 'undefined' ? true : window.innerWidth >= 1320)
   const importCrewInputRef = useRef<HTMLInputElement | null>(null)
@@ -875,6 +875,11 @@ export default function CrewPanel() {
   const activeCrewHasProviderBlocker = activeCrewDiagnostics.errors.some((entry) => (
     entry.includes('OpenRouter') || entry.includes('OpenAI-compatible')
   ))
+  const activeCrewProviderSettingsPath = activeCrewDiagnostics.errors.some((entry) => entry.includes('OpenRouter'))
+    ? '/settings?provider=openrouter'
+    : activeCrewDiagnostics.errors.some((entry) => entry.includes('OpenAI-compatible'))
+      ? '/settings?provider=openai-compatible'
+      : '/settings'
   const outputModeLabel = activeCrew?.outputMode === 'bullet-report'
     ? 'Stichpunkte'
     : activeCrew?.outputMode === 'json'
@@ -973,7 +978,7 @@ export default function CrewPanel() {
               <button type="button" className="crew-compact-toggle" onClick={reviewActiveCrewBlockers}>{tr('Review blockers')}</button>
             )}
             {activeCrewHasProviderBlocker && (
-              <button type="button" className="crew-compact-toggle" onClick={() => navigate('/settings?section=ai')}>{tr('Open settings')}</button>
+              <button type="button" className="crew-compact-toggle" onClick={() => navigate(activeCrewProviderSettingsPath)}>{tr('Open settings')}</button>
             )}
             <button type="button" className="crew-compact-toggle" onClick={() => navigate(`/tasks?crew=${encodeURIComponent(activeCrew.id)}`)}>
               {tr('Prepare mission in Tasks')}
@@ -1210,6 +1215,14 @@ export default function CrewPanel() {
                           {activeCrewDiagnostics.warnings.map((entry) => (
                             <div key={`w-${entry}`} className="crew-alert warning"><span className="crew-alert-icon" aria-hidden="true">!</span> {tr(entry)}</div>
                           ))}
+                          {activeCrewHasProviderBlocker && (
+                            <div className="crew-overview-actions">
+                              <button type="button" className="ui-button ui-button--secondary" onClick={() => navigate(activeCrewProviderSettingsPath)}>
+                                <Settings2 size={15} aria-hidden="true" />
+                                {tr('Fix provider settings')}
+                              </button>
+                            </div>
+                          )}
                         </>
                       )}
                     </div>
@@ -1217,11 +1230,12 @@ export default function CrewPanel() {
                 </div>
 
                 {/* Agents */}
-                <div className="crew-section open">
-                  <div className="crew-section-header" style={{ cursor: 'default' }}>
-                    <span className="crew-section-icon" aria-hidden="true">05</span>{tr("Crew-members (")}{activeAgentCount}/{activeCrew.agents.length})
-                  </div>
-                  <div className="crew-section-body">
+                <div className={`crew-section${openSections.members ? ' open' : ''}`}>
+                  <button type="button" className="crew-section-header" aria-expanded={openSections.members} aria-controls="crew-section-members" onClick={() => toggleSection('members')}>
+                    <span className="crew-section-icon" aria-hidden="true">05</span>{tr("Crew-members (")}{activeAgentCount}/{activeCrew.agents.length})<ChevronDown className="crew-section-chevron" size={16} aria-hidden="true" />
+                  </button>
+                  {openSections.members && (
+                  <div id="crew-section-members" className="crew-section-body">
                     <div className="crew-members-hero">
                       <div className="crew-members-copy">
                         <div className="crew-overview-kicker">{tr("members")}</div>
@@ -1468,6 +1482,7 @@ export default function CrewPanel() {
                       })}
                     </div>
                   </div>
+                  )}
                 </div>
 
                 {/* Tasks hint */}

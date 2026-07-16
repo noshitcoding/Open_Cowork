@@ -193,8 +193,11 @@ describe('CrewPanel', () => {
 
     expect(screen.getByText('Crew-Arbeitsbereich')).toBeInTheDocument()
     expect(screen.getByText('Provider & Modell')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /Crew-Mitglieder/ }))
     expect(screen.getByText('Rollen, Modelle und Zugriff pro Agent')).toBeInTheDocument()
     expect(screen.getByText('Freigaben für alle Mitglieder')).toBeInTheDocument()
+    expect(screen.getAllByText('Alles erlauben').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('Crew-Starts erfolgen ohne Rückfrage. Bestehende manuelle Freigaben bleiben wirksam.').length).toBeGreaterThan(0)
   })
 
   it('does not run desktop personality migration in the browser preview', async () => {
@@ -245,6 +248,20 @@ describe('CrewPanel', () => {
     expect(screen.getByTestId('location')).toHaveTextContent('/tasks?crew=crew-1')
   })
 
+  it('keeps dense member controls collapsed until they are needed', async () => {
+    renderCrewPanel()
+
+    const members = screen.getByRole('button', { name: /Crew-members/ })
+    expect(members).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByText('Approvals for all members')).not.toBeInTheDocument()
+    expect(screen.getByText('Turn this crew into one complete mission')).toBeInTheDocument()
+
+    fireEvent.click(members)
+
+    expect(members).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByText('Approvals for all members')).toBeInTheDocument()
+  })
+
   it('explains provider blockers next to the disabled run action and links to their fixes', async () => {
     useConfigStore.setState((state) => ({
       llmProfiles: state.llmProfiles.map((profile) => profile.provider === 'openrouter'
@@ -288,8 +305,11 @@ describe('CrewPanel', () => {
     fireEvent.click(within(launchChecklist).getByRole('button', { name: 'Review blockers' }))
     expect(screen.getByRole('button', { name: /Diagnostics/i })).toHaveFocus()
 
+    fireEvent.click(screen.getByRole('button', { name: 'Fix provider settings' }))
+    expect(screen.getByTestId('location')).toHaveTextContent('/settings?provider=openrouter')
+
     fireEvent.click(within(launchChecklist).getByRole('button', { name: 'Open settings' }))
-    expect(screen.getByTestId('location')).toHaveTextContent('/settings?section=ai')
+    expect(screen.getByTestId('location')).toHaveTextContent('/settings?provider=openrouter')
   })
 
   it('syncs member providers to the crew provider when changing the crew provider', async () => {
@@ -321,6 +341,8 @@ describe('CrewPanel', () => {
       renderCrewPanel()
     })
 
+    fireEvent.click(screen.getByRole('button', { name: /Crew-members/ }))
+
     await act(async () => {
       fireEvent.click(screen.getByLabelText('Delegate task'))
     })
@@ -340,6 +362,8 @@ describe('CrewPanel', () => {
     await act(async () => {
       renderCrewPanel()
     })
+
+    fireEvent.click(screen.getByRole('button', { name: /Crew-members/ }))
 
     await act(async () => {
       fireEvent.click(screen.getByLabelText('workspace-mcp'))
