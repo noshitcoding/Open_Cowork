@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter, useLocation } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import CrewPanel from './CrewPanel'
@@ -221,9 +221,60 @@ describe('CrewPanel', () => {
   it('hands the active crew to the task mission composer', async () => {
     renderCrewPanel()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Prepare mission in Tasks' }))
+    const launchChecklist = screen.getByLabelText('Crew launch checklist')
+    expect(within(launchChecklist).getByText('Action needed')).toBeInTheDocument()
+    expect(within(launchChecklist).getByText('Create a mission in Tasks before running this crew.')).toBeInTheDocument()
+
+    fireEvent.click(within(launchChecklist).getByRole('button', { name: 'Prepare mission in Tasks' }))
 
     expect(screen.getByTestId('location')).toHaveTextContent('/tasks?crew=crew-1')
+  })
+
+  it('explains provider blockers next to the disabled run action and links to their fixes', async () => {
+    useConfigStore.setState((state) => ({
+      llmProfiles: state.llmProfiles.map((profile) => profile.provider === 'openrouter'
+        ? { ...profile, apiKey: '', model: 'nvidia/nemotron-3-super-120b-a12b:free' }
+        : profile),
+    }))
+    useCrewStore.setState((state) => ({
+      crews: state.crews.map((crew) => ({
+        ...crew,
+        defaultProvider: 'openrouter',
+        defaultModel: 'nvidia/nemotron-3-super-120b-a12b:free',
+        providerProfiles: {
+          ...crew.providerProfiles,
+          openRouter: {
+            ...crew.providerProfiles.openRouter,
+            enabled: true,
+            model: 'nvidia/nemotron-3-super-120b-a12b:free',
+            apiKey: '',
+          },
+        },
+        tasks: [{
+          id: 'task-openrouter',
+          description: 'Verify the product',
+          expectedOutput: 'Verified result',
+          agentId: 'agent-default',
+          context: [],
+          dependencies: [],
+          asyncExecution: false,
+          status: 'pending' as const,
+          output: null,
+        }],
+      })),
+    }))
+
+    renderCrewPanel()
+
+    const launchChecklist = screen.getByLabelText('Crew launch checklist')
+    expect(within(launchChecklist).getByText('OpenRouter crew profile has no API key.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Run crew' })).toBeDisabled()
+
+    fireEvent.click(within(launchChecklist).getByRole('button', { name: 'Review blockers' }))
+    expect(screen.getByRole('button', { name: /Diagnostics/i })).toHaveFocus()
+
+    fireEvent.click(within(launchChecklist).getByRole('button', { name: 'Open settings' }))
+    expect(screen.getByTestId('location')).toHaveTextContent('/settings?section=ai')
   })
 
   it('syncs member providers to the crew provider when changing the crew provider', async () => {
