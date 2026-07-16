@@ -293,14 +293,25 @@ describe('SettingsView', () => {
   /* 3. navigation switches categories */
   it('switches to Agent & Skills when clicked', () => {
     renderSettingsView()
-    fireEvent.click(screen.getByText('Agent & Skills'))
+    fireEvent.click(screen.getByRole('tab', { name: 'Agent & Skills' }))
     expect(screen.getByRole('heading', { level: 1, name: 'Agent & Skills' })).toBeInTheDocument()
+  })
+
+  it('switches categories through the compact selector', () => {
+    renderSettingsView()
+    const selector = screen.getByRole('combobox', { name: 'Settings categories' })
+
+    expect(selector).toHaveValue('ai')
+    fireEvent.change(selector, { target: { value: 'security' } })
+
+    expect(selector).toHaveValue('security')
+    expect(screen.getByRole('heading', { level: 1, name: 'Security & data' })).toBeInTheDocument()
   })
 
   /* 4. Interface category */
   it('switches to Interface category', () => {
     renderSettingsView()
-    fireEvent.click(screen.getByText('Interface'))
+    fireEvent.click(screen.getByRole('tab', { name: 'Interface' }))
     expect(screen.getByRole('heading', { level: 1, name: 'Interface' })).toBeInTheDocument()
     expect(screen.getByText('Focus mode')).toBeInTheDocument()
     expect(screen.getByText('Compact mode')).toBeInTheDocument()
@@ -309,7 +320,7 @@ describe('SettingsView', () => {
   /* 5. security category */
   it('switches to Security & data category', () => {
     renderSettingsView()
-    fireEvent.click(screen.getByText('Security & data'))
+    fireEvent.click(screen.getByRole('tab', { name: 'Security & data' }))
     expect(screen.getByRole('heading', { level: 1, name: 'Security & data' })).toBeInTheDocument()
     expect(screen.getByText('Read-only mode')).toBeInTheDocument()
   })
@@ -317,7 +328,7 @@ describe('SettingsView', () => {
   /* 6. System & Info shows runtime info */
   it('switches to System & Info and shows runtime info', () => {
     renderSettingsView()
-    fireEvent.click(screen.getByText('System & Info'))
+    fireEvent.click(screen.getByRole('tab', { name: 'System & Info' }))
     expect(screen.getByRole('heading', { level: 1, name: 'System & Info' })).toBeInTheDocument()
     expect(screen.getByText('Local LLM endpoint')).toBeInTheDocument()
     expect(screen.getByText('http://localhost:11434')).toBeInTheDocument()
@@ -333,21 +344,21 @@ describe('SettingsView', () => {
   /* 7. Memory category renders */
   it('switches to Memory category', () => {
     renderSettingsView()
-    fireEvent.click(screen.getByText('Memory'))
+    fireEvent.click(screen.getByRole('tab', { name: 'Memory' }))
     expect(screen.getByRole('heading', { level: 1, name: 'Memory' })).toBeInTheDocument()
   })
 
   /* 8. Sessions & Insights category renders */
   it('switches to Sessions & Insights', () => {
     renderSettingsView()
-    fireEvent.click(screen.getByText('Sessions & Insights'))
+    fireEvent.click(screen.getByRole('tab', { name: 'Sessions & Insights' }))
     expect(screen.getByRole('heading', { level: 1, name: 'Sessions & Insights' })).toBeInTheDocument()
   })
 
   /* 9. Terminal & Processes category renders */
   it('switches to Terminal & Processes', () => {
     renderSettingsView()
-    fireEvent.click(screen.getByText('Terminal & Processes'))
+    fireEvent.click(screen.getByRole('tab', { name: 'Terminal & Processes' }))
     expect(screen.getByRole('heading', { level: 1, name: 'Terminal & Processes' })).toBeInTheDocument()
     expect(screen.getByText('Terminal dock')).toBeInTheDocument()
     expect(screen.getByRole('combobox', { name: 'Persistence' })).toHaveValue('runtime')
@@ -356,7 +367,7 @@ describe('SettingsView', () => {
   /* 10. MCP Server category renders */
   it('switches to MCP Server', () => {
     renderSettingsView()
-    fireEvent.click(screen.getByText('MCP Server'))
+    fireEvent.click(screen.getByRole('tab', { name: 'MCP Server' }))
     // McpView also has an h1 "MCP Server", so check for the settings toggle instead
     expect(screen.getByText('Auto-reconnect')).toBeInTheDocument()
     expect(screen.getByText('Verbose logging')).toBeInTheDocument()
@@ -399,7 +410,7 @@ describe('SettingsView', () => {
   /* 14. Toggle updates preference */
   it('toggles autoApproveSafeTools preference', () => {
     renderSettingsView()
-    fireEvent.click(screen.getByText('Agent & Skills'))
+    fireEvent.click(screen.getByRole('tab', { name: 'Agent & Skills' }))
     const toggleBtn = screen.getByText('Automatically approve safe tools').closest('.toggle-row')!.querySelector('button[role="switch"]')!
     expect(toggleBtn.getAttribute('aria-checked')).toBe('true')
     fireEvent.click(toggleBtn)
@@ -453,7 +464,7 @@ describe('SettingsView', () => {
   /* 17. Number input for maxToolCalls */
   it('updates maxToolCallsPerLoop preference', () => {
     renderSettingsView()
-    fireEvent.click(screen.getByText('Agent & Skills'))
+    fireEvent.click(screen.getByRole('tab', { name: 'Agent & Skills' }))
     const input = screen.getByDisplayValue('12')
     fireEvent.change(input, { target: { value: '25' } })
     expect(useConfigStore.getState().preferences.maxToolCallsPerLoop).toBe(25)
@@ -462,7 +473,7 @@ describe('SettingsView', () => {
   /* 18. Font scale input in Interface */
   it('updates fontScale preference', () => {
     renderSettingsView()
-    fireEvent.click(screen.getByText('Interface'))
+    fireEvent.click(screen.getByRole('tab', { name: 'Interface' }))
     const input = screen.getByDisplayValue('100')
     fireEvent.change(input, { target: { value: '110' } })
     expect(useConfigStore.getState().preferences.fontScale).toBe(110)
@@ -475,7 +486,7 @@ describe('SettingsView', () => {
     const aiBtn = tabs.querySelector('.settings-nav-item.active')!
     expect(aiBtn.textContent).toContain('AI & model')
 
-    fireEvent.click(screen.getByText('Interface'))
+    fireEvent.click(screen.getByRole('tab', { name: 'Interface' }))
     const uiBtn = tabs.querySelector('.settings-nav-item.active')!
     expect(uiBtn.textContent).toContain('Interface')
   })
@@ -488,7 +499,7 @@ describe('SettingsView', () => {
 
   it('updates visible settings text when the language changes', async () => {
     renderSettingsView()
-    fireEvent.click(screen.getByText('Terminal & Processes'))
+    fireEvent.click(screen.getByRole('tab', { name: 'Terminal & Processes' }))
 
     expect(screen.getByRole('option', { name: 'Runtime only' })).toBeInTheDocument()
 

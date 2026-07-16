@@ -408,7 +408,7 @@ export default function SettingsView() {
 
   const handleCategoryKeyDown = (event: KeyboardEvent<HTMLButtonElement>, category: CategoryKey) => {
     const currentIndex = visibleCategories.findIndex((item) => item.key === category)
-    if (currentIndex < 0 || visibleCategories.length === 0) return
+    if (currentIndex < 0 || !visibleCategories.length) return
 
     let nextIndex = currentIndex
     if (event.key === 'ArrowDown' || event.key === 'ArrowRight') nextIndex = (currentIndex + 1) % visibleCategories.length
@@ -443,6 +443,17 @@ export default function SettingsView() {
           />
           {normalizedCategorySearch ? <span>{visibleCategories.length}</span> : null}
         </label>
+        <select
+          className="settings-category-select"
+          value={activeCategoryMatchesSearch ? activeCategory : ''}
+          onChange={(event) => setActiveCategory(event.currentTarget.value as CategoryKey)}
+          aria-label={tr('Settings categories')}
+          disabled={!visibleCategories.length}
+        >
+          {visibleCategories.map((category) => (
+            <option key={category.key} value={category.key}>{tr(category.label)}</option>
+          ))}
+        </select>
         <nav className="settings-nav-list" role="tablist" aria-label={tr("Settings categories")}>
           {visibleCategories.map((cat) => {
             const Icon = cat.icon
@@ -464,7 +475,7 @@ export default function SettingsView() {
               </button>
             )
           })}
-          {visibleCategories.length === 0 ? (
+          {!visibleCategories.length ? (
             <p className="settings-category-empty">{tr('No settings sections match your search')}</p>
           ) : null}
         </nav>
@@ -472,7 +483,7 @@ export default function SettingsView() {
 
       {/* Content area */}
       <div className="settings-content">
-        {visibleCategories.length === 0 ? (
+        {!visibleCategories.length ? (
           <div className="settings-view" role="status">
             <Section title={tr('No settings sections match your search')} icon={Search}>
               <p className="hint-text">{categorySearch}</p>

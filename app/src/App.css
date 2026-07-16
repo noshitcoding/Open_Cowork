@@ -8000,6 +8000,8 @@ button.compact-send-btn {
 .settings-category-search:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(224, 120, 50, .1); }
 .settings-category-search input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--text-primary); font: inherit; font-size: 12px; }
 .settings-category-search span { min-width: 22px; padding: 2px 6px; border-radius: 999px; background: var(--accent-light); color: var(--accent); font-size: 10px; font-weight: 800; text-align: center; }
+.settings-category-select { display: none; min-width: 0; width: 100%; min-height: 40px; padding: 0 10px; border: 1px solid var(--border-color); border-radius: 11px; background: var(--bg-white); color: var(--text-primary); font: inherit; font-size: 12px; }
+.settings-category-select:focus-visible { border-color: var(--accent); outline: 3px solid rgba(224, 120, 50, .1); }
 .settings-nav-list { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .settings-category-empty { margin: 10px 8px; color: var(--text-muted); font-size: 11px; line-height: 1.45; }
 
@@ -8398,6 +8400,7 @@ button.compact-send-btn {
 .settings-content {
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 0;
   background: var(--bg-primary);
 }
@@ -8557,7 +8560,12 @@ button.compact-send-btn {
 }
 
 @media (max-width: 760px) {
-  .settings-category-search { flex-basis: 170px; }
+  .settings-sidebar { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); overflow: visible; padding-inline: 24px; gap: 8px; }
+  .settings-category-search { width: 100%; margin: 0; }
+  .settings-category-select { display: block; }
+  .settings-nav-list { display: none; }
+  .connector-card-header,
+  .connector-test-row { align-items: stretch; flex-direction: column; }
 
   .settings-page-header {
     grid-template-columns: auto minmax(0, 1fr);
@@ -8703,6 +8711,10 @@ button.compact-send-btn {
   .llm-provider-default-row { justify-content: stretch; }
   .llm-provider-default-row label { width: 100%; align-items: stretch; flex-direction: column; }
   .llm-provider-default-row select { width: 100%; min-width: 0; }
+}
+
+@media (max-width: 420px) {
+  .settings-sidebar { grid-template-columns: minmax(0, 1fr); }
 }
 
 /* ================================================================
