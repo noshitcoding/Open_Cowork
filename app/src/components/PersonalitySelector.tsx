@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Trash2 } from 'lucide-react'
+import { Bot, Brain, Database, Palette, SquareTerminal, Trash2 } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 import { usePersonalityStore, type Personality } from '../stores/personalityStore'
 import { useConfigStore } from '../stores/configStore'
 import type { AgentRole } from '../stores/crewStore'
@@ -30,6 +31,20 @@ const EMPTY_FORM: PersonalityForm = {
 }
 
 const ROLE_OPTIONS: AgentRole[] = ['researcher', 'writer', 'reviewer', 'planner', 'executor', 'analyst', 'custom']
+
+const DEFAULT_PERSONALITY_ICONS: Record<string, LucideIcon> = {
+  'pers-standard-coder': SquareTerminal,
+  'pers-standard-creative': Palette,
+  'pers-standard-analyst': Database,
+  'pers-standard-mentor': Brain,
+  'pers-standard-assistant': Bot,
+}
+
+function formatRoleLabel(role: AgentRole) {
+  if (role === 'executor') return tr('Execution')
+  if (role === 'custom') return tr('Custom')
+  return role.charAt(0).toUpperCase() + role.slice(1)
+}
 
 function randomId() {
   return `pers-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -66,13 +81,13 @@ function PersonalityEditor({
 }) {
   return (
     <div>
-      <div className="grid" style={{ gridTemplateColumns: '80px 1fr 160px 1fr', marginBottom: 8 }}>
+      <div className="grid personality-editor-grid">
         <label>{tr("Icon")}<input type="text" value={form.icon} onChange={(e) => onChange({ ...form, icon: e.target.value })} maxLength={4} />
         </label>
         <label>{tr("Name")}<input type="text" value={form.name} onChange={(e) => onChange({ ...form, name: e.target.value })} />
         </label>
         <label>{tr("Rolle")}<select value={form.role} onChange={(e) => onChange({ ...form, role: e.target.value as AgentRole })}>
-            {ROLE_OPTIONS.map((role) => <option key={role} value={role}>{role}</option>)}
+            {ROLE_OPTIONS.map((role) => <option key={role} value={role}>{formatRoleLabel(role)}</option>)}
           </select>
         </label>
         <label>{tr("Model")}<select value={form.modelOverride} onChange={(e) => onChange({ ...form, modelOverride: e.target.value })}>
@@ -205,11 +220,16 @@ export default function PersonalitySelector() {
         <p className="panel-empty">{tr("No personalities configured. Create one to adjust the agent style.")}</p>
       ) : (
         <div className="personality-list">
-          {personalities.map((personality) => (
-            <div
-              key={personality.id}
-              className={`card personality-card${activeId === personality.id ? ' active' : ''}`}
-            >
+          {personalities.map((personality) => {
+            const DefaultIcon = DEFAULT_PERSONALITY_ICONS[personality.id]
+            const displayName = tr(personality.name)
+            const description = tr(personality.goal || personality.description)
+
+            return (
+              <div
+                key={personality.id}
+                className={`card personality-card${activeId === personality.id ? ' active' : ''}`}
+              >
               {editId === personality.id ? (
                 <PersonalityEditor
                   form={editForm}
@@ -228,19 +248,21 @@ export default function PersonalitySelector() {
                     type="button"
                     className="personality-card-main"
                     aria-pressed={activeId === personality.id}
-                    aria-label={`${tr("Select personality")} ${personality.name}`}
+                    aria-label={`${tr("Select personality")} ${displayName}`}
                     onClick={() => setActive(personality.id)}
                   >
-                    <span className="personality-card-icon">{personality.icon || 'AI'}</span>
+                    <span className="personality-card-icon" aria-hidden="true">
+                      {DefaultIcon ? <DefaultIcon size={18} /> : (personality.icon || 'AI')}
+                    </span>
                     <div className="personality-card-body">
                       <div className="personality-card-title">
-                        {personality.name}
+                        {displayName}
                         {activeId === personality.id && <span className="personality-card-badge active">{tr("active")}</span>}
                         {personality.is_default && <span className="personality-card-badge default">{tr("Standard")}</span>}
                       </div>
-                      <div className="personality-card-description">{personality.goal || personality.description}</div>
+                      <div className="personality-card-description">{description}</div>
                       <div className="personality-card-meta">
-                        <span>{tr("Rolle:")} {personality.role}</span>
+                        <span>{tr("Rolle:")} {formatRoleLabel(personality.role)}</span>
                         {personality.model_override && <span>{tr("Model:")} {personality.model_override}</span>}
                         {personality.temperature != null && <span>{tr("Temp:")} {personality.temperature}</span>}
                       </div>
@@ -252,7 +274,7 @@ export default function PersonalitySelector() {
                       type="button"
                       className="btn-sm personality-delete-button"
                       onClick={() => { void deletePersonality(personality.id).then(loadPersonalities) }}
-                      aria-label={`${tr("Delete personality")} ${personality.name}`}
+                      aria-label={`${tr("Delete personality")} ${displayName}`}
                       title={tr("Delete personality")}
                     >
                       <Trash2 size={14} aria-hidden="true" />
@@ -260,8 +282,9 @@ export default function PersonalitySelector() {
                   </div>
                 </div>
               )}
-            </div>
-          ))}
+              </div>
+            )
+          })}
         </div>
       )}
     </div>

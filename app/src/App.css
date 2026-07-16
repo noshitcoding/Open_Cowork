@@ -4861,6 +4861,7 @@ button.compact-send-btn {
 
 .personality-card.active {
   border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent-light) 48%, var(--bg-white));
   box-shadow: 0 0 0 1px rgba(224, 120, 50, 0.18);
 }
 
@@ -4871,7 +4872,8 @@ button.compact-send-btn {
   gap: 12px;
 }
 
-.personality-card-main {
+.personality-card-main,
+.settings-view .personality-card-main {
   display: flex;
   align-items: flex-start;
   gap: 8px;
@@ -4884,6 +4886,7 @@ button.compact-send-btn {
   padding: 0;
   border-radius: var(--radius-sm);
   cursor: pointer;
+  font-weight: inherit;
 }
 
 .personality-card-main:focus-visible {
@@ -4943,7 +4946,32 @@ button.compact-send-btn {
   flex-shrink: 0;
 }
 
-.personality-delete-button {
+.grid.personality-editor-grid {
+  grid-template-columns: 80px minmax(0, 1fr) 160px minmax(0, 1fr);
+  margin-bottom: 8px;
+}
+
+@media (max-width: 900px) {
+  .grid.personality-editor-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 520px) {
+  .grid.personality-editor-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.settings-view .personality-card-actions .btn-sm {
+  padding: 6px 10px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-white);
+  color: var(--text-secondary);
+}
+
+.personality-delete-button,
+.settings-view .personality-card-actions .personality-delete-button {
   color: var(--danger);
   display: inline-flex;
   align-items: center;

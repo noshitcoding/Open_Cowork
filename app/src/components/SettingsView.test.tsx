@@ -502,6 +502,9 @@ describe('SettingsView', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'KI & Modell' }))
     expect(screen.getByText('Mehrere Endpunkte parallel verwalten und pro Provider ein globales Standardprofil für Auswahllisten und Rückfälle festlegen.')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Persönlichkeiten verwalten' })).toBeInTheDocument()
+    expect(await screen.findByText('Entwickle wartbare Software mit verifizierten Ergebnissen.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Persönlichkeit auswählen Kreativ' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Persönlichkeit löschen Assistent' })).toBeInTheDocument()
   })
 
   it('creates a support bundle from system settings', async () => {
