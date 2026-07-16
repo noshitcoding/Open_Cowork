@@ -42,13 +42,14 @@ export default function PipelinePanel() {
 
   const handleAddGateway = async () => {
     if (!gToolType.trim() || !gName.trim() || !gConfig.trim()) return
-    await upsertToolGateway({
+    const saved = await upsertToolGateway({
       id: crypto.randomUUID(),
       toolType: gToolType.trim(),
       name: gName.trim(),
       configJson: gConfig.trim(),
       enabled: true,
     })
+    if (!saved) return
     setGToolType('')
     setGName('')
     setGConfig('')
@@ -177,8 +178,8 @@ export default function PipelinePanel() {
             />
             <textarea
               className="pipeline-input pipeline-textarea"
-              aria-label={tr("Configuration (JSON, e.g. {\"endpoint\":\"http://...\",\"auth\":\"...\"})")}
-              placeholder={tr("Configuration (JSON, e.g. {\"endpoint\":\"http://...\",\"auth\":\"...\"})")}
+              aria-label={tr("Protected configuration (JSON)")}
+              placeholder={tr("Protected configuration (JSON)")}
               value={gConfig}
               onChange={(e) => setGConfig(e.target.value)}
               rows={3}
@@ -202,7 +203,7 @@ export default function PipelinePanel() {
                       </span>
                     </div>
                     <div className="pipeline-description">{gateway.tool_type}</div>
-                    <div className="pipeline-code">{gateway.config_json}</div>
+                    <div className="pipeline-code">{tr("Protected configuration")}</div>
                   </div>
                   <button type="button" className="pipeline-danger-button" onClick={() => void deleteToolGateway(gateway.id)} aria-label={tr("Delete gateway entry")} title={tr("Delete gateway entry")}>
                     <Trash2 size={14} aria-hidden="true" />

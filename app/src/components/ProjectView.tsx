@@ -3,11 +3,14 @@ import type { DragEvent, KeyboardEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { open } from '@tauri-apps/plugin-dialog'
 import {
+  CheckCircle2,
   FilePlus,
+  FolderKanban,
   FolderOpen,
   FolderPlus,
   Link2,
   MessageSquarePlus,
+  MessagesSquare,
   Plus,
   Trash2,
   X,
@@ -127,6 +130,8 @@ export default function ProjectView() {
   }, [activeProject, projects, setActiveProject])
 
   useEffect(() => {
+    // This mirrors the selected project into editable draft fields.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setTitleDraft(activeProject?.title ?? '')
     setInstructionsDraft(activeProject?.instructions ?? '')
     setLinkDraft('')
@@ -296,8 +301,15 @@ export default function ProjectView() {
     <div className="project-view">
       <aside className="project-list-panel">
         <div className="project-list-header">
-          <h1>{tr("Projects")}</h1>
-          <button type="button" className="btn-sm project-icon-button" onClick={handleCreateProject}>
+          <div className="project-list-heading">
+            <span>{tr('Workspace library')}</span>
+            <div className="project-list-title-row">
+              <h1>{tr("Projects")}</h1>
+              <strong>{projects.length}</strong>
+            </div>
+            <p>{tr('Shared context for focused work.')}</p>
+          </div>
+          <button type="button" className="btn-sm project-icon-button" onClick={handleCreateProject} aria-label={tr('New project')}>
             <Plus size={14} aria-hidden="true" />{tr("New")}</button>
         </div>
 
@@ -325,7 +337,12 @@ export default function ProjectView() {
             )
           })}
           {projects.length === 0 && (
-            <p className="hint-text">{tr("No projects yet.")}</p>
+            <div className="project-list-empty">
+              <FolderPlus size={20} aria-hidden="true" />
+              <strong>{tr("No projects yet.")}</strong>
+              <span>{tr('Create a focused workspace for related chats and sources.')}</span>
+              <button type="button" className="btn-sm" onClick={handleCreateProject}>{tr('Create first project')}</button>
+            </div>
           )}
         </div>
       </aside>
@@ -333,36 +350,46 @@ export default function ProjectView() {
       <main className="project-detail">
         {!activeProject ? (
           <div className="project-empty-state">
-            <FolderOpen size={38} aria-hidden="true" />
-            <h2>{tr("No project selected")}</h2>
-            <button type="button" className="btn-send" onClick={handleCreateProject}>{tr("Create project")}</button>
+            <div className="project-empty-hero">
+              <span className="project-empty-mark"><FolderOpen size={26} aria-hidden="true" /></span>
+              <span className="project-empty-kicker">{tr('Project workspace')}</span>
+              <h2>{tr('Give focused work a permanent home')}</h2>
+              <p>{tr('Bundle instructions, sources, and conversations so every new chat starts with the right context.')}</p>
+              <button type="button" className="btn-send" onClick={handleCreateProject}>
+                <FolderPlus size={16} aria-hidden="true" />{tr("Create project")}
+              </button>
+            </div>
+            <div className="project-empty-steps" aria-label={tr('Project setup steps')}>
+              <div><FilePlus size={18} aria-hidden="true" /><span><strong>{tr('Add sources')}</strong><small>{tr('Files, folders, and trusted links')}</small></span></div>
+              <div><MessageSquarePlus size={18} aria-hidden="true" /><span><strong>{tr('Start project chats')}</strong><small>{tr('Keep related conversations together')}</small></span></div>
+              <div><CheckCircle2 size={18} aria-hidden="true" /><span><strong>{tr('Reuse the context')}</strong><small>{tr('Carry the brief into every run')}</small></span></div>
+            </div>
           </div>
         ) : (
           <>
             <header className="project-detail-header">
-              <div className="project-title-editor">
-                <label htmlFor="project-title">{tr("Project name")}</label>
-                <input
-                  id="project-title"
-                  value={titleDraft}
-                  onChange={(event) => setTitleDraft(event.currentTarget.value)}
-                  onBlur={commitTitle}
-                  onKeyDown={handleTitleKeyDown}
-                />
-              </div>
-              <div className="project-instructions-editor">
-                <label htmlFor="project-instructions">{tr("Project instructions")}</label>
-                <textarea
-                  id="project-instructions"
-                  value={instructionsDraft}
-                  rows={3}
-                  onChange={(event) => setInstructionsDraft(event.currentTarget.value)}
-                  onBlur={commitInstructions}
-                  placeholder={tr("Additional instructions for chats in this project...")}
-                />
+              <div className="project-title-cluster">
+                <span className="project-detail-mark"><FolderKanban size={22} aria-hidden="true" /></span>
+                <div className="project-title-editor">
+                  <span className="project-empty-kicker">{tr('Project workspace')}</span>
+                  <label htmlFor="project-title">{tr("Project name")}</label>
+                  <input
+                    id="project-title"
+                    value={titleDraft}
+                    onChange={(event) => setTitleDraft(event.currentTarget.value)}
+                    onBlur={commitTitle}
+                    onKeyDown={handleTitleKeyDown}
+                  />
+                  <div className="project-title-meta" aria-label={tr('Project overview')}>
+                    <span><strong>{activeProject.resources.length}</strong>{tr('sources')}</span>
+                    <span><strong>{projectThreads.length}</strong>{tr('Chats')}</span>
+                    <span className={activeProject.instructions.trim() ? 'ready' : ''}>
+                      <strong>{activeProject.instructions.trim() ? tr('Ready') : tr('Draft')}</strong>{tr('brief')}</span>
+                  </div>
+                </div>
               </div>
               <div className="project-detail-actions">
-                <button type="button" className="btn-sm project-icon-button" onClick={handleNewProjectChat}>
+                <button type="button" className="btn-send project-icon-button" onClick={handleNewProjectChat}>
                   <MessageSquarePlus size={14} aria-hidden="true" />{tr("Chat")}</button>
                 <button type="button" className="btn-sm project-icon-button" onClick={handleAddFiles}>
                   <FilePlus size={14} aria-hidden="true" />{tr("Files")}</button>
@@ -380,6 +407,24 @@ export default function ProjectView() {
                 </button>
               </div>
             </header>
+
+            <section className="project-brief-card">
+              <div className="project-brief-header">
+                <div>
+                  <span className="project-empty-kicker">{tr('Project brief')}</span>
+                  <label htmlFor="project-instructions">{tr("Project instructions")}</label>
+                </div>
+                <span><CheckCircle2 size={14} aria-hidden="true" />{tr('Applied to project chats')}</span>
+              </div>
+              <textarea
+                id="project-instructions"
+                value={instructionsDraft}
+                rows={3}
+                onChange={(event) => setInstructionsDraft(event.currentTarget.value)}
+                onBlur={commitInstructions}
+                placeholder={tr("Additional instructions for chats in this project...")}
+              />
+            </section>
 
             {deletePromptOpen && (
               <div className="project-delete-modal">
@@ -416,7 +461,8 @@ export default function ProjectView() {
               onDragLeave={() => setDropActive(false)}
               onDrop={(event) => handleProjectDrop(event, activeProject.id)}
             >
-              <span>{tr("Drop chats or files here")}</span>
+              <FolderPlus size={18} aria-hidden="true" />
+              <span><strong>{tr("Drop chats or files here")}</strong><small>{tr('They will be added to this project context.')}</small></span>
             </section>
 
             <div className="project-detail-grid">
@@ -471,7 +517,12 @@ export default function ProjectView() {
                     </div>
                   ))}
                   {activeProject.resources.length === 0 && (
-                    <p className="hint-text">{tr("No sources linked.")}</p>
+                    <div className="project-panel-empty">
+                      <FilePlus size={20} aria-hidden="true" />
+                      <strong>{tr("No sources linked.")}</strong>
+                      <span>{tr('Add files, folders, or links to ground future chats.')}</span>
+                      <button type="button" className="btn-sm" onClick={handleAddFiles}>{tr('Add files')}</button>
+                    </div>
                   )}
                 </div>
               </section>
@@ -511,7 +562,12 @@ export default function ProjectView() {
                     </div>
                   ))}
                   {projectThreads.length === 0 && (
-                    <p className="hint-text">{tr("No chats in the project yet.")}</p>
+                    <div className="project-panel-empty">
+                      <MessagesSquare size={20} aria-hidden="true" />
+                      <strong>{tr("No chats in the project yet.")}</strong>
+                      <span>{tr('Start with the project brief already attached.')}</span>
+                      <button type="button" className="btn-sm" onClick={handleNewProjectChat}>{tr('Start chat')}</button>
+                    </div>
                   )}
                 </div>
               </section>
@@ -540,7 +596,7 @@ export default function ProjectView() {
                         >
                           <span>{thread.title}</span>
                           <small>
-                            {sourceProjectTitle ? `Aus ${sourceProjectTitle}` : tr('Not in this project')} / {formatDate(thread.updatedAt)}
+                            {sourceProjectTitle ? `${tr('from')} ${sourceProjectTitle}` : tr('Not in this project')} / {formatDate(thread.updatedAt)}
                           </small>
                         </button>
                         <button
@@ -552,7 +608,10 @@ export default function ProjectView() {
                     )
                   })}
                   {outsideThreads.length === 0 && (
-                    <p className="hint-text">{tr("No more chats available.")}</p>
+                    <div className="project-panel-empty compact">
+                      <CheckCircle2 size={20} aria-hidden="true" />
+                      <span><strong>{tr("No more chats available.")}</strong>{tr('Every available chat is already organized.')}</span>
+                    </div>
                   )}
                 </div>
               </section>

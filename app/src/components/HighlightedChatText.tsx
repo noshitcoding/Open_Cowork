@@ -7,17 +7,14 @@ type HighlightedChatTextProps = {
   content: string
 }
 
-const COMMAND_TOKEN_PATTERN = /(^|[\s([{])\/[A-Za-z][A-Za-z0-9_-]*/g
-
 export function HighlightedChatText({ content }: HighlightedChatTextProps) {
   const extracted = extractWebSearchSources(content)
   const parts: ReactNode[] = []
   let lastIndex = 0
   let match: RegExpExecArray | null
+  const commandTokenPattern = /(^|[\s([{])\/[A-Za-z][A-Za-z0-9_-]*/g
 
-  COMMAND_TOKEN_PATTERN.lastIndex = 0
-
-  while ((match = COMMAND_TOKEN_PATTERN.exec(extracted.content)) !== null) {
+  while ((match = commandTokenPattern.exec(extracted.content)) !== null) {
     const prefix = match[1] ?? ''
     const commandStart = match.index + prefix.length
     const commandEnd = match.index + match[0].length

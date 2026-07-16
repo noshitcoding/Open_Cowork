@@ -1,12 +1,15 @@
+/* eslint-disable react-refresh/only-export-components */
 import { lazy, Suspense, useRef, useEffect, useMemo, useState } from 'react'
 import type { ClipboardEvent, DragEvent, FormEvent } from 'react'
 import { open, save } from '@tauri-apps/plugin-dialog'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useChatStore, getActiveThread, type ChatMessage } from '../stores/chatStore'
 import type { LiveToolCall, LiveToolCallStatus } from '../stores/chatStore'
-import { CheckCircle2, ChevronDown, Clock3, Loader2, ShieldAlert, Wrench, XCircle } from 'lucide-react'
+import { ArrowRight, CheckCircle2, ChevronDown, Clock3, ListTodo, Loader2, PanelRightOpen, Settings2, ShieldAlert, Wrench, XCircle } from 'lucide-react'
 import { useConfigStore } from '../stores/configStore'
 import { useTaskStore } from '../stores/taskStore'
 import { useWorkTasksStore } from '../stores/workTasksStore'
+import { formatWorkTaskStatus } from '../engine/tasks/workTaskExecutionService'
 import { useLogStore } from '../stores/logStore'
 import { useCoworkStore, type ClaudePermissionMode } from '../stores/coworkStore'
 import { useMemoryStore } from '../stores/memoryStore'
@@ -48,7 +51,9 @@ import { appendWebSearchSources, mergeWebSearchSources, parseWebSearchSourcesFro
 // Ollama streaming is now handled by the engine
 import { MessageThinking, MessageVerbose } from './MessageThinking'
 import { HighlightedChatText } from './HighlightedChatText'
-import CrewLiveMonitor from './CrewLiveMonitor'
+import GuidedOnboarding from './GuidedOnboarding'
+import CoworkQuickPrompts from './CoworkQuickPrompts'
+import CoworkContextRail from './CoworkContextRail'
 import { writeAuditEvent } from '../utils/audit'
 import { persistInvoke } from '../stores/chatStore'
 import {
@@ -76,6 +81,7 @@ import {
 import { tr } from '../i18n'
 
 const TerminalDock = lazy(() => import('./TerminalDock'))
+const CrewLiveMonitor = lazy(() => import('./CrewLiveMonitor'))
 
 type WebFetchResponse = {
   url: string
@@ -127,6 +133,61 @@ export function buildProjectInstructionsPromptContext(
   const instructions = project?.instructions.trim()
   if (!project || !instructions) return ''
   return `Project instructions for "${project.title}":\n${instructions}`
+}
+
+export function isAssistantFailureContent(content: string): boolean {
+  const normalized = content.trim().toLocaleLowerCase()
+  return normalized.startsWith('llm request failed:')
+    || normalized.startsWith('authenticationerror:')
+    || normalized.startsWith('connectionerror:')
+    || normalized.startsWith('timeouterror:')
+}
+
+export function formatAssistantFailureContent(content: string): string {
+  const paragraphs = content.trim().split(/\n\s*\n/)
+  const firstParagraph = paragraphs[0] ?? ''
+  if (!firstParagraph.toLocaleLowerCase().startsWith('llm request failed:')) return content
+
+  const rawDetail = firstParagraph.slice(firstParagraph.indexOf(':') + 1).trim()
+  const missingApiKey = rawDetail.match(/^(.+?) API-Key fehlt\.$/i)
+  const missingModel = rawDetail.match(/^(.+?) Model fehlt\.$/i)
+  const localizedDetail = missingApiKey
+    ? tr('API key is missing for {{provider}}.', { provider: missingApiKey[1] })
+    : missingModel
+      ? tr('Model is missing for {{provider}}.', { provider: missingModel[1] })
+      : rawDetail
+
+  return [
+    `${tr('Request failed')}: ${localizedDetail}`,
+    ...paragraphs.slice(1).map((paragraph) => tr(paragraph)),
+  ].filter(Boolean).join('\n\n')
+}
+
+export function getAssistantFailureSettingsPath(content: string): string {
+  const normalized = content.toLocaleLowerCase()
+  if (normalized.includes('openrouter')) return '/settings?provider=openrouter'
+  if (normalized.includes('openai-compatible')) return '/settings?provider=openai-compatible'
+  if (normalized.includes('ollama')) return '/settings?provider=ollama'
+  return '/settings'
+}
+
+export function findPreviousUserMessage(
+  messages: readonly ChatMessage[],
+  assistantMessageId: string,
+): ChatMessage | null {
+  const assistantIndex = messages.findIndex((message) => message.id === assistantMessageId)
+  if (assistantIndex < 0) return null
+
+  for (let index = assistantIndex - 1; index >= 0; index -= 1) {
+    const candidate = messages[index]
+    if (candidate?.role === 'user') return candidate
+  }
+  return null
+}
+
+export function appendStoppedAssistantContent(content: string): string {
+  const notice = tr('Stopped')
+  return content.trim() ? `${content}\n\n${notice}` : notice
 }
 
 type McpCallResponse = {
@@ -715,7 +776,7 @@ function LiveToolCalls({ calls }: { calls?: LiveToolCall[] }) {
               <span className="live-tool-call-status">{getToolStatusLabel(displayCall.status)}</span>
             </div>
             {inputPreview && (
-              <details className="live-tool-call-detail" open={displayCall.status === 'requested' || displayCall.status === 'running' || displayCall.status === 'approval' || displayCall.status === 'waiting_input'}>
+              <details className="live-tool-call-detail" open={displayCall.status === 'requested' || displayCall.status === 'running' || displayCall.status === 'approval'}>
                 <summary>{tr("Input")}</summary>
                 <pre>{inputPreview}</pre>
               </details>
@@ -734,6 +795,9 @@ function LiveToolCalls({ calls }: { calls?: LiveToolCall[] }) {
 }
 
 export default function CoworkView() {
+  const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const requestedSlashDraft = searchParams.get('slash')
   const [attachments, setAttachments] = useState<ChatAttachment[]>([])
   const [attachmentNotice, setAttachmentNotice] = useState<string | null>(null)
   const [includeProjectLinks, setIncludeProjectLinks] = useState(false)
@@ -747,6 +811,8 @@ export default function CoworkView() {
   const [askUserFreeText, setAskUserFreeText] = useState('')
   const [slashSuggestionsOpen, setSlashSuggestionsOpen] = useState(false)
   const [activeSlashSuggestionIndex, setActiveSlashSuggestionIndex] = useState(0)
+  const [contextRailOpen, setContextRailOpen] = useState(() => typeof window !== 'undefined' && window.innerWidth >= 1500)
+  const [contextEvidenceRun, setContextEvidenceRun] = useState<{ runId: string; threadId: string | null } | null>(null)
   const ollama = useConfigStore((s) => s.ollama)
   const availableModels = useConfigStore((s) => s.availableModels)
   const setOllama = useConfigStore((s) => s.setOllama)
@@ -764,6 +830,8 @@ export default function CoworkView() {
   const clearCurrentToolUI = useEngineStore((s) => s.clearCurrentToolUI)
   const forceCompact = useEngineStore((s) => s.forceCompact)
   const currentSessionId = useEngineStore((s) => s.currentSessionId)
+  const currentRunId = useEngineStore((s) => s.currentRunId)
+  const engineStatus = useEngineStore((s) => s.status)
   const contextWarning = useEngineStore((s) => s.contextWarning)
   const compactionCount = useEngineStore((s) => s.compactionCount)
   const liveThinkingText = useEngineStore((s) => s.thinkingText)
@@ -815,6 +883,28 @@ export default function CoworkView() {
   const setTerminalDockOpen = useTerminalStore((s) => s.setDockOpen)
   const setActiveAiThread = useTerminalStore((s) => s.setActiveAiThread)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+
+  useEffect(() => {
+    if (!requestedSlashDraft?.startsWith('/')) return
+    setInputValue(`${requestedSlashDraft.trim()} `)
+    const next = new URLSearchParams(searchParams)
+    next.delete('slash')
+    setSearchParams(next, { replace: true })
+    window.requestAnimationFrame(() => inputRef.current?.focus())
+  }, [requestedSlashDraft, searchParams, setSearchParams])
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return
+    const mediaQuery = window.matchMedia('(min-width: 1500px)')
+    const handleChange = (event: MediaQueryListEvent) => setContextRailOpen(event.matches)
+    mediaQuery.addEventListener('change', handleChange)
+    return () => mediaQuery.removeEventListener('change', handleChange)
+  }, [])
+  useEffect(() => {
+    setContextEvidenceRun((current) => {
+      if (currentRunId) return { runId: currentRunId, threadId: activeThreadId }
+      return current?.threadId === activeThreadId ? current : null
+    })
+  }, [activeThreadId, currentRunId])
   const logRef = useRef<HTMLDivElement>(null)
   const notifiedAskUserQuestionRef = useRef<string | null>(null)
   const emptyThreadBootstrapRef = useRef<string | null>(null)
@@ -828,6 +918,21 @@ export default function CoworkView() {
     if (!activeThread?.id) return false
     return workTasks.some((task) => task.threadId === activeThread.id)
   }, [activeThread?.id, workTasks])
+  const activeWorkTask = useMemo(() => {
+    if (!activeThread?.id) return null
+    return workTasks.find((task) => task.threadId === activeThread.id) ?? null
+  }, [activeThread?.id, workTasks])
+  const contextTask = useMemo(() => (
+    tasks
+      .filter((task) => task.threadId === activeThreadId)
+      .sort((a, b) => b.updatedAt - a.updatedAt)[0] ?? null
+  ), [activeThreadId, tasks])
+  const contextToolCalls = useMemo(() => (
+    activeMessages
+      .flatMap((message) => message.liveToolCalls ?? [])
+      .slice(-5)
+      .reverse()
+  ), [activeMessages])
 
   const toggleCollapse = (messageId: string) => {
     setCollapsedMessageIds((prev) => {
@@ -872,6 +977,11 @@ export default function CoworkView() {
   const providerState = useMemo(
     () => getChatProviderState(providerContext, activeProvider, activeThread?.providerSettings),
     [activeProvider, activeThread?.providerSettings, providerContext],
+  )
+  const providerConfigured = Boolean(
+    providerState.endpoint.trim()
+    && providerState.model.trim()
+    && (providerState.provider === 'ollama' || providerState.apiKey.trim()),
   )
   const selectableModels = providerState.selectableModels
 
@@ -985,7 +1095,7 @@ export default function CoworkView() {
       title: newTitle,
       createdAt: new Date(activeThread.createdAt).toISOString()
     }, 'db_save_thread update title')
-  }, [activeThreadId, activeThread?.messages.length]) // Execute when thread or message count changes
+  }, [activeThreadId, activeThread]) // Execute when thread or message count changes
 
   const enabledPluginSkills = useMemo<EnabledPluginSkill[]>(() => {
     return plugins
@@ -1003,6 +1113,7 @@ export default function CoworkView() {
   }, [plugins])
 
   const registryCommands = useCommandRegistry((s) => s.commands)
+  const executeRegistryCommand = useCommandRegistry((s) => s.executeCommand)
 
   const slashCommandSuggestions = useMemo<SlashCommandSuggestion[]>(() => {
     const builtIn = registryCommands.map((cmd) => ({
@@ -1082,7 +1193,7 @@ export default function CoworkView() {
   useEffect(() => {
     if (!awaitingHumanInput || !busy) return
     setBusy(false)
-  }, [awaitingHumanInput, busy])
+  }, [awaitingHumanInput, busy, setBusy])
 
   useEffect(() => {
     setSelectedAskUserOptionIds([])
@@ -1987,14 +2098,13 @@ export default function CoworkView() {
       if (slash.command === 'memory') {
         if (slash.args?.trim()) {
           await useMemoryStore.getState().searchEntries(slash.args.trim())
-          const entries = useMemoryStore.getState().entries
+          const entries = useMemoryStore.getState().searchResults
           appendAssistantMessage(entries.length > 0
             ? `${tr('Memory search')} "${slash.args.trim()}":\n${entries.slice(0, 10).map(e => `- [${e.scope}/${e.category}] ${e.content.slice(0, 100)}`).join('\n')}`
             : `No results for "${slash.args.trim()}".`)
         } else {
-          await useMemoryStore.getState().loadEntries()
-          const entries = useMemoryStore.getState().entries
-          appendAssistantMessage(`Memory: ${entries.length} entries\nUse /memory <search-term> to search or manage entries under Features > Memory.`)
+          navigate('/features?tab=knowledge')
+          appendAssistantMessage(tr('Knowledge base opened.'))
         }
         return
       }
@@ -2199,13 +2309,19 @@ export default function CoworkView() {
 
       if (slash.command === 'crew') {
         if (slash.args?.trim()) {
-          useCrewStore.getState().createCrew(`crew-${Date.now()}`, slash.args.trim(), [])
-          appendAssistantMessage(`Crew created: ${slash.args.trim()}`)
+          const raw = slash.args.trim()
+          const separator = raw.indexOf(':')
+          const name = separator > 0 ? raw.slice(0, separator).trim() : raw.slice(0, 64)
+          const goal = separator > 0 ? raw.slice(separator + 1).trim() : raw
+          const crewId = useCrewStore.getState().createStarterCrew(name, goal)
+          navigate('/crew')
+          appendAssistantMessage(`Crew created with three executable stages: ${name} (${crewId})`)
         } else {
           const crews = useCrewStore.getState().crews
+          navigate('/crew')
           appendAssistantMessage(crews.length > 0
-            ? `Crews (${crews.length}):\n${crews.map(c => `- ${c.name} (${c.agents.length} agents)`).join('\n')}`
-            : 'No Crews available. Use /crew <name> zum Createn.')
+            ? `Crews (${crews.length}):\n${crews.map(c => `- ${c.name} (${c.agents.length} agents, ${c.tasks.length} tasks, ${c.status})`).join('\n')}`
+            : 'Crew Studio opened. Use /crew <name>: <goal> to create a runnable crew.')
         }
         return
       }
@@ -2261,8 +2377,8 @@ export default function CoworkView() {
       }
 
       if (slash.command === 'mcp') {
-        useUiStore.getState().setActiveMode('settings')
-        appendAssistantMessage(`MCP-Server: ${mcpServer.command ? `${mcpServer.name} (${mcpServer.command})` : 'not configured'}\nOpen Settings for configuration.`)
+        navigate('/features?tab=mcp')
+        appendAssistantMessage(`MCP: ${mcpServer.command ? `${mcpServer.name} (${mcpServer.command})` : tr('not configured')}`)
         return
       }
 
@@ -2442,7 +2558,7 @@ export default function CoworkView() {
       }
 
       if (slash.command === 'release-notes') {
-        appendAssistantMessage(tr("Open_Cowork v1.0:\n- 79+ slash commands (volle Claude Code compatibility)\n- 5 default personalities\n- CrewAI Multi-Agent System\n- Memory Engine mit Suche\n- Plugin-System mit Skills\n- MCP-Integration\n- Sandbox & Security Controls"))
+        appendAssistantMessage(tr("Open_Cowork v1.0:\n- Centrally registered slash commands\n- 5 default personalities\n- CrewAI Multi-Agent System\n- Hermes-style memory and session search\n- Plugin-System with Skills\n- MCP integration\n- Sandbox & Security Controls"))
         return
       }
 
@@ -2490,14 +2606,13 @@ export default function CoworkView() {
         skillInvocationActive = true
       } else if (!skillPromptOverride && slash.command !== 'plan') {
         // Fall through to registry for any remaining commands
-        const registryCmd = registryCommands.find(
-          (c) => c.command === `/${slash.command}`
-        )
-        if (registryCmd) {
+        if (registryCommands.some((command) => command.command === `/${slash.command}`)) {
           try {
-            registryCmd.execute(slash.args || undefined)
-          } catch { /* best effort */ }
-          appendAssistantMessage(`/${slash.command} executed.`)
+            await executeRegistryCommand(`/${slash.command}`, slash.args || undefined)
+            appendAssistantMessage(`/${slash.command} executed.`)
+          } catch (error) {
+            appendAssistantMessage(`/${slash.command} failed: ${error instanceof Error ? error.message : String(error)}`)
+          }
           return
         }
         appendAssistantMessage(
@@ -2598,7 +2713,6 @@ export default function CoworkView() {
     setError(null)
 
     let assistantMessageId: string | null = null
-    let requestPreviewMessageId: string | null = null
 
     try {
       const started = Date.now()
@@ -2731,18 +2845,6 @@ export default function CoworkView() {
               if (userMessageId) {
                 updateMessage(threadId, userMessageId, {
                   debugContent: `${promptWithAttachments}\n\n[OLLAMA REQUEST PREVIEW]\n${event.payload}`,
-                })
-              }
-              if (requestPreviewMessageId) {
-                updateMessage(threadId, requestPreviewMessageId, {
-                  content: `Ollama Request Preview\n${event.payload}`,
-                })
-              } else {
-                requestPreviewMessageId = addMessage(threadId, {
-                  role: 'system',
-                  content: `Ollama Request Preview\n${event.payload}`,
-                  visibleInChat: true,
-                  timestamp: Date.now(),
                 })
               }
               appendVerboseEntry('Ollama-Request vorreadyet', event.payload)
@@ -3059,13 +3161,10 @@ export default function CoworkView() {
         (message) => message.role === 'assistant' && message.streaming,
       )
       if (streamingMessage) {
-        const content = streamingMessage.content?.trim()
-          ? `${streamingMessage.content}\n\nGenerierung abgebrochen.`
-          : 'Generierung abgebrochen.'
         updateMessage(
           activeThreadId,
           streamingMessage.id,
-          { content, streaming: false },
+          { content: appendStoppedAssistantContent(streamingMessage.content), streaming: false },
           { persist: true },
         )
       }
@@ -3188,14 +3287,34 @@ export default function CoworkView() {
   }
 
   if (!activeThread) {
-    return null // WelcomeScreen handles the empty state
+    return null
   }
 
   const quickPrompts = [
-    'Create a clear 5-step plan for the current task.',
-    'Analyze the latest changes and list risks.',
-    'Write the next concrete to-dos with priority.',
+    tr('Create a clear 5-step plan for the current task.'),
+    tr('Analyze the latest changes and list risks.'),
+    tr('Write the next concrete to-dos with priority.'),
   ]
+  const onboardingWorkingFolder = workingFolder ?? attachments.find((item) => item.kind === 'folder')?.path ?? null
+  const onboardingPermissionLabel = enginePermissionMode === 'plan'
+    ? tr('Plan-Mode')
+    : enginePermissionMode === 'bypass'
+      ? tr('Bypass')
+      : enginePermissionMode === 'strict'
+        ? tr('Strikt')
+        : tr('Standard')
+  const runStatusLabel = engineStatus === 'streaming'
+    ? tr('Responding')
+    : engineStatus === 'tool_running'
+      ? tr('Using tools')
+      : engineStatus === 'waiting_approval'
+        ? tr('Needs approval')
+        : engineStatus === 'error'
+          ? tr('Action needed')
+          : providerConfigured
+            ? tr('Ready')
+            : tr('Needs setup')
+  const runbarState = !providerConfigured && engineStatus === 'idle' ? 'waiting_approval' : engineStatus
 
   const formatTime = (timestamp: number) =>
     new Date(timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
@@ -3215,21 +3334,8 @@ export default function CoworkView() {
     })
   }
 
-  const findPreviousUserMessage = (assistantMessageId: string): ChatMessage | null => {
-    const assistantIndex = visibleMessages.findIndex((message) => message.id === assistantMessageId)
-    if (assistantIndex < 0) return null
-
-    for (let index = assistantIndex - 1; index >= 0; index -= 1) {
-      const candidate = visibleMessages[index]
-      if (candidate?.role === 'user') {
-        return candidate
-      }
-    }
-    return null
-  }
-
   const handleRegenerate = async (assistantMessageId: string) => {
-    const previousUser = findPreviousUserMessage(assistantMessageId)
+    const previousUser = findPreviousUserMessage(visibleMessages, assistantMessageId)
     if (!previousUser) return
     const prompt = typeof previousUser.content === 'string' ? previousUser.content.trim() : ''
     const promptAttachments = Array.isArray(previousUser.attachments) ? previousUser.attachments : []
@@ -3244,18 +3350,37 @@ export default function CoworkView() {
 
   return (
     <div className={`cowork-view ${compactMode ? 'compact-mode' : ''}`}>
-      {/* Chat Pane */}
-      <div className="cowork-pane">
-        <div className="card" style={{ marginBottom: 12, fontSize: 12 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-            <span><strong>{tr("Session:")}</strong> {currentSessionId ?? tr("not saved yet")}</span>
-            <span><strong>{tr("Compactions:")}</strong> {compactionCount}</span>
-            <span>
-              <strong>{tr("Context:")}</strong>{' '}
-              {contextWarning.level === 'none'
-                ? tr("stable")
-                : `${tr(contextWarning.level)} (${contextWarning.estimatedTokens} ${tr("tokens")})`}
-            </span>
+      <div className={`cowork-workspace${contextRailOpen ? ' context-open' : ''}`}>
+        {/* Chat Pane */}
+        <div className="cowork-pane">
+          <div className="cowork-runbar">
+            <div className={`cowork-runbar-state state-${runbarState}`}>
+              <span aria-hidden="true" />
+              <div><strong>{runStatusLabel}</strong><small>{providerState.label} · {providerState.model || tr('no model set')}</small></div>
+            </div>
+            {activeWorkTask ? (
+              <button
+                type="button"
+                className="cowork-runbar-task"
+                aria-label={`${tr('Open current task')}: ${activeWorkTask.title}`}
+                onClick={() => navigate(`/tasks?task=${encodeURIComponent(activeWorkTask.id)}`)}
+              >
+                <ListTodo size={15} aria-hidden="true" />
+                <span className="cowork-runbar-task-copy">
+                  <small>{tr('Back to task')}</small>
+                  <strong>{activeWorkTask.title}</strong>
+                </span>
+                <span className={`cowork-runbar-task-status status-${activeWorkTask.status}`}>
+                  {formatWorkTaskStatus(activeWorkTask.status)}
+                </span>
+                <ArrowRight className="cowork-runbar-task-arrow" size={14} aria-hidden="true" />
+              </button>
+            ) : null}
+            <div className="cowork-runbar-meta">
+              <span>{currentSessionId ? tr('Saved session') : tr('Unsaved session')}</span>
+              <span>{contextWarning.level === 'none' ? tr('Context stable') : `${tr('Context')} · ${tr(contextWarning.level)}`}</span>
+            </div>
+            <div className="cowork-runbar-actions">
             <button
               type="button"
               className="btn-sm"
@@ -3267,11 +3392,32 @@ export default function CoworkView() {
                   ? tr('Terminal Live einblenden')
                   : tr('Terminal Live')}
             </button>
+            <button
+              type="button"
+              className={`btn-sm cowork-context-toggle${contextRailOpen ? ' active' : ''}`}
+              aria-expanded={contextRailOpen}
+              aria-controls="cowork-context-rail"
+              onClick={() => setContextRailOpen((open) => !open)}
+            >
+              <PanelRightOpen size={14} aria-hidden="true" />{tr('Run context')}
+            </button>
             <button type="button" className="btn-sm" onClick={() => void forceCompact()} disabled={uiLocked}>{tr("Compact context")}</button>
           </div>
-        </div>
+          </div>
 
         <div className="cowork-messages" ref={logRef}>
+          {renderedMessages.length === 0 && !busy && (
+            <GuidedOnboarding
+              providerLabel={providerState.label}
+              model={providerState.model}
+              providerConfigured={providerConfigured}
+              workingFolder={onboardingWorkingFolder}
+              permissionLabel={onboardingPermissionLabel}
+              onChooseFolder={() => void handleAttachFolders()}
+              onOpenSettings={() => navigate(`/settings?provider=${providerState.provider}`)}
+              onUseStarterTask={applyPromptToInput}
+            />
+          )}
           {hiddenRenderedMessageCount > 0 && (
             <div className="message-window-notice">
               {tr("{{count}} older messages are hidden for a faster startup.", { count: hiddenRenderedMessageCount })}
@@ -3291,8 +3437,13 @@ export default function CoworkView() {
                   preferLive: liveThinkingBelongsToThread && msg.streaming && msg.id === visibleMessages[visibleMessages.length - 1]?.id,
                 },
               )
-              const displayedContent = resolveDisplayedAssistantContent(content, displayedThinkingContent)
-              const canRegenerate = msg.role === 'assistant' && findPreviousUserMessage(msg.id) !== null
+              const rawDisplayedContent = resolveDisplayedAssistantContent(content, displayedThinkingContent)
+              const previousUserMessage = msg.role === 'assistant'
+                ? findPreviousUserMessage(visibleMessages, msg.id)
+                : null
+              const canRegenerate = previousUserMessage !== null
+              const assistantFailure = msg.role === 'assistant' && isAssistantFailureContent(rawDisplayedContent)
+              const displayedContent = assistantFailure ? formatAssistantFailureContent(rawDisplayedContent) : rawDisplayedContent
 
               // Check if this assistant message should be collapsed
               const isCollapsed = msg.role === 'assistant' && (() => {
@@ -3330,7 +3481,9 @@ export default function CoworkView() {
                     )}
                   </div>
                   {msg.crewLive ? (
-                    <CrewLiveMonitor live={msg.crewLive} />
+                    <Suspense fallback={<div className="crew-live-monitor" aria-busy="true" aria-live="polite">{tr('Loading...')}</div>}>
+                      <CrewLiveMonitor live={msg.crewLive} />
+                    </Suspense>
                   ) : isCollapsed ? (
                     <button
                       type="button"
@@ -3347,7 +3500,30 @@ export default function CoworkView() {
                       style={{ cursor: 'pointer', color: 'var(--text-muted)', fontStyle: 'italic', padding: '8px 0', border: 'none', background: 'transparent', textAlign: 'left' }}
                     >{tr("Output hidden. Show output")}</button>
                   ) : (
-                    <div className="msg-content">
+                    <div className={`msg-content${assistantFailure ? ' is-error' : ''}`} role={assistantFailure ? 'alert' : undefined}>
+                      {assistantFailure ? (
+                        <div className="msg-error-header">
+                          <span><ShieldAlert size={16} aria-hidden="true" /><strong>{tr('Response needs attention')}</strong></span>
+                          <span className="msg-error-actions">
+                            <button type="button" onClick={() => navigate(getAssistantFailureSettingsPath(rawDisplayedContent))}>
+                              <Settings2 size={14} aria-hidden="true" />{tr('Open settings')}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={uiLocked || !previousUserMessage}
+                              onClick={() => {
+                                if (!previousUserMessage) return
+                                applyPromptToInput(previousUserMessage.content, previousUserMessage.attachments ?? [])
+                              }}
+                            >{tr('Reuse')}</button>
+                            <button
+                              type="button"
+                              disabled={uiLocked || !canRegenerate}
+                              onClick={() => void handleRegenerate(msg.id)}
+                            >{tr('Regenerate')}</button>
+                          </span>
+                        </div>
+                      ) : null}
                       {displayedContent ? <HighlightedChatText content={displayedContent} /> : null}
                     </div>
                   )}
@@ -3415,13 +3591,17 @@ export default function CoworkView() {
                         >{tr("Reuse")}</button>
                       ) : (
                         <>
-                          <button type="button" className="btn-msg-action" onClick={() => applyPromptToInput(content)}>{tr("Als Prompt nutzen")}</button>
-                          <button
-                            type="button"
-                            className="btn-msg-action"
-                            onClick={() => void handleRegenerate(msg.id)}
-                            disabled={uiLocked || !canRegenerate}
-                          >{tr("Regenerate")}</button>
+                          {!assistantFailure ? (
+                            <>
+                              <button type="button" className="btn-msg-action" onClick={() => applyPromptToInput(content)}>{tr("Als Prompt nutzen")}</button>
+                              <button
+                                type="button"
+                                className="btn-msg-action"
+                                onClick={() => void handleRegenerate(msg.id)}
+                                disabled={uiLocked || !canRegenerate}
+                              >{tr("Regenerate")}</button>
+                            </>
+                          ) : null}
                         </>
                       )}
                     </div>
@@ -3540,15 +3720,11 @@ export default function CoworkView() {
 
         {error && <p className="error cowork-error">{error}</p>}
 
-        <div className="quick-prompts">
-          {quickPrompts.map((prompt) => (
-            <button key={prompt} type="button" className="quick-prompt-btn" onClick={() => applyPromptToInput(prompt)}>
-              {prompt}
-            </button>
-          ))}
-        </div>
+        {renderedMessages.length === 0 && !busy && !inputValue.trim() ? (
+          <CoworkQuickPrompts prompts={quickPrompts} onSelect={applyPromptToInput} />
+        ) : null}
 
-        <form className="cowork-input" onSubmit={handleSend}>
+          <form className="cowork-input" onSubmit={handleSend}>
           <div className="chat-input-main">
             {activeProject && (
               <div className="project-context-strip" aria-label={tr("Project context")}>
@@ -3775,7 +3951,29 @@ export default function CoworkView() {
               </button>
             )}
           </div>
-        </form>
+          </form>
+        </div>
+
+        {contextRailOpen && <button type="button" className="context-rail-scrim" onClick={() => setContextRailOpen(false)} aria-hidden="true" tabIndex={-1} />}
+        <CoworkContextRail
+          open={contextRailOpen}
+          engineStatus={engineStatus}
+          error={error}
+          sessionId={currentSessionId}
+          runId={contextEvidenceRun?.runId ?? null}
+          providerLabel={providerState.label}
+          model={providerState.model}
+          workingContext={onboardingWorkingFolder}
+          contextWarning={contextWarning}
+          compactionCount={compactionCount}
+          approvalSteps={approvalSteps}
+          toolCalls={contextToolCalls}
+          task={contextTask}
+          onClose={() => setContextRailOpen(false)}
+          onStop={handleStop}
+          onOpenRuns={() => navigate('/settings?section=sessions')}
+          onOpenTasks={() => navigate('/tasks')}
+        />
       </div>
     </div>
   )

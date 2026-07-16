@@ -1,5 +1,7 @@
 # Architektur
 
+> Superseded: This historical architecture snapshot is no longer the source of truth. Use [ARCHITECTURE_CURRENT.md](ARCHITECTURE_CURRENT.md) and [SOURCE_OF_TRUTH.md](SOURCE_OF_TRUTH.md) for current architecture and documentation precedence.
+
 ## Uebersicht
 
 Open_Cowork verwendet eine lokale Desktop-Architektur mit klarer Trennung zwischen UI und privilegierten Operationen.
@@ -91,7 +93,7 @@ Open_Cowork verwendet eine lokale Desktop-Architektur mit klarer Trennung zwisch
 
 - Keine Mock-Integration fuer LLM-Aufrufe
 - Explizite Fehlerbehandlung bei Netzwerk- und Parsefehlern
-- Defensive Defaults (`http://192.168.178.82:11434`, `llama3.1:8b`)
+- Defensive Defaults (`http://localhost:11434`, `llama3.1:8b`)
 - Input-Validierung (leere Commands, ungueltige URLs)
 - Foreign Key Constraints mit CASCADE-Loeschung
 - Unit-Tests fuer DB, Parsing, Store-Logik

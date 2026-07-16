@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
-import { Camera, Plus, Trash2 } from 'lucide-react'
+import { BookOpen, Camera, Plus, Trash2, Upload } from 'lucide-react'
 import { useMemoryStore, type MemoryEntry } from '../stores/memoryStore'
 import i18n, { tr } from '../i18n'
 
-type MemoryTab = 'entries' | 'profile' | 'providers' | 'hints'
+type MemoryTab = 'knowledge' | 'entries' | 'profile' | 'providers' | 'hints'
 
 function randomId() {
   return `mem-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -11,6 +11,7 @@ function randomId() {
 
 function getTabLabel(tab: MemoryTab): string {
   switch (tab) {
+    case 'knowledge': return tr('Knowledge base')
     case 'entries': return tr('Entries')
     case 'profile': return tr('Profile')
     case 'providers': return tr('Provider')
@@ -32,12 +33,13 @@ export default function MemoryPanel() {
     entries, searchResults, profileEntries, providers, hints, lastSnapshot,
     loading, error,
     loadEntries, searchEntries, upsertEntry, deleteEntry,
+    importKnowledgeText,
     compactEntries, createSnapshot, loadHints,
     loadProfile, upsertProfile, deleteProfile,
     loadProviders, upsertProvider, deleteProvider,
   } = useMemoryStore()
 
-  const [tab, setTab] = useState<MemoryTab>('entries')
+  const [tab, setTab] = useState<MemoryTab>('knowledge')
   const [searchQuery, setSearchQuery] = useState('')
   const [filterScope, setFilterScope] = useState('')
   const [showAdd, setShowAdd] = useState(false)
@@ -48,6 +50,10 @@ export default function MemoryPanel() {
   const [profileKey, setProfileKey] = useState('')
   const [profileValue, setProfileValue] = useState('')
   const [providerForm, setProviderForm] = useState({ name: '', type: 'mem0', config: '{}' })
+  const [knowledgeTitle, setKnowledgeTitle] = useState('')
+  const [knowledgeText, setKnowledgeText] = useState('')
+  const [knowledgeBusy, setKnowledgeBusy] = useState(false)
+  const [knowledgeResult, setKnowledgeResult] = useState<string | null>(null)
 
   useEffect(() => {
     void loadEntries(filterScope || undefined, undefined, 200)
@@ -92,7 +98,8 @@ export default function MemoryPanel() {
   const handleAddProvider = async () => {
     if (!providerForm.name.trim()) return
     const id = `prov-${Date.now()}`
-    await upsertProvider({ id, name: providerForm.name, provider_type: providerForm.type, config_json: providerForm.config })
+    const saved = await upsertProvider({ id, name: providerForm.name, provider_type: providerForm.type, config_json: providerForm.config })
+    if (!saved) return
     setProviderForm({ name: '', type: 'mem0', config: '{}' })
     void loadProviders()
   }
@@ -107,6 +114,41 @@ export default function MemoryPanel() {
     void loadProviders()
   }
 
+  const handleKnowledgeFiles = async (files: FileList | null) => {
+    const selected = Array.from(files ?? [])
+    if (selected.length === 0) return
+    try {
+      const sources = await Promise.all(selected.map(async (file) => ({
+        name: file.name,
+        text: await file.text(),
+      })))
+      setKnowledgeTitle(selected.length === 1 ? selected[0].name : `${selected.length} files`)
+      setKnowledgeText(sources.map((source) => `# ${source.name}\n\n${source.text}`).join('\n\n---\n\n'))
+      setKnowledgeResult(null)
+    } catch {
+      setKnowledgeResult(tr('Could not read selected files'))
+    }
+  }
+
+  const handleKnowledgeImport = async () => {
+    if (!knowledgeText.trim()) return
+    setKnowledgeBusy(true)
+    setKnowledgeResult(null)
+    try {
+      const count = await importKnowledgeText(knowledgeTitle.trim() || tr('Knowledge import'), knowledgeText)
+      const importedLabel = count === 1 ? tr('knowledge chunk imported') : tr('knowledge chunks imported')
+      setKnowledgeResult(count > 0 ? `${count} ${importedLabel}` : tr('No readable text found'))
+      if (count > 0) {
+        setKnowledgeTitle('')
+        setKnowledgeText('')
+      }
+    } catch {
+      setKnowledgeResult(tr('Knowledge import failed'))
+    } finally {
+      setKnowledgeBusy(false)
+    }
+  }
+
   const displayEntries = searchQuery.trim() ? searchResults : entries
 
   return (
@@ -114,7 +156,7 @@ export default function MemoryPanel() {
       <h2>{tr("Agent memory")}</h2>
 
       <div className="memory-tab-row" role="tablist" aria-label={tr("Agent memory")}>
-        {(['entries', 'profile', 'providers', 'hints'] as const).map((entry) => (
+        {(['knowledge', 'entries', 'profile', 'providers', 'hints'] as const).map((entry) => (
           <button
             type="button"
             key={entry}
@@ -129,6 +171,43 @@ export default function MemoryPanel() {
       </div>
 
       {error && <p className="memory-error">{error}</p>}
+
+      {tab === 'knowledge' && (
+        <section className="memory-knowledge-import">
+          <div className="memory-knowledge-heading">
+            <BookOpen size={18} aria-hidden="true" />
+            <div>
+              <h3>{tr('Knowledge base')}</h3>
+              <p className="hint-text">{tr('Import text or files into shared knowledge. Relevant chunks are recalled automatically for chat and crew runs.')}</p>
+            </div>
+          </div>
+          <label className="memory-label">{tr('Source title')}
+            <input type="text" value={knowledgeTitle} onChange={(event) => setKnowledgeTitle(event.target.value)} placeholder={tr('e.g. API handbook')} />
+          </label>
+          <label className="memory-label">{tr('Content')}
+            <textarea rows={10} value={knowledgeText} onChange={(event) => setKnowledgeText(event.target.value)} placeholder={tr('Paste source text here...')} />
+          </label>
+          <div className="memory-knowledge-actions">
+            <label className="btn-sm memory-file-button">
+              <Upload size={14} aria-hidden="true" />
+              {tr('Choose files')}
+              <input
+                type="file"
+                multiple
+                accept=".txt,.md,.markdown,.csv,.json,.yaml,.yml,.xml,.html,.log"
+                onChange={(event) => {
+                  void handleKnowledgeFiles(event.target.files)
+                  event.target.value = ''
+                }}
+              />
+            </label>
+            <button type="button" className="btn-sm" disabled={knowledgeBusy || !knowledgeText.trim()} onClick={() => void handleKnowledgeImport()}>
+              {knowledgeBusy ? tr('Importing...') : tr('Import knowledge')}
+            </button>
+            {knowledgeResult && <span className="memory-success" role="status">{knowledgeResult}</span>}
+          </div>
+        </section>
+      )}
 
       {tab === 'entries' && (
         <>
@@ -273,7 +352,7 @@ export default function MemoryPanel() {
                 <option value="custom">{tr("Custom")}</option>
               </select>
               </label>
-              <label>{tr("Config (JSON)")}<input type="text" value={providerForm.config} onChange={(e) => setProviderForm({ ...providerForm, config: e.target.value })} />
+              <label>{tr("Protected config (JSON)")}<input type="text" value={providerForm.config} onChange={(e) => setProviderForm({ ...providerForm, config: e.target.value })} />
               </label>
             </div>
             <button type="button" className="btn-sm memory-spaced-button" onClick={handleAddProvider}>{tr("Provider add")}</button>
@@ -306,12 +385,12 @@ export default function MemoryPanel() {
           ) : (
             <div className="memory-list">
               {hints.map((hint, index) => (
-                <div key={`${hint.scope}-${hint.key}-${index}`} className="card memory-hint-card">
+                <div key={`${hint.hintType}-${hint.suggestedKey ?? 'general'}-${index}`} className="card memory-hint-card">
                   <div className="memory-entry-meta">
-                    {hint.scope} / {tr("Relevance")}: {hint.relevance}
+                    {hint.hintType}{hint.suggestedCategory ? ` / ${hint.suggestedCategory}` : ''}
                   </div>
-                  <div className="memory-entry-key">{hint.key}</div>
-                  <div className="memory-entry-content">{hint.content}</div>
+                  {hint.suggestedKey && <div className="memory-entry-key">{hint.suggestedKey}</div>}
+                  <div className="memory-entry-content">{hint.message}</div>
                 </div>
               ))}
             </div>

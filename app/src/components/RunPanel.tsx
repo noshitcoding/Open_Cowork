@@ -1,6 +1,12 @@
 import { useEffect, useState } from 'react'
 import { useEngineStore } from '../stores/engineStore'
 import { safeInvoke } from '../utils/safeInvoke'
+import {
+  normalizeEngineRunArtifact,
+  normalizeEngineRunEvent,
+  type EngineRunArtifactRow,
+  type EngineRunEventRow,
+} from '../utils/engineRunRecords'
 import { tr } from '../i18n'
 
 type EngineRunRow = {
@@ -36,27 +42,6 @@ type EngineRunCheckpointRow = {
   runId: string
   label: string
   snapshotJson: string
-  createdAt: string
-}
-
-type EngineRunEventRow = {
-  id: string
-  runId: string
-  sequence: number
-  eventType: string
-  summary: string
-  payloadJson: string | null
-  redactionLevel: string
-  createdAt: string
-}
-
-type EngineRunArtifactRow = {
-  id: string
-  runId: string
-  kind: string
-  path: string
-  title: string | null
-  summary: string | null
   createdAt: string
 }
 
@@ -141,39 +126,6 @@ const normalizeRun = (value: unknown): EngineRunRow | null => {
     error: asNullableString(row.error),
     updatedAt: asTimestampString(row.updatedAt ?? row.updated_at, row.createdAt ?? row.created_at),
     createdAt: asTimestampString(row.createdAt ?? row.created_at, row.updatedAt ?? row.updated_at),
-  }
-}
-
-const normalizeEvent = (value: unknown): EngineRunEventRow | null => {
-  const event = asRecord(value)
-  const id = asString(event.id)
-  if (!id) return null
-
-  return {
-    id,
-    runId: asString(event.runId ?? event.run_id),
-    sequence: asNumber(event.sequence),
-    eventType: asString(event.eventType ?? event.event_type, 'event'),
-    summary: asString(event.summary, 'Event'),
-    payloadJson: asNullableString(event.payloadJson ?? event.payload_json),
-    redactionLevel: asString(event.redactionLevel ?? event.redaction_level, 'none'),
-    createdAt: asTimestampString(event.createdAt ?? event.created_at),
-  }
-}
-
-const normalizeArtifact = (value: unknown): EngineRunArtifactRow | null => {
-  const artifact = asRecord(value)
-  const id = asString(artifact.id)
-  if (!id) return null
-
-  return {
-    id,
-    runId: asString(artifact.runId ?? artifact.run_id),
-    kind: asString(artifact.kind, 'artifact'),
-    path: asString(artifact.path),
-    title: asNullableString(artifact.title),
-    summary: asNullableString(artifact.summary),
-    createdAt: asTimestampString(artifact.createdAt ?? artifact.created_at),
   }
 }
 
@@ -269,7 +221,7 @@ export default function RunPanel() {
       }, [])
       setEvents(
         Array.isArray(rows)
-          ? rows.map(normalizeEvent).filter((event): event is EngineRunEventRow => event !== null)
+          ? rows.map(normalizeEngineRunEvent).filter((event): event is EngineRunEventRow => event !== null)
           : [],
       )
     } catch (err) {
@@ -285,7 +237,7 @@ export default function RunPanel() {
       }, [])
       setArtifacts(
         Array.isArray(rows)
-          ? rows.map(normalizeArtifact).filter((artifact): artifact is EngineRunArtifactRow => artifact !== null)
+          ? rows.map(normalizeEngineRunArtifact).filter((artifact): artifact is EngineRunArtifactRow => artifact !== null)
           : [],
       )
     } catch (err) {
@@ -304,6 +256,8 @@ export default function RunPanel() {
 
   useEffect(() => {
     void refreshRuns()
+    // Refresh once on mount; manual refresh and actions keep the list current.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {

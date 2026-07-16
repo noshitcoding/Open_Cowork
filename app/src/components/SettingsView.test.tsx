@@ -7,11 +7,16 @@ import { useEngineStore } from '../stores/engineStore'
 import i18n from '../i18n'
 
 const invokeMock = vi.fn()
+const saveDialogMock = vi.fn()
 const checkOllamaStatusMock = vi.fn()
 const fetchOllamaModelsMock = vi.fn()
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: (...args: unknown[]) => invokeMock(...args),
+}))
+
+vi.mock('@tauri-apps/plugin-dialog', () => ({
+  save: (...args: unknown[]) => saveDialogMock(...args),
 }))
 
 /* Default invoke handler: return safe defaults for all known commands */
@@ -35,6 +40,18 @@ function defaultInvoke(cmd: string) {
     case 'process_list': return Promise.resolve([])
     case 'mcp_list_servers': return Promise.resolve([])
     case 'mcp_probe': return Promise.resolve({ tools: [] })
+    case 'startup_recovery_status': return Promise.resolve({
+      recoveredAt: '2026-07-10T12:00:00Z',
+      engineRuns: 0,
+      legacyTasks: 0,
+      taskSteps: 0,
+      workTasks: 0,
+      scheduledRuns: 0,
+      crewRuns: 0,
+      workerSandboxes: 0,
+      managedProcesses: 0,
+      terminalBackends: 0,
+    })
     default: return Promise.resolve(null)
   }
 }
@@ -177,6 +194,8 @@ describe('SettingsView', () => {
     delete (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
     invokeMock.mockReset()
     invokeMock.mockImplementation(defaultInvoke)
+    saveDialogMock.mockReset()
+    saveDialogMock.mockResolvedValue(null)
     resetConfigStore()
     resetEngineStore()
   })
@@ -189,10 +208,72 @@ describe('SettingsView', () => {
     expect(buttons.length).toBe(9)
   })
 
+  it('filters settings categories by label and description', () => {
+    renderSettingsView()
+    const search = screen.getByRole('searchbox', { name: 'Search settings' })
+
+    fireEvent.change(search, { target: { value: 'file access' } })
+
+    const tabs = screen.getAllByRole('tab')
+    expect(tabs).toHaveLength(1)
+    expect(tabs[0]).toHaveTextContent('Security & data')
+
+    fireEvent.click(tabs[0])
+    expect(screen.getByRole('heading', { level: 1, name: 'Security & data' })).toBeInTheDocument()
+
+    fireEvent.change(search, { target: { value: 'definitely missing' } })
+    expect(screen.getByRole('status')).toHaveTextContent('No settings sections match your search')
+    expect(screen.queryByRole('heading', { level: 1, name: 'Security & data' })).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear' }))
+    expect(screen.getAllByRole('tab')).toHaveLength(9)
+    expect(screen.getByRole('heading', { level: 1, name: 'Security & data' })).toBeInTheDocument()
+  })
+
+  it('finds the category for a concrete setting instead of only category copy', () => {
+    renderSettingsView(['/settings?section=ui'])
+
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search settings' }), { target: { value: 'API key' } })
+
+    const tabs = screen.getAllByRole('tab')
+    expect(tabs).toHaveLength(1)
+    expect(tabs[0]).toHaveTextContent('AI & model')
+    expect(screen.getByRole('heading', { level: 1, name: 'AI & model' })).toBeInTheDocument()
+  })
+
+  it('matches German setting terms and umlaut spellings', async () => {
+    await i18n.changeLanguage('de')
+    renderSettingsView(['/settings?section=ui'])
+    const search = screen.getByRole('searchbox', { name: 'Einstellungen durchsuchen' })
+
+    fireEvent.change(search, { target: { value: 'API-Schlüssel' } })
+    expect(screen.getAllByRole('tab')).toHaveLength(1)
+    expect(screen.getByRole('heading', { level: 1, name: 'KI & Modell' })).toBeInTheDocument()
+
+    fireEvent.change(search, { target: { value: 'oberflaeche' } })
+    expect(screen.getAllByRole('tab')).toHaveLength(1)
+    expect(screen.getByRole('heading', { level: 1, name: 'Oberfläche' })).toBeInTheDocument()
+  })
+
   /* 2. default category is AI & model */
   it('shows AI & model content by default', () => {
     renderSettingsView()
     expect(screen.getByRole('heading', { level: 1, name: 'AI & model' })).toBeInTheDocument()
+  })
+
+  it('summarizes provider readiness and highlights OpenRouter free models', () => {
+    useConfigStore.getState().updateLlmProfile('default-openrouter', {
+      model: 'nvidia/nemotron-3-super-120b-a12b:free',
+    })
+
+    renderSettingsView()
+
+    const overview = screen.getByRole('group', { name: 'Provider overview' })
+    expect(within(overview).getAllByRole('button')).toHaveLength(3)
+    expect(within(overview).getByText('Free model')).toBeInTheDocument()
+    const openRouter = within(overview).getByRole('button', { name: 'Open OpenRouter settings' })
+    expect(within(openRouter).getByText('API key needed')).toBeInTheDocument()
+    expect(openRouter).toHaveAttribute('aria-expanded', 'true')
   })
 
   it('opens a category from the section query parameter', () => {
@@ -201,17 +282,36 @@ describe('SettingsView', () => {
     expect(screen.getByRole('tab', { name: 'Security & data' })).toHaveAttribute('aria-selected', 'true')
   })
 
+  it('opens and focuses a provider requested by the recovery link', async () => {
+    renderSettingsView(['/settings?provider=openrouter'])
+
+    const openRouter = screen.getByRole('button', { name: 'Open OpenRouter settings' })
+    expect(openRouter).toHaveAttribute('aria-expanded', 'true')
+    await waitFor(() => expect(screen.getByLabelText('OpenRouter API Key')).toHaveFocus())
+  })
+
   /* 3. navigation switches categories */
   it('switches to Agent & Skills when clicked', () => {
     renderSettingsView()
-    fireEvent.click(screen.getByText('Agent & Skills'))
+    fireEvent.click(screen.getByRole('tab', { name: 'Agent & Skills' }))
     expect(screen.getByRole('heading', { level: 1, name: 'Agent & Skills' })).toBeInTheDocument()
+  })
+
+  it('switches categories through the compact selector', () => {
+    renderSettingsView()
+    const selector = screen.getByRole('combobox', { name: 'Settings categories' })
+
+    expect(selector).toHaveValue('ai')
+    fireEvent.change(selector, { target: { value: 'security' } })
+
+    expect(selector).toHaveValue('security')
+    expect(screen.getByRole('heading', { level: 1, name: 'Security & data' })).toBeInTheDocument()
   })
 
   /* 4. Interface category */
   it('switches to Interface category', () => {
     renderSettingsView()
-    fireEvent.click(screen.getByText('Interface'))
+    fireEvent.click(screen.getByRole('tab', { name: 'Interface' }))
     expect(screen.getByRole('heading', { level: 1, name: 'Interface' })).toBeInTheDocument()
     expect(screen.getByText('Focus mode')).toBeInTheDocument()
     expect(screen.getByText('Compact mode')).toBeInTheDocument()
@@ -220,7 +320,7 @@ describe('SettingsView', () => {
   /* 5. security category */
   it('switches to Security & data category', () => {
     renderSettingsView()
-    fireEvent.click(screen.getByText('Security & data'))
+    fireEvent.click(screen.getByRole('tab', { name: 'Security & data' }))
     expect(screen.getByRole('heading', { level: 1, name: 'Security & data' })).toBeInTheDocument()
     expect(screen.getByText('Read-only mode')).toBeInTheDocument()
   })
@@ -228,7 +328,7 @@ describe('SettingsView', () => {
   /* 6. System & Info shows runtime info */
   it('switches to System & Info and shows runtime info', () => {
     renderSettingsView()
-    fireEvent.click(screen.getByText('System & Info'))
+    fireEvent.click(screen.getByRole('tab', { name: 'System & Info' }))
     expect(screen.getByRole('heading', { level: 1, name: 'System & Info' })).toBeInTheDocument()
     expect(screen.getByText('Local LLM endpoint')).toBeInTheDocument()
     expect(screen.getByText('http://localhost:11434')).toBeInTheDocument()
@@ -244,21 +344,21 @@ describe('SettingsView', () => {
   /* 7. Memory category renders */
   it('switches to Memory category', () => {
     renderSettingsView()
-    fireEvent.click(screen.getByText('Memory'))
+    fireEvent.click(screen.getByRole('tab', { name: 'Memory' }))
     expect(screen.getByRole('heading', { level: 1, name: 'Memory' })).toBeInTheDocument()
   })
 
   /* 8. Sessions & Insights category renders */
   it('switches to Sessions & Insights', () => {
     renderSettingsView()
-    fireEvent.click(screen.getByText('Sessions & Insights'))
+    fireEvent.click(screen.getByRole('tab', { name: 'Sessions & Insights' }))
     expect(screen.getByRole('heading', { level: 1, name: 'Sessions & Insights' })).toBeInTheDocument()
   })
 
   /* 9. Terminal & Processes category renders */
   it('switches to Terminal & Processes', () => {
     renderSettingsView()
-    fireEvent.click(screen.getByText('Terminal & Processes'))
+    fireEvent.click(screen.getByRole('tab', { name: 'Terminal & Processes' }))
     expect(screen.getByRole('heading', { level: 1, name: 'Terminal & Processes' })).toBeInTheDocument()
     expect(screen.getByText('Terminal dock')).toBeInTheDocument()
     expect(screen.getByRole('combobox', { name: 'Persistence' })).toHaveValue('runtime')
@@ -267,7 +367,7 @@ describe('SettingsView', () => {
   /* 10. MCP Server category renders */
   it('switches to MCP Server', () => {
     renderSettingsView()
-    fireEvent.click(screen.getByText('MCP Server'))
+    fireEvent.click(screen.getByRole('tab', { name: 'MCP Server' }))
     // McpView also has an h1 "MCP Server", so check for the settings toggle instead
     expect(screen.getByText('Auto-reconnect')).toBeInTheDocument()
     expect(screen.getByText('Verbose logging')).toBeInTheDocument()
@@ -310,7 +410,7 @@ describe('SettingsView', () => {
   /* 14. Toggle updates preference */
   it('toggles autoApproveSafeTools preference', () => {
     renderSettingsView()
-    fireEvent.click(screen.getByText('Agent & Skills'))
+    fireEvent.click(screen.getByRole('tab', { name: 'Agent & Skills' }))
     const toggleBtn = screen.getByText('Automatically approve safe tools').closest('.toggle-row')!.querySelector('button[role="switch"]')!
     expect(toggleBtn.getAttribute('aria-checked')).toBe('true')
     fireEvent.click(toggleBtn)
@@ -330,9 +430,13 @@ describe('SettingsView', () => {
     ;(window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {}
     useConfigStore.getState().updateLlmProfile('default-openai-compatible', {
       baseUrl: 'https://mlis.example.test/v1/models',
-      apiKey: 'sk-test',
       model: 'Hy3-preview-nvfp4',
     })
+    useConfigStore.setState((state) => ({
+      llmProfiles: state.llmProfiles.map((profile) => (
+        profile.id === 'default-openai-compatible' ? { ...profile, apiKey: 'sk-test' } : profile
+      )),
+    }))
     invokeMock.mockImplementation((cmd: string) => {
       if (cmd === 'crew_provider_models_list') {
         return Promise.resolve({
@@ -344,8 +448,10 @@ describe('SettingsView', () => {
     })
 
     renderSettingsView()
-    const profileCards = screen.getAllByText('OpenAI-compatible', { selector: 'strong' })
-    const profileCard = profileCards[1].closest('.card') as HTMLElement
+    fireEvent.click(screen.getByRole('button', { name: 'Open OpenAI-compatible settings' }))
+    const profileName = screen.getAllByText('OpenAI-compatible', { selector: 'strong' })
+      .find((element) => element.closest('.llm-profile-card'))
+    const profileCard = profileName?.closest('.llm-profile-card') as HTMLElement
     fireEvent.click(within(profileCard).getByRole('button', { name: 'Load models' }))
 
     await waitFor(() => {
@@ -358,7 +464,7 @@ describe('SettingsView', () => {
   /* 17. Number input for maxToolCalls */
   it('updates maxToolCallsPerLoop preference', () => {
     renderSettingsView()
-    fireEvent.click(screen.getByText('Agent & Skills'))
+    fireEvent.click(screen.getByRole('tab', { name: 'Agent & Skills' }))
     const input = screen.getByDisplayValue('12')
     fireEvent.change(input, { target: { value: '25' } })
     expect(useConfigStore.getState().preferences.maxToolCallsPerLoop).toBe(25)
@@ -367,7 +473,7 @@ describe('SettingsView', () => {
   /* 18. Font scale input in Interface */
   it('updates fontScale preference', () => {
     renderSettingsView()
-    fireEvent.click(screen.getByText('Interface'))
+    fireEvent.click(screen.getByRole('tab', { name: 'Interface' }))
     const input = screen.getByDisplayValue('100')
     fireEvent.change(input, { target: { value: '110' } })
     expect(useConfigStore.getState().preferences.fontScale).toBe(110)
@@ -380,7 +486,7 @@ describe('SettingsView', () => {
     const aiBtn = tabs.querySelector('.settings-nav-item.active')!
     expect(aiBtn.textContent).toContain('AI & model')
 
-    fireEvent.click(screen.getByText('Interface'))
+    fireEvent.click(screen.getByRole('tab', { name: 'Interface' }))
     const uiBtn = tabs.querySelector('.settings-nav-item.active')!
     expect(uiBtn.textContent).toContain('Interface')
   })
@@ -393,7 +499,7 @@ describe('SettingsView', () => {
 
   it('updates visible settings text when the language changes', async () => {
     renderSettingsView()
-    fireEvent.click(screen.getByText('Terminal & Processes'))
+    fireEvent.click(screen.getByRole('tab', { name: 'Terminal & Processes' }))
 
     expect(screen.getByRole('option', { name: 'Runtime only' })).toBeInTheDocument()
 
@@ -403,5 +509,63 @@ describe('SettingsView', () => {
       expect(screen.getByRole('tablist', { name: 'Einstellungskategorien' })).toBeInTheDocument()
     })
     expect(screen.getByRole('option', { name: 'Nur Laufzeit' })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('tab', { name: 'KI & Modell' }))
+    expect(screen.getByText('Mehrere Endpunkte parallel verwalten und pro Provider ein globales Standardprofil für Auswahllisten und Rückfälle festlegen.')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Persönlichkeiten verwalten' })).toBeInTheDocument()
+    expect(await screen.findByText('Entwickle wartbare Software mit verifizierten Ergebnissen.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Persönlichkeit auswählen Kreativ' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Persönlichkeit löschen Assistent' })).toBeInTheDocument()
+  })
+
+  it('creates a support bundle from system settings', async () => {
+    ;(window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {}
+    saveDialogMock.mockResolvedValue('C:\\Temp\\open-cowork-support.zip')
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'support_bundle_create') {
+        return Promise.resolve({
+          path: 'C:\\Temp\\open-cowork-support.zip',
+          sizeBytes: 2048,
+          createdAt: '2026-07-10T12:00:00Z',
+          fileCount: 5,
+        })
+      }
+      return defaultInvoke(cmd)
+    })
+
+    renderSettingsView(['/settings?section=system'])
+    fireEvent.click(screen.getByRole('button', { name: 'Create support bundle' }))
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith('support_bundle_create', {
+        path: 'C:\\Temp\\open-cowork-support.zip',
+      })
+    })
+    expect(await screen.findByRole('status')).toHaveTextContent('Support bundle saved.')
+  })
+
+  it('shows the number of states recovered during startup', async () => {
+    ;(window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {}
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'startup_recovery_status') {
+        return Promise.resolve({
+          recoveredAt: '2026-07-10T12:00:00Z',
+          engineRuns: 1,
+          legacyTasks: 0,
+          taskSteps: 0,
+          workTasks: 1,
+          scheduledRuns: 0,
+          crewRuns: 0,
+          workerSandboxes: 1,
+          managedProcesses: 0,
+          terminalBackends: 0,
+        })
+      }
+      return defaultInvoke(cmd)
+    })
+
+    renderSettingsView(['/settings?section=system'])
+
+    expect(await screen.findByLabelText('Recovered startup states')).toHaveValue('3')
   })
 })

@@ -1,6 +1,5 @@
 import { useEffect, useMemo } from 'react'
 import { ExternalLink, FileText, RefreshCw, Save } from 'lucide-react'
-import { useTaskStore } from '../stores/taskStore'
 import { useUiStore } from '../stores/uiStore'
 import { useConfigStore } from '../stores/configStore'
 import { useCoworkStore } from '../stores/coworkStore'
@@ -247,21 +246,5 @@ export function DocumentWorkspacePanel() {
         </>
       )}
     </div>
-  )
-}
-
-export default function RightSidebar() {
-  const tasks = useTaskStore((s) => s.tasks)
-  const activeTaskId = useTaskStore((s) => s.activeTaskId)
-  const activeTask = tasks.find((t) => t.id === activeTaskId)
-
-  return (
-    <aside className="right-sidebar">
-      <ProgressPanel task={activeTask} />
-      <DocumentWorkspacePanel />
-      <WorkingFolderPanel />
-      <OutputsPanel task={activeTask} />
-      <ContextPanel />
-    </aside>
   )
 }

@@ -9,10 +9,17 @@ import { useEngineStore } from '../stores/engineStore'
 import { useTaskStore } from '../stores/taskStore'
 import { useWorkTasksStore, type WorkTask, type WorkTaskStatus } from '../stores/workTasksStore'
 import { useProjectStore } from '../stores/projectStore'
+import { useCrewStore } from '../stores/crewStore'
+import { resolveWorkTaskChatProviderSettings } from '../engine/tasks/workTaskExecutionService'
 import { createChatProviderSelection, getChatProviderState } from '../utils/chatProvider'
 import { ContextPanel, DocumentWorkspacePanel, OutputsPanel, ProgressPanel, WorkingFolderPanel } from './RightSidebar'
 import { tr } from '../i18n'
-import { ChevronDown, ChevronRight, Plus, Trash2 } from 'lucide-react'
+
+function getThreadDisplayTitle(title: string): string {
+  return title === 'New chat' ? tr('New chat') : title
+}
+import { Activity, ChevronDown, ChevronRight, FolderPlus, MessageSquarePlus, Plus, Trash2 } from 'lucide-react'
+import { getProductRouteById, type ProductRouteId } from '../product/routeRegistry'
 
 const THREAD_DND_MIME = 'application/open-cowork-thread-id'
 const POINTER_DRAG_THRESHOLD = 5
@@ -91,6 +98,8 @@ export default function LeftSidebar() {
     threads,
     activeThreadId,
     addThread,
+    ensureThread,
+    loadFromDb: loadChatFromDb,
     addMessage,
     setActiveThread,
     deleteThread,
@@ -104,6 +113,7 @@ export default function LeftSidebar() {
   const llmProfileModels = useConfigStore((s) => s.llmProfileModels)
   const workTasks = useWorkTasksStore((s) => s.tasks)
   const updateWorkTask = useWorkTasksStore((s) => s.updateTask)
+  const crews = useCrewStore((s) => s.crews)
   const tasks = useTaskStore((s) => s.tasks)
   const activeTaskId = useTaskStore((s) => s.activeTaskId)
   const activeProvider = useEngineStore((s) => s.activeProvider)
@@ -125,6 +135,7 @@ export default function LeftSidebar() {
   const [chatsCollapsed, setChatsCollapsed] = useState(false)
   const [tasksCollapsed, setTasksCollapsed] = useState(false)
   const [sessionsCollapsed, setSessionsCollapsed] = useState(false)
+  const [workspaceStatusOpen, setWorkspaceStatusOpen] = useState(Boolean(activeTaskId))
   const [dropProjectId, setDropProjectId] = useState<string | null>(null)
   const [chatsDropActive, setChatsDropActive] = useState(false)
   const [pointerDrag, setPointerDrag] = useState<PointerThreadDrag | null>(null)
@@ -147,6 +158,14 @@ export default function LeftSidebar() {
     [activeProvider, activeThread?.providerSettings, availableModels, defaultLlmProfileIds, llmProfileModels, llmProfiles, ollama],
   )
   const activeTask = tasks.find((task) => task.id === activeTaskId)
+
+  const navigateToProductRoute = (routeId: ProductRouteId) => {
+    const route = getProductRouteById(routeId)
+    if (route.activeMode) {
+      setActiveMode(route.activeMode)
+    }
+    navigate(route.path)
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -243,6 +262,8 @@ export default function LeftSidebar() {
       window.removeEventListener('pointerup', finishPointerDrag)
       window.removeEventListener('pointercancel', cancelPointerDrag)
     }
+    // Drag handlers close over the active store actions for the current gesture.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detachThreadFromAll, pointerDrag, threadIds])
 
   const handleNewChat = (projectId?: string) => {
@@ -251,27 +272,26 @@ export default function LeftSidebar() {
       attachThread(projectId, threadId)
       setActiveProject(projectId)
     }
-    setActiveMode('work')
     setActiveThread(threadId)
-    navigate('/')
+    navigateToProductRoute('cowork')
   }
 
   const handleNewProject = () => {
     const projectId = addProject(`Project ${projects.length + 1}`)
     setActiveProject(projectId)
-    navigate('/projects')
+    navigateToProductRoute('projects')
   }
 
   const handleOpenProjects = () => {
     if (!activeProjectId && projects[0]) {
       setActiveProject(projects[0].id)
     }
-    navigate('/projects')
+    navigateToProductRoute('projects')
   }
 
   const handleOpenProject = (projectId: string) => {
     setActiveProject(projectId)
-    navigate('/projects')
+    navigateToProductRoute('projects')
   }
 
   const handleOpenThread = (threadId: string) => {
@@ -279,33 +299,47 @@ export default function LeftSidebar() {
       suppressThreadClickRef.current = null
       return
     }
-    setActiveMode('work')
     setActiveThread(threadId)
-    navigate('/')
+    navigateToProductRoute('cowork')
   }
 
-  const handleOpenTaskThread = (task: WorkTask) => {
-    const existingThreadId = task.threadId && threadIds.has(task.threadId)
+  const handleOpenTaskThread = async (task: WorkTask) => {
+    await loadChatFromDb()
+    const loadedThreadIds = new Set(useChatStore.getState().threads.map((thread) => thread.id))
+    const existingThreadId = task.threadId && loadedThreadIds.has(task.threadId)
       ? task.threadId
       : null
+    const taskProviderSettings = resolveWorkTaskChatProviderSettings(task, {
+      crews,
+      ollamaModel: ollama.model,
+      defaultLlmProfileIds,
+      llmProfiles,
+      fallbackProviderSettings: createChatProviderSelection(providerState),
+    })
 
-    const threadId = existingThreadId ?? addThread(getTaskSidebarTitle(task), createChatProviderSelection(providerState))
+    const ensuredThread = existingThreadId
+      ? { id: existingThreadId, created: false }
+      : task.threadId
+        ? ensureThread(task.threadId, getTaskSidebarTitle(task), taskProviderSettings)
+        : { id: addThread(getTaskSidebarTitle(task), taskProviderSettings), created: true }
+    const threadId = ensuredThread.id
 
-    if (!existingThreadId) {
+    if (ensuredThread.created) {
       addMessage(threadId, {
         role: 'system',
         content: buildTaskSidebarSummary(task),
         visibleInChat: true,
         timestamp: Date.now(),
       })
-      updateWorkTask(task.id, { threadId })
+      if (!task.threadId) {
+        updateWorkTask(task.id, { threadId })
+      }
     }
 
     const workDir = task.workDir.trim()
     setWorkingFolder(workDir && isAbsolutePath(workDir) ? workDir : null)
-    setActiveMode('work')
     setActiveThread(threadId)
-    navigate('/')
+    navigateToProductRoute('cowork')
   }
 
   const handleOpenSession = async (sessionId: string) => {
@@ -314,8 +348,7 @@ export default function LeftSidebar() {
     if (session.threadId && threadIds.has(session.threadId)) {
       setActiveThread(session.threadId)
     }
-    setActiveMode('work')
-    navigate('/')
+    navigateToProductRoute('cowork')
   }
 
   const toggleProjectCollapsed = (projectId: string) => {
@@ -415,18 +448,41 @@ export default function LeftSidebar() {
   }
 
   return (
-    <aside className="left-sidebar" aria-label={tr("Workspace sidebar")}>
-      <button type="button" className="btn-new-task" onClick={() => handleNewChat()}>{tr("+ New chat")}</button>
-      <button type="button" className="btn-new-task" onClick={handleNewProject}>{tr("+ New project")}</button>
-      <button type="button" className="btn-sm sidebar-utility-button" onClick={handleOpenProjects}>{tr("Manage projects")}</button>
-      <button type="button" className="btn-sm sidebar-utility-button last" onClick={() => navigate('/crew')}>{tr("Crew Studio")}</button>
+    <aside className="left-sidebar" data-doc-id="element:/app/left-sidebar" aria-label={tr("Workspace sidebar")}>
+      <div className="sidebar-primary-actions">
+        <button type="button" className="sidebar-primary-action" aria-label={tr("+ New chat")} data-doc-id="button:/app/left-sidebar/new-chat" onClick={() => handleNewChat()}>
+          <MessageSquarePlus size={17} aria-hidden="true" />
+          <span>{tr("New chat")}</span>
+        </button>
+        <button type="button" className="sidebar-primary-action" aria-label={tr("+ New project")} data-doc-id="button:/app/left-sidebar/new-project" onClick={handleNewProject}>
+          <FolderPlus size={17} aria-hidden="true" />
+          <span>{tr("New project")}</span>
+        </button>
+      </div>
+      <div className="sidebar-utility-actions">
+        <button type="button" className="sidebar-utility-link" data-doc-id="button:/app/left-sidebar/manage-projects" onClick={handleOpenProjects}>{tr("Manage projects")}</button>
+        <button type="button" className="sidebar-utility-link" data-doc-id="button:/app/left-sidebar/open-crew" onClick={() => navigateToProductRoute('crew')}>{tr("Crew Studio")}</button>
+      </div>
 
-      <div className="sidebar-status-panels">
-        <ProgressPanel task={activeTask} />
-        <DocumentWorkspacePanel />
-        <WorkingFolderPanel />
-        <OutputsPanel task={activeTask} />
-        <ContextPanel />
+      <div className={`sidebar-status-group${workspaceStatusOpen ? ' open' : ''}`}>
+        <button
+          type="button"
+          className="sidebar-status-toggle"
+          aria-expanded={workspaceStatusOpen}
+          onClick={() => setWorkspaceStatusOpen((open) => !open)}
+        >
+          <span><Activity size={15} aria-hidden="true" />{tr("Workspace status")}</span>
+          {workspaceStatusOpen ? <ChevronDown size={15} aria-hidden="true" /> : <ChevronRight size={15} aria-hidden="true" />}
+        </button>
+        {workspaceStatusOpen && (
+          <div className="sidebar-status-panels">
+            <ProgressPanel task={activeTask} />
+            <DocumentWorkspacePanel />
+            <WorkingFolderPanel />
+            <OutputsPanel task={activeTask} />
+            <ContextPanel />
+          </div>
+        )}
       </div>
 
       <div className="sidebar-section">
@@ -478,7 +534,7 @@ export default function LeftSidebar() {
                         className={`sidebar-thread-row thread-draggable${thread.id === activeThreadId ? ' active' : ''}`}
                         onDragStart={(event) => handleThreadDragStart(event, thread.id)}
                         onDragEnd={clearThreadDropState}
-                        onPointerDown={(event) => handleThreadPointerDown(event, thread.id, thread.title)}
+                        onPointerDown={(event) => handleThreadPointerDown(event, thread.id, getThreadDisplayTitle(thread.title))}
                         title={tr("Move chat to another project")}
                       >
                         <button
@@ -488,11 +544,11 @@ export default function LeftSidebar() {
                           onDragEnd={clearThreadDropState}
                           onClick={() => handleOpenThread(thread.id)}
                         >
-                          {thread.title}
+                          {getThreadDisplayTitle(thread.title)}
                         </button>
                       </div>
                     ))}
-                    {projectThreads.length === 0 && <p className="hint-text">{tr("No Chats")}</p>}
+                    {projectThreads.length === 0 && <p className="hint-text">{tr("No chats in this project")}</p>}
                   </div>
                 )}
               </div>
@@ -525,7 +581,7 @@ export default function LeftSidebar() {
                   className={`sidebar-thread-row thread-draggable${thread.id === activeThreadId ? ' active' : ''}`}
                   onDragStart={(event) => handleThreadDragStart(event, thread.id)}
                   onDragEnd={clearThreadDropState}
-                  onPointerDown={(event) => handleThreadPointerDown(event, thread.id, thread.title)}
+                  onPointerDown={(event) => handleThreadPointerDown(event, thread.id, getThreadDisplayTitle(thread.title))}
                   title={tr("Move chat to a project")}
                 >
                   <button
@@ -535,7 +591,7 @@ export default function LeftSidebar() {
                     onDragEnd={clearThreadDropState}
                     onClick={() => handleOpenThread(thread.id)}
                   >
-                    {thread.title}
+                    {getThreadDisplayTitle(thread.title)}
                   </button>
                   <button
                     type="button"
@@ -561,7 +617,7 @@ export default function LeftSidebar() {
             <div className="sidebar-thread-list">
               {workTasks.map((task) => (
                 <div key={task.id} className={`sidebar-thread-row${task.threadId === activeThreadId ? ' active' : ''}`}>
-                  <button type="button" className="sidebar-row-main sidebar-task-row-main" onClick={() => handleOpenTaskThread(task)}>
+                  <button type="button" className="sidebar-row-main sidebar-task-row-main" data-doc-id="button:/app/left-sidebar/open-task-chat" onClick={() => void handleOpenTaskThread(task)}>
                     <span className="sidebar-task-title">{getTaskSidebarTitle(task)}</span>
                     <span className={`task-pill task-status task-status-${task.status}`}>{formatWorkTaskStatus(task.status)}</span>
                   </button>
@@ -594,7 +650,7 @@ export default function LeftSidebar() {
                 </div>
               ))}
               {loadingSessions && <p className="hint-text">{tr("Loading sessions...")}</p>}
-              {!loadingSessions && persistedSessions.length === 0 && <p className="hint-text">{tr("No Sessions")}</p>}
+              {!loadingSessions && persistedSessions.length === 0 && <p className="hint-text">{tr("No persisted sessions")}</p>}
             </div>
           )}
         </div>
