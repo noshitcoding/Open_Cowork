@@ -8,7 +8,8 @@ import { useConfigStore } from './stores/configStore'
 import { useUiStore } from './stores/uiStore'
 
 describe('App', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    await i18n.changeLanguage('en')
     Object.defineProperty(window, 'matchMedia', {
       configurable: true,
       writable: true,
@@ -53,6 +54,20 @@ describe('App', () => {
     render(<App />)
     expect(await screen.findByPlaceholderText('Next instruction...', undefined, { timeout: 3000 })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '+ New chat' })).toBeInTheDocument()
+  })
+
+  it('keeps the German Cowork entry point consistently localized', async () => {
+    await i18n.changeLanguage('de')
+    render(<App />)
+
+    expect(await screen.findByRole('button', { name: 'Projekte verwalten' })).toBeInTheDocument()
+    expect(screen.getByText('Keine Projekte')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Erstelle einen klaren Plan mit 5 Schritten für die aktuelle Aufgabe.' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Analysiere die letzten Änderungen und nenne Risiken.' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Formuliere die nächsten konkreten To-dos mit Priorität.' })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('link', { name: 'Aufgaben' }))
+    expect(await screen.findByRole('heading', { name: 'Aufgaben' })).toBeInTheDocument()
   })
 
   it('shows top navigation links', async () => {

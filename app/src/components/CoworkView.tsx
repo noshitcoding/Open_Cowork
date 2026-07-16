@@ -3241,9 +3241,9 @@ export default function CoworkView() {
   }
 
   const quickPrompts = [
-    'Create a clear 5-step plan for the current task.',
-    'Analyze the latest changes and list risks.',
-    'Write the next concrete to-dos with priority.',
+    tr('Create a clear 5-step plan for the current task.'),
+    tr('Analyze the latest changes and list risks.'),
+    tr('Write the next concrete to-dos with priority.'),
   ]
   const onboardingWorkingFolder = workingFolder ?? attachments.find((item) => item.kind === 'folder')?.path ?? null
   const onboardingPermissionLabel = enginePermissionMode === 'plan'

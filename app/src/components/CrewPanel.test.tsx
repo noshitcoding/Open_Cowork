@@ -6,6 +6,7 @@ import { hasTauriRuntime, safeInvoke } from '../utils/safeInvoke'
 import { useConfigStore } from '../stores/configStore'
 import { useCrewStore, type CrewAgent } from '../stores/crewStore'
 import { usePersonalityStore } from '../stores/personalityStore'
+import i18n from '../i18n'
 
 vi.mock('../utils/safeInvoke', () => ({
   hasTauriRuntime: vi.fn(() => false),
@@ -48,7 +49,8 @@ const baseAgent: CrewAgent = {
 }
 
 describe('CrewPanel', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    await i18n.changeLanguage('en')
     Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
       configurable: true,
       value: vi.fn(),
@@ -180,6 +182,19 @@ describe('CrewPanel', () => {
       deletePersonality: vi.fn().mockResolvedValue(undefined),
       setActive: vi.fn(),
     })
+  })
+
+  it('keeps the German crew workspace guidance consistently localized', async () => {
+    await i18n.changeLanguage('de')
+
+    await act(async () => {
+      renderCrewPanel()
+    })
+
+    expect(screen.getByText('Crew-Arbeitsbereich')).toBeInTheDocument()
+    expect(screen.getByText('Provider & Modell')).toBeInTheDocument()
+    expect(screen.getByText('Rollen, Modelle und Zugriff pro Agent')).toBeInTheDocument()
+    expect(screen.getByText('Freigaben für alle Mitglieder')).toBeInTheDocument()
   })
 
   it('does not run desktop personality migration in the browser preview', async () => {

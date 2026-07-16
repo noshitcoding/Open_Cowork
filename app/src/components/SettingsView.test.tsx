@@ -460,6 +460,10 @@ describe('SettingsView', () => {
       expect(screen.getByRole('tablist', { name: 'Einstellungskategorien' })).toBeInTheDocument()
     })
     expect(screen.getByRole('option', { name: 'Nur Laufzeit' })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('tab', { name: 'KI & Modell' }))
+    expect(screen.getByText('Mehrere Endpunkte parallel verwalten und pro Provider ein globales Standardprofil für Auswahllisten und Rückfälle festlegen.')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Persönlichkeiten verwalten' })).toBeInTheDocument()
   })
 
   it('creates a support bundle from system settings', async () => {
