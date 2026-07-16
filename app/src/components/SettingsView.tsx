@@ -296,21 +296,32 @@ function SupportBundlePanel() {
 /* Category definitions */
 
 const CATEGORIES = [
-  { key: 'ai', label: 'AI & model', description: 'Configure multiple LLM profiles, global provider defaults, and personalities', icon: Bot },
-  { key: 'agent', label: 'Agent & Skills', description: 'Control agent behavior, manage skills, and configure pipelines', icon: Zap },
-  { key: 'memory', label: 'Memory', description: 'Manage agent memory, profile, provider, and notes', icon: Brain },
-  { key: 'sessions', label: 'Sessions & Insights', description: 'Search past sessions and review usage statistics', icon: FolderOpen },
-  { key: 'terminal', label: 'Terminal & Processes', description: 'Configure terminal backends and managed processes', icon: SquareTerminal },
-  { key: 'mcp', label: 'MCP Server', description: 'Manage and test Model Context Protocol servers', icon: PlugZap },
-  { key: 'ui', label: 'Interface', description: 'Customize display, notifications, and audio feedback', icon: Palette },
-  { key: 'security', label: 'Security & data', description: 'Configure file access, command filters, and data retention', icon: ShieldCheck },
-  { key: 'system', label: 'System & Info', description: 'Workspace paths, startup, and app information', icon: Folder },
+  { key: 'ai', label: 'AI & model', description: 'Configure multiple LLM profiles, global provider defaults, and personalities', keywords: ['API key needed', 'Endpoint', 'Model', 'Streaming', 'Manage personalities'], icon: Bot },
+  { key: 'agent', label: 'Agent & Skills', description: 'Control agent behavior, manage skills, and configure pipelines', keywords: ['Agent behavior', 'Permission mode', 'System prompts', 'Crew configuration', 'Skills'], icon: Zap },
+  { key: 'memory', label: 'Memory', description: 'Manage agent memory, profile, provider, and notes', keywords: ['Knowledge import'], icon: Brain },
+  { key: 'sessions', label: 'Sessions & Insights', description: 'Search past sessions and review usage statistics', keywords: ['Insights dashboard'], icon: FolderOpen },
+  { key: 'terminal', label: 'Terminal & Processes', description: 'Configure terminal backends and managed processes', keywords: ['Terminal backends'], icon: SquareTerminal },
+  { key: 'mcp', label: 'MCP Server', description: 'Manage and test Model Context Protocol servers', keywords: ['MCP Settings', 'Manual JSON import'], icon: PlugZap },
+  { key: 'ui', label: 'Interface', description: 'Customize display, notifications, and audio feedback', keywords: ['Appearance', 'Desktop notifications', 'Font size (%)', 'Focus mode', 'Compact mode'], icon: Palette },
+  { key: 'security', label: 'Security & data', description: 'Configure file access, command filters, and data retention', keywords: ['File security', 'Allowed commands (allowlist)', 'Blocked commands (blacklist)', 'Backup interval (hours)'], icon: ShieldCheck },
+  { key: 'system', label: 'System & Info', description: 'Workspace paths, startup, and app information', keywords: ['Workspace & System', 'Default workspace path', 'Create support bundle'], icon: Folder },
 ] as const
 
 type CategoryKey = (typeof CATEGORIES)[number]['key']
 
 const isCategoryKey = (value: string | null): value is CategoryKey =>
   CATEGORIES.some((category) => category.key === value)
+
+const normalizeSettingsSearch = (value: string) => value
+  .toLocaleLowerCase()
+  .replaceAll('\u00e4', 'ae')
+  .replaceAll('\u00f6', 'oe')
+  .replaceAll('\u00fc', 'ue')
+  .replaceAll('\u00df', 'ss')
+  .normalize('NFD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .replace(/[^a-z0-9]+/g, ' ')
+  .trim()
 
 const getTabId = (key: CategoryKey) => `settings-tab-${key}`
 const getPanelId = (key: CategoryKey) => `settings-panel-${key}`
@@ -364,16 +375,18 @@ export default function SettingsView() {
   const activeCategory: CategoryKey = isCategoryKey(categoryParam) ? categoryParam : 'ai'
   const activeToolsetPolicy = toolsetPolicies.find((policy) => policy.id === activeToolsetPolicyId)
   const [categorySearch, setCategorySearch] = useState('')
-  const normalizedCategorySearch = categorySearch.trim().toLocaleLowerCase()
+  const normalizedCategorySearch = normalizeSettingsSearch(categorySearch)
   const getVisibleCategories = (search: string) => {
-    const normalizedSearch = search.trim().toLocaleLowerCase()
-    return CATEGORIES.filter((category) => (
-      !normalizedSearch
-      || tr(category.label).toLocaleLowerCase().includes(normalizedSearch)
-      || tr(category.description).toLocaleLowerCase().includes(normalizedSearch)
-    ))
+    const searchTokens = normalizeSettingsSearch(search).split(' ').filter(Boolean)
+    if (searchTokens.length === 0) return CATEGORIES
+
+    return CATEGORIES.filter((category) => {
+      const categoryText = normalizeSettingsSearch([tr(category.label), tr(category.description), ...category.keywords.map((keyword) => tr(keyword))].join(' '))
+      return searchTokens.every((token) => categoryText.includes(token))
+    })
   }
   const visibleCategories = getVisibleCategories(categorySearch)
+  const activeCategoryMatchesSearch = visibleCategories.some((category) => category.key === activeCategory)
 
   const setActiveCategory = (category: CategoryKey) => {
     const nextParams = new URLSearchParams(searchParams)
@@ -452,15 +465,26 @@ export default function SettingsView() {
             )
           })}
           {visibleCategories.length === 0 ? (
-            <p className="settings-category-empty" role="status">{tr('No settings sections match your search')}</p>
+            <p className="settings-category-empty">{tr('No settings sections match your search')}</p>
           ) : null}
         </nav>
       </aside>
 
       {/* Content area */}
       <div className="settings-content">
+        {visibleCategories.length === 0 ? (
+          <div className="settings-view" role="status">
+            <Section title={tr('No settings sections match your search')} icon={Search}>
+              <p className="hint-text">{categorySearch}</p>
+              <div className="settings-inline-actions">
+                <button type="button" className="btn-sm" onClick={() => setCategorySearch('')}>{tr('Leeren')}</button>
+              </div>
+            </Section>
+          </div>
+        ) : null}
+
         {/* AI and model */}
-        {activeCategory === 'ai' && (
+        {activeCategoryMatchesSearch && activeCategory === 'ai' && (
           <div className="settings-view" {...getPanelProps('ai')}>
             <SettingsPageHeader category="ai" />
 
@@ -474,7 +498,7 @@ export default function SettingsView() {
         )}
 
         {/* Agent and skills */}
-        {activeCategory === 'agent' && (
+        {activeCategoryMatchesSearch && activeCategory === 'agent' && (
           <div className="settings-view settings-view-wide" {...getPanelProps('agent')}>
             <SettingsPageHeader category="agent" />
 
@@ -552,7 +576,7 @@ export default function SettingsView() {
         )}
 
         {/* Memory */}
-        {activeCategory === 'memory' && (
+        {activeCategoryMatchesSearch && activeCategory === 'memory' && (
           <div className="settings-view" {...getPanelProps('memory')}>
             <SettingsPageHeader category="memory" />
             <MemoryPanel />
@@ -560,7 +584,7 @@ export default function SettingsView() {
         )}
 
         {/* Sessions and insights */}
-        {activeCategory === 'sessions' && (
+        {activeCategoryMatchesSearch && activeCategory === 'sessions' && (
           <div className="settings-view" {...getPanelProps('sessions')}>
             <SettingsPageHeader category="sessions" />
             <SessionSearchPanel />
@@ -570,7 +594,7 @@ export default function SettingsView() {
         )}
 
         {/* Terminal and processes */}
-        {activeCategory === 'terminal' && (
+        {activeCategoryMatchesSearch && activeCategory === 'terminal' && (
           <div className="settings-view" {...getPanelProps('terminal')}>
             <SettingsPageHeader category="terminal" />
             <TerminalPanel />
@@ -579,7 +603,7 @@ export default function SettingsView() {
         )}
 
         {/* MCP server */}
-        {activeCategory === 'mcp' && (
+        {activeCategoryMatchesSearch && activeCategory === 'mcp' && (
           <div className="settings-view" {...getPanelProps('mcp')}>
             <SettingsPageHeader category="mcp" />
 
@@ -595,7 +619,7 @@ export default function SettingsView() {
         )}
 
         {/* Interface */}
-        {activeCategory === 'ui' && (
+        {activeCategoryMatchesSearch && activeCategory === 'ui' && (
           <div className="settings-view" {...getPanelProps('ui')}>
             <SettingsPageHeader category="ui" />
 
@@ -629,7 +653,7 @@ export default function SettingsView() {
         )}
 
         {/* Security and data */}
-        {activeCategory === 'security' && (
+        {activeCategoryMatchesSearch && activeCategory === 'security' && (
           <div className="settings-view" {...getPanelProps('security')}>
             <SettingsPageHeader category="security" />
 
@@ -724,7 +748,7 @@ export default function SettingsView() {
         )}
 
         {/* System and info */}
-        {activeCategory === 'system' && (
+        {activeCategoryMatchesSearch && activeCategory === 'system' && (
           <div className="settings-view" {...getPanelProps('system')}>
             <SettingsPageHeader category="system" />
 

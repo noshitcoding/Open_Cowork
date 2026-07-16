@@ -223,6 +223,36 @@ describe('SettingsView', () => {
 
     fireEvent.change(search, { target: { value: 'definitely missing' } })
     expect(screen.getByRole('status')).toHaveTextContent('No settings sections match your search')
+    expect(screen.queryByRole('heading', { level: 1, name: 'Security & data' })).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear' }))
+    expect(screen.getAllByRole('tab')).toHaveLength(9)
+    expect(screen.getByRole('heading', { level: 1, name: 'Security & data' })).toBeInTheDocument()
+  })
+
+  it('finds the category for a concrete setting instead of only category copy', () => {
+    renderSettingsView(['/settings?section=ui'])
+
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search settings' }), { target: { value: 'API key' } })
+
+    const tabs = screen.getAllByRole('tab')
+    expect(tabs).toHaveLength(1)
+    expect(tabs[0]).toHaveTextContent('AI & model')
+    expect(screen.getByRole('heading', { level: 1, name: 'AI & model' })).toBeInTheDocument()
+  })
+
+  it('matches German setting terms and umlaut spellings', async () => {
+    await i18n.changeLanguage('de')
+    renderSettingsView(['/settings?section=ui'])
+    const search = screen.getByRole('searchbox', { name: 'Einstellungen durchsuchen' })
+
+    fireEvent.change(search, { target: { value: 'API-Schlüssel' } })
+    expect(screen.getAllByRole('tab')).toHaveLength(1)
+    expect(screen.getByRole('heading', { level: 1, name: 'KI & Modell' })).toBeInTheDocument()
+
+    fireEvent.change(search, { target: { value: 'oberflaeche' } })
+    expect(screen.getAllByRole('tab')).toHaveLength(1)
+    expect(screen.getByRole('heading', { level: 1, name: 'Oberfläche' })).toBeInTheDocument()
   })
 
   /* 2. default category is AI & model */
