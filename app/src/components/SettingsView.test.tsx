@@ -252,6 +252,14 @@ describe('SettingsView', () => {
     expect(screen.getByRole('tab', { name: 'Security & data' })).toHaveAttribute('aria-selected', 'true')
   })
 
+  it('opens and focuses a provider requested by the recovery link', async () => {
+    renderSettingsView(['/settings?provider=openrouter'])
+
+    const openRouter = screen.getByRole('button', { name: 'Open OpenRouter settings' })
+    expect(openRouter).toHaveAttribute('aria-expanded', 'true')
+    await waitFor(() => expect(screen.getByLabelText('OpenRouter API Key')).toHaveFocus())
+  })
+
   /* 3. navigation switches categories */
   it('switches to Agent & Skills when clicked', () => {
     renderSettingsView()

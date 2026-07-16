@@ -3,6 +3,7 @@ import {
   buildProjectInstructionsPromptContext,
   buildProjectLinkPromptContext,
   formatAssistantFailureContent,
+  getAssistantFailureSettingsPath,
   isAssistantFailureContent,
 } from './CoworkView'
 import type { ProjectResource } from '../stores/projectStore'
@@ -48,6 +49,12 @@ describe('CoworkView project context helpers', () => {
     )).toBe(
       'Anfrage fehlgeschlagen: Für OpenRouter fehlt der API-Schlüssel.\n\nÜberprüfe in den Einstellungen das OpenRouter-Profil, den Endpunkt, den API-Schlüssel und das Modell.',
     )
+  })
+
+  it('links provider failures to the matching settings profile', () => {
+    expect(getAssistantFailureSettingsPath('LLM request failed: OpenRouter API-Key fehlt.')).toBe('/settings?provider=openrouter')
+    expect(getAssistantFailureSettingsPath('Ollama request failed: timeout')).toBe('/settings?provider=ollama')
+    expect(getAssistantFailureSettingsPath('Unknown provider failure')).toBe('/settings')
   })
 
   it('fetches project links manually and reports non-blocking failures', async () => {

@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { ChevronDown } from 'lucide-react'
 import { checkOllamaConnection, listOllamaModels } from '../engine/api/ollamaClient'
 import { useConfigStore, type LlmProfile, type LlmProviderKind } from '../stores/configStore'
@@ -35,6 +36,10 @@ type ProfileModelsState = {
 }
 
 const PROVIDER_ORDER: LlmProviderKind[] = ['ollama', 'openai-compatible', 'openrouter']
+
+function isLlmProviderKind(value: string | null): value is LlmProviderKind {
+  return PROVIDER_ORDER.some((provider) => provider === value)
+}
 
 const PROVIDER_LABELS: Record<LlmProviderKind, string> = {
   ollama: 'Ollama',
@@ -102,6 +107,11 @@ export default function LlmProfilesPanel() {
     setLlmProfileModels,
   } = useConfigStore()
 
+  const [searchParams] = useSearchParams()
+  const requestedProviderParam = searchParams.get('provider')
+  const requestedProvider = isLlmProviderKind(requestedProviderParam) ? requestedProviderParam : null
+  const appliedRequestedProvider = useRef<LlmProviderKind | null>(null)
+
   const [healthChecks, setHealthChecks] = useState<Record<string, ProfileHealthState>>({})
   const [modelStates, setModelStates] = useState<Record<string, ProfileModelsState>>({})
 
@@ -113,11 +123,28 @@ export default function LlmProfilesPanel() {
     [llmProfiles],
   )
   const [expandedProvider, setExpandedProvider] = useState<LlmProviderKind | null>(() => {
+    if (requestedProvider) return requestedProvider
     const openRouterProfile = llmProfiles.find((profile) => (
       profile.id === defaultLlmProfileIds.openrouter && profile.provider === 'openrouter'
     ))
     return openRouterProfile?.model.trim() ? 'openrouter' : 'ollama'
   })
+
+  useEffect(() => {
+    if (!requestedProvider || appliedRequestedProvider.current === requestedProvider) return
+    appliedRequestedProvider.current = requestedProvider
+    setExpandedProvider(requestedProvider)
+
+    const frame = window.requestAnimationFrame(() => {
+      const section = document.getElementById(`llm-provider-${requestedProvider}`)
+      if (typeof section?.scrollIntoView === 'function') {
+        section.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+      }
+      section?.querySelector<HTMLInputElement>('.llm-profile-api-key-field input')?.focus({ preventScroll: true })
+    })
+
+    return () => window.cancelAnimationFrame(frame)
+  }, [requestedProvider])
 
   const openProvider = (provider: LlmProviderKind) => {
     setExpandedProvider(provider)
@@ -511,11 +538,12 @@ export default function LlmProfilesPanel() {
                           )}
                         </label>
                         {supportsApiKey(profile.provider) && (
-                          <label>{tr("API Key")}<SecureCredentialInput
+                          <label className="llm-profile-api-key-field">{tr("API Key")}<SecureCredentialInput
                               value={profile.apiKey}
                               onCommit={(value) => setLlmProfileApiKey(profile.id, value)}
                               placeholder={tr("sk?...")}
                               style={{ fontFamily: 'monospace' }}
+                              ariaLabel={`${PROVIDER_LABELS[profile.provider]} ${tr('API Key')}`}
                             />
                           </label>
                         )}

@@ -162,6 +162,14 @@ export function formatAssistantFailureContent(content: string): string {
   ].filter(Boolean).join('\n\n')
 }
 
+export function getAssistantFailureSettingsPath(content: string): string {
+  const normalized = content.toLocaleLowerCase()
+  if (normalized.includes('openrouter')) return '/settings?provider=openrouter'
+  if (normalized.includes('openai-compatible')) return '/settings?provider=openai-compatible'
+  if (normalized.includes('ollama')) return '/settings?provider=ollama'
+  return '/settings'
+}
+
 type McpCallResponse = {
   serverName: string
   toolName: string
@@ -3480,7 +3488,7 @@ export default function CoworkView() {
                       {assistantFailure ? (
                         <div className="msg-error-header">
                           <span><ShieldAlert size={16} aria-hidden="true" /><strong>{tr('Response needs attention')}</strong></span>
-                          <button type="button" onClick={() => navigate('/settings')}>
+                          <button type="button" onClick={() => navigate(getAssistantFailureSettingsPath(rawDisplayedContent))}>
                             <Settings2 size={14} aria-hidden="true" />{tr('Open settings')}
                           </button>
                         </div>
