@@ -114,10 +114,10 @@ Common environment options:
 
 ```text
 app/          Tauri desktop app, React frontend, Rust backend
-docs/         Architecture, operations, Ollama, smoke-test, and control docs
+docs/         Public user and integration documentation
 scripts/      Repository-level validation helpers
-tasks/        Product and implementation notes
-.github/      CI, installer workflow, and agent instructions
+.github/      CI, release automation, and community templates
+site/         Public product website and search metadata
 ```
 
 ## Useful Commands
@@ -149,15 +149,8 @@ npm run smoke:desktop
 
 ## Documentation
 
-- [Architecture](docs/ARCHITECTURE.md)
-- [OpenClaw and Hermes feature adoption deep spec](docs/OPENCLAW_HERMES_FEATURE_ADOPTION_DEEP_SPEC.md)
-- [OpenClaw and Hermes P0 implementation backlog](docs/OPENCLAW_HERMES_P0_IMPLEMENTATION_BACKLOG.md)
-- [OpenClaw and Hermes P0 smoke checklist](docs/OPENCLAW_HERMES_P0_SMOKE_CHECKLIST.md)
-- [Development and operations](docs/DEVELOPMENT_AND_OPERATIONS.md)
 - [Ollama configuration](docs/OLLAMA_CONFIGURATION.md)
-- [Desktop smoke test](docs/DESKTOP_SMOKE_TEST.md)
 - [Desktop control and computer use](docs/DESKTOP_CONTROL_AND_COMPUTER_USE.md)
-- [UI requirements](docs/UI_ANFORDERUNGEN.md)
 
 ## Release Workflow
 
