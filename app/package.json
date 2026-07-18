@@ -19,6 +19,8 @@
     "typecheck": "tsc -b",
     "build": "npm run typecheck && vite build",
     "budgets:build": "node ./scripts/check-budgets.mjs",
+    "brand:assets": "node ./scripts/generate-brand-assets.mjs",
+    "brand:verify": "node ./scripts/verify-carbon-signal.mjs",
     "marketing:screenshot": "npm run build && node ./scripts/capture-marketing-preview.mjs",
     "installer": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/build-installer.ps1",
     "lint": "eslint .",

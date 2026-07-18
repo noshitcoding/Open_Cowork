@@ -461,6 +461,34 @@ describe('SettingsView', () => {
     expect(await within(profileCard).findByText('Model automatically set to 0xSero/Hy3-preview-nvfp4.')).toBeInTheDocument()
   })
 
+  it('does not report cached external models as freshly loaded after a refresh fails', async () => {
+    ;(window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {}
+    useConfigStore.getState().updateLlmProfile('default-openrouter', {
+      model: 'openai/gpt-4o-mini',
+    })
+    useConfigStore.getState().setLlmProfileModels('default-openrouter', [
+      'openai/gpt-4o-mini',
+      'google/gemini-2.5-pro',
+    ])
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'crew_provider_models_list') {
+        return Promise.reject(new Error('error sending request for url (https://openrouter.ai/api/v1/models)'))
+      }
+      return defaultInvoke(cmd)
+    })
+
+    renderSettingsView(['/settings?provider=openrouter'])
+    const profileName = screen.getAllByText('OpenRouter', { selector: 'strong' })
+      .find((element) => element.closest('.llm-profile-card'))
+    const profileCard = profileName?.closest('.llm-profile-card') as HTMLElement
+
+    expect(within(profileCard).getByText(/2 model\(s\) loaded/i)).toBeInTheDocument()
+    fireEvent.click(within(profileCard).getByRole('button', { name: 'Load models' }))
+
+    expect(await within(profileCard).findByText(/error sending request for url/i)).toBeInTheDocument()
+    expect(within(profileCard).queryByText(/2 model\(s\) loaded/i)).not.toBeInTheDocument()
+  })
+
   /* 17. Number input for maxToolCalls */
   it('updates maxToolCallsPerLoop preference', () => {
     renderSettingsView()
@@ -520,11 +548,11 @@ describe('SettingsView', () => {
 
   it('creates a support bundle from system settings', async () => {
     ;(window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {}
-    saveDialogMock.mockResolvedValue('C:\\Temp\\localai-cowork-support.zip')
+    saveDialogMock.mockResolvedValue('C:\\Temp\\open-cowork-support.zip')
     invokeMock.mockImplementation((cmd: string) => {
       if (cmd === 'support_bundle_create') {
         return Promise.resolve({
-          path: 'C:\\Temp\\localai-cowork-support.zip',
+          path: 'C:\\Temp\\open-cowork-support.zip',
           sizeBytes: 2048,
           createdAt: '2026-07-10T12:00:00Z',
           fileCount: 5,
@@ -538,7 +566,7 @@ describe('SettingsView', () => {
 
     await waitFor(() => {
       expect(invokeMock).toHaveBeenCalledWith('support_bundle_create', {
-        path: 'C:\\Temp\\localai-cowork-support.zip',
+        path: 'C:\\Temp\\open-cowork-support.zip',
       })
     })
     expect(await screen.findByRole('status')).toHaveTextContent('Support bundle saved.')

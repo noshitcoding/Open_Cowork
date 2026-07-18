@@ -29,7 +29,7 @@ try {
     if ($process.HasExited) {
       throw "LocalAI Cowork exited during startup with code $($process.ExitCode)."
     }
-    if ($process.MainWindowHandle -ne 0 -and $process.MainWindowTitle -eq "LocalAI Cowork") {
+    if ($process.MainWindowHandle -ne 0 -and $process.MainWindowTitle -eq "Local AI Cowork") {
       $windowReady = $true
       break
     }

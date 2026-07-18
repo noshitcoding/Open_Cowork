@@ -56,6 +56,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
+use std::error::Error as StdError;
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
@@ -7286,13 +7287,42 @@ async fn provider_get_response_text(
     endpoint: &str,
     api_key: Option<&str>,
 ) -> Result<(StatusCode, String), String> {
-    let response = apply_provider_headers(client.get(endpoint), provider_kind, api_key)
-        .send()
-        .await
-        .map_err(|error| error.to_string())?;
-    let status = response.status();
-    let body = response.text().await.unwrap_or_default();
-    Ok((status, body))
+    const MAX_ATTEMPTS: usize = 3;
+    let mut last_error = String::new();
+
+    for attempt in 1..=MAX_ATTEMPTS {
+        match apply_provider_headers(client.get(endpoint), provider_kind, api_key)
+            .send()
+            .await
+        {
+            Ok(response) => {
+                let status = response.status();
+                let body = response.text().await.unwrap_or_default();
+                return Ok((status, body));
+            }
+            Err(error) => {
+                let mut details = vec![error.to_string()];
+                let mut source = StdError::source(&error);
+                while let Some(cause) = source {
+                    let detail = cause.to_string();
+                    if !details.iter().any(|existing| existing == &detail) {
+                        details.push(detail);
+                    }
+                    source = cause.source();
+                }
+                last_error = details.join(": ");
+
+                if attempt < MAX_ATTEMPTS {
+                    tokio::time::sleep(Duration::from_millis(250 * attempt as u64)).await;
+                }
+            }
+        }
+    }
+
+    Err(format!(
+        "Provider request failed after {} attempts for {}: {}",
+        MAX_ATTEMPTS, endpoint, last_error
+    ))
 }
 
 async fn provider_post_chat_probe(
@@ -7989,25 +8019,35 @@ async fn crew_provider_models_list(
     let api_key = request.api_key.as_deref();
     let mut last_error = None;
     let mut last_endpoint = request.base_url.trim().to_string();
+    let mut received_response = false;
     for endpoint in endpoints {
         last_endpoint = endpoint.clone();
-        let response =
-            apply_provider_headers(client.get(&endpoint), &request.provider_kind, api_key)
-                .send()
+        let (status, body) =
+            match provider_get_response_text(&client, &request.provider_kind, &endpoint, api_key)
                 .await
-                .map_err(|error| error.to_string())?;
-        let status = response.status();
+            {
+                Ok(result) => result,
+                Err(error) => {
+                    last_error = Some(error);
+                    continue;
+                }
+            };
+        received_response = true;
         if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
             let excerpt = response_excerpt(&body);
             last_error = Some(format!("Provider antwortete mit {}: {}", status, excerpt));
             continue;
         }
 
-        let body = response.text().await.unwrap_or_default();
         let models = parse_openai_models_response(&body)?;
 
         return Ok(CrewProviderModelsResponse { endpoint, models });
+    }
+
+    if !received_response {
+        return Err(last_error.unwrap_or_else(|| {
+            "Model list is not available. Enter the model manually.".to_string()
+        }));
     }
 
     if let Some(model) = request

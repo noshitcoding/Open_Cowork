@@ -79,6 +79,15 @@ The original Tauri NSIS output remains under:
 app/src-tauri/target/release/bundle/nsis/
 ```
 
+### Regenerate Brand Assets
+
+The canonical Carbon Signal mark lives in `brand/open-workframe.svg`. Regenerate the web favicon, social preview, and all Tauri icon sizes from that master:
+
+```powershell
+cd app
+npm run brand:assets
+```
+
 ## Ollama Setup
 
 LocalAI Cowork defaults to a local Ollama endpoint:

@@ -5,7 +5,7 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="theme-color" content="#0A0A0B" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>LocalAI Cowork</title>
+    <title>Local AI Cowork</title>
     <style>
       :root {
         --boot-bg: #f4f4f1;
@@ -13,7 +13,7 @@
         --boot-text: #161615;
         --boot-muted: #6b6b66;
         --boot-border: #cbcbc4;
-        --boot-accent: #ffd84d;
+        --boot-accent-fill: #ffd84d;
       }
 
       @media (prefers-color-scheme: dark) {
@@ -23,7 +23,7 @@
           --boot-text: #f5f5f2;
           --boot-muted: #90908b;
           --boot-border: #303034;
-          --boot-accent: #ffd84d;
+          --boot-accent-fill: #ffd84d;
         }
       }
 
@@ -83,7 +83,7 @@
         width: 42%;
         height: 100%;
         border-radius: inherit;
-        background: var(--boot-accent);
+        background: var(--boot-accent-fill);
         animation: boot-loader-slide 1.05s ease-in-out infinite;
       }
 
@@ -101,9 +101,9 @@
     </style>
   </head>
   <body>
-    <div id="boot-loader" role="progressbar" aria-label="LocalAI Cowork startet">
+    <div id="boot-loader" role="progressbar" aria-label="Local AI Cowork startet">
       <div class="boot-loader-panel">
-        <p class="boot-loader-title">LocalAI Cowork</p>
+        <p class="boot-loader-title">Local AI Cowork</p>
         <div class="boot-loader-bar" aria-hidden="true"><span></span></div>
         <p class="boot-loader-status">Arbeitsbereich wird vorbereitet...</p>
       </div>
