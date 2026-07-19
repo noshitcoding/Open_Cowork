@@ -1,6 +1,6 @@
 use rusqlite::{
-    params, params_from_iter, Connection, DatabaseName, OptionalExtension, Result as SqlResult,
-    TransactionBehavior,
+    params, params_from_iter, Connection, OptionalExtension, Result as SqlResult,
+    TransactionBehavior, MAIN_DB,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -186,7 +186,7 @@ fn create_pre_migration_backup(
         uuid::Uuid::new_v4()
     ));
 
-    conn.backup(DatabaseName::Main, &backup_path, None)?;
+    conn.backup(MAIN_DB, &backup_path, None)?;
     let backup = Connection::open(&backup_path)?;
     ensure_database_integrity(&backup)?;
     prune_pre_migration_backups(&backup_dir, MAX_PRE_MIGRATION_BACKUPS);
