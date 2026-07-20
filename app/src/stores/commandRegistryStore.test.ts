@@ -191,7 +191,7 @@ describe('slash command registry integrity', () => {
       try {
         await command.execute()
       } catch (error) {
-        throw new Error(`${command.command} threw during smoke execution: ${String(error)}`)
+        throw new Error(`${command.command} threw during smoke execution: ${String(error)}`, { cause: error })
       }
     }
   })

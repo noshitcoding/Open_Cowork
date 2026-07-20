@@ -410,7 +410,7 @@ export default function SettingsView() {
     const currentIndex = visibleCategories.findIndex((item) => item.key === category)
     if (currentIndex < 0 || !visibleCategories.length) return
 
-    let nextIndex = currentIndex
+    let nextIndex: number
     if (event.key === 'ArrowDown' || event.key === 'ArrowRight') nextIndex = (currentIndex + 1) % visibleCategories.length
     else if (event.key === 'ArrowUp' || event.key === 'ArrowLeft') nextIndex = (currentIndex - 1 + visibleCategories.length) % visibleCategories.length
     else if (event.key === 'Home') nextIndex = 0

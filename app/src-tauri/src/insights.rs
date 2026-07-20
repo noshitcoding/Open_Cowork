@@ -90,7 +90,7 @@ pub fn build_summary(db: &Arc<Database>) -> Result<InsightsSummary, String> {
         .into_iter()
         .map(|(category, count)| CategoryCount { category, count })
         .collect();
-    top_categories.sort_by(|a, b| b.count.cmp(&a.count));
+    top_categories.sort_by_key(|category| std::cmp::Reverse(category.count));
     top_categories.truncate(10);
 
     // Recent events

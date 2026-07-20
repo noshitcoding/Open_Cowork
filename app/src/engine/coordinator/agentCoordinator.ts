@@ -99,7 +99,7 @@ export class AgentCoordinator {
       ? parentMessages.slice(-5)
       : []
 
-    let sandboxWorkspace = this.baseConfig.cwd
+    let sandboxWorkspace: string
     try {
       const sandbox = await safeInvoke<{ id: string; workspaceRoot: string }>('worker_sandbox_create', {
         request: {

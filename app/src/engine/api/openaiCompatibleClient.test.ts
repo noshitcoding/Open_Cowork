@@ -185,7 +185,7 @@ describe('streamOpenAiCompatibleMessages', () => {
       'Systemprompt',
     )
 
-    let result: Awaited<ReturnType<typeof stream.next>>['value'] | null = null
+    let result: Awaited<ReturnType<typeof stream.next>>['value'] | null
     while (true) {
       const next = await stream.next()
       if (next.done) {
@@ -249,7 +249,7 @@ describe('streamOpenAiCompatibleMessages', () => {
     )
 
     const events = [] as Array<{ type: string; [key: string]: unknown }>
-    let result: Awaited<ReturnType<typeof stream.next>>['value'] | null = null
+    let result: Awaited<ReturnType<typeof stream.next>>['value'] | null
 
     while (true) {
       const next = await stream.next()
@@ -316,7 +316,7 @@ describe('streamOpenAiCompatibleMessages', () => {
     )
 
     const events = [] as Array<{ type: string; [key: string]: unknown }>
-    let result: Awaited<ReturnType<typeof stream.next>>['value'] | null = null
+    let result: Awaited<ReturnType<typeof stream.next>>['value'] | null
 
     while (true) {
       const next = await stream.next()
@@ -468,7 +468,7 @@ describe('streamOpenAiCompatibleMessages', () => {
       [readToolDef],
     )
 
-    let result: Awaited<ReturnType<typeof stream.next>>['value'] | null = null
+    let result: Awaited<ReturnType<typeof stream.next>>['value'] | null
     while (true) {
       const next = await stream.next()
       if (next.done) {
