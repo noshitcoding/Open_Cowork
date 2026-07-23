@@ -461,17 +461,20 @@ export class QueryEngine {
           const fallbackApproval = this.buildTextPlanApprovalRequest(assistantText, latestUserText)
           if (fallbackApproval) {
             textExecutionRecoveryCount += 1
-            const approvalPromise = this.beginApprovalRequest(fallbackApproval)
-            yield { type: 'approval_required', request: fallbackApproval }
-            const approved = await approvalPromise
+            if (this.config.permissionMode !== 'bypass') {
+              const approvalPromise = this.beginApprovalRequest(fallbackApproval)
+              yield { type: 'approval_required', request: fallbackApproval }
+              const approved = await approvalPromise
 
-            if (!approved.allowed) {
-              yield { type: 'turn_complete', turnCount, stopReason: 'approval_denied' }
-              break
+              if (!approved.allowed) {
+                yield { type: 'turn_complete', turnCount, stopReason: 'approval_denied' }
+                break
+              }
             }
 
             conversation.push(createUserMessage(
-              'Approval granted. Execute the last described plan directly with the available tools. '
+              `${this.config.permissionMode === 'bypass' ? 'Permission bypass is enabled.' : 'Approval granted.'} `
+              + 'Execute the last described plan directly with the available tools. '
               + 'Do not respond with another plan. Use tool calls for execution, then return only the result.',
             ))
             continue

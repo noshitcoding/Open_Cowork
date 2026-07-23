@@ -2926,10 +2926,23 @@ export default function CoworkView() {
                 `Description: ${event.request.description}`,
                 `Risk Level: ${event.request.riskLevel}`,
               ].join('\n'))
-              if (autoPilotAllTools || hasApprovalBypassMarker) {
+              if (enginePermissionMode === 'bypass' || autoPilotAllTools || hasApprovalBypassMarker) {
+                const autoApprovalReason = enginePermissionMode === 'bypass'
+                  ? 'bypass permission mode'
+                  : autoPilotAllTools
+                    ? 'autoPilotAllTools'
+                    : 'approval-beduerftig marker'
+                approvalSummary = null
+                updateLiveToolCall({
+                  id: findLiveToolCallId(liveToolCalls, event.request.toolName, event.request.input),
+                  toolName: event.request.toolName,
+                  input: event.request.input,
+                  status: 'running',
+                  result: `Approved automatically: ${autoApprovalReason}`,
+                })
                 appendVerboseEntry(
                   'Approval granted automatically',
-                  autoPilotAllTools ? 'Grund: autoPilotAllTools' : 'Grund: approval-beduerftig marker',
+                  `Grund: ${autoApprovalReason}`,
                 )
                 resolveEngineApproval({ allowed: true })
                 addLog({
@@ -2937,7 +2950,7 @@ export default function CoworkView() {
                   area: 'llm',
                   message: `Approval granted automatically: ${event.request.toolName}`,
                   details: {
-                    reason: autoPilotAllTools ? 'autoPilotAllTools' : 'approval-beduerftig marker',
+                    reason: autoApprovalReason,
                     request: event.request,
                   },
                 })

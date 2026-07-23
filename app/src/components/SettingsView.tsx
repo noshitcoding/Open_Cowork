@@ -536,7 +536,7 @@ export default function SettingsView() {
                 <label>{tr("Permission mode")}<select value={engineConfig.permissionMode} onChange={(e) => setEngineConfig({ permissionMode: e.target.value as 'default' | 'plan' | 'bypass' | 'strict' })}>
                     <option value="default">{tr("Standard")}</option>
                     <option value="plan">{tr("Plan-Mode")}</option>
-                    <option value="bypass">{tr("Bypass (allow everything)")}</option>
+                    <option value="bypass">{tr("Bypass (skip approvals)")}</option>
                     <option value="strict">{tr("Strict (ask everything)")}</option>
                   </select>
                 </label>
